@@ -1,0 +1,10 @@
+<div class="dlg-head"><strong id="modal-title">{{ action|capitalize }} {{ name }}?</strong><button data-close-modal>Cancel</button></div>
+<div class="dlg-body">
+  <p>To {{ action }} {{ name }}, GPU Shepherd will:</p>
+  <ul>{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% if plan.to_restart %}<p class="small muted">Restarting a model server unloads its current model and cuts off requests in progress.</p>{% endif %}
+  <div class="actions">
+    <button data-close-modal>Cancel</button>
+    <button class="primary" hx-post="/ui/instances/{{ iid }}/{{ action }}" hx-vals='{"confirm": "1", "back": "{{ back }}"}' {% if back %}hx-swap="none"{% else %}hx-target="#dash"{% endif %}>Continue</button>
+  </div>
+</div>

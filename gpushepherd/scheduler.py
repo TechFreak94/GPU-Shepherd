@@ -1,0 +1,202 @@
+"""GPU planner: decides which instance gets which GPUs.
+
+Pure functions, no Docker - easy to test. Rules:
+
+1. The instance you are starting (the *target*) always gets what it needs first.
+2. Everyone else is served by priority (higher first); fixed instances before elastic ones
+   at the same priority.
+3. Fixed instances need exactly their GPUs. Elastic instances need `min_gpus` and only say
+   *how many* GPUs they want, so they move aside instead of pushing a fixed instance out.
+4. Leftover GPUs go to elastic instances (highest priority first) up to their `max_gpus`.
+   Running instances keep the GPUs they already have where possible (no needless restarts).
+5. A running instance that can no longer get its minimum is stopped ("preempted").
+   A running instance whose GPU set changes is restarted with the new GPUs.
+
+The UI shows the plan and asks for confirmation whenever anything other than the target
+would be stopped or restarted.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from .config import Instance
+
+ACTIONS = ("start", "stop", "restart", "rebalance")
+
+
+@dataclass
+class Plan:
+    action: str
+    target: str | None
+    allocations: dict[str, list[int]] = field(default_factory=dict)   # instances running afterwards
+    previous: dict[str, list[int]] = field(default_factory=dict)      # running before
+    to_start: list[str] = field(default_factory=list)
+    to_stop: list[str] = field(default_factory=list)
+    to_restart: list[str] = field(default_factory=list)
+    preempted: list[str] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def side_effects(self) -> list[str]:
+        """Instances other than the target that this plan stops or restarts."""
+        others = [i for i in self.preempted + self.to_restart if i != self.target]
+        return list(dict.fromkeys(others))
+
+    @property
+    def is_noop(self) -> bool:
+        return not (self.to_start or self.to_stop or self.to_restart)
+
+    def describe(self, names: dict[str, str] | None = None) -> list[str]:
+        names = names or {}
+
+        def n(i: str) -> str:
+            return names.get(i, i)
+
+        lines = []
+        for i in self.to_stop:
+            if i in self.preempted:
+                lines.append(f"Stop {n(i)} - it no longer gets the GPUs it needs")
+            else:
+                lines.append(f"Stop {n(i)}")
+        for i in self.to_restart:
+            new, old = self.allocations[i], self.previous.get(i, [])
+            if new == old:
+                lines.append(f"Restart {n(i)}")
+            else:
+                lines.append(f"Restart {n(i)} to move it from {gpu_text(old)} to {gpu_text(new)}")
+        for i in self.to_start:
+            lines.append(f"Start {n(i)}" + (f" on {gpu_text(self.allocations[i])}" if self.allocations[i] else ""))
+        return lines
+
+
+def gpu_text(gpus: list[int]) -> str:
+    if not gpus:
+        return "no GPU"
+    return ("GPU " if len(gpus) == 1 else "GPUs ") + ",".join(str(g) for g in gpus)
+
+
+def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, list[int]],
+         action: str, target: str | None = None, extra_wanted: set[str] | None = None) -> Plan:
+    """Work out what has to happen.
+
+    gpus         GPU indices present on the machine
+    instances    all configured instances
+    running      instances running right now -> GPUs they currently have
+    action       start | stop | restart | rebalance
+    target       the instance the action is about (None for rebalance)
+    extra_wanted additional instances to bring up (used for autostart on boot)
+    """
+    if action not in ACTIONS:
+        raise ValueError(f"unknown action {action}")
+    previous = {i: sorted(g) for i, g in running.items() if i in instances}
+    result = Plan(action=action, target=target, previous=previous)
+    if target is not None and target not in instances:
+        result.error = f"unknown instance '{target}'"
+        return result
+
+    wanted = set(previous)
+    if extra_wanted:
+        wanted |= {i for i in extra_wanted if i in instances}
+    if action in ("start", "restart") and target:
+        wanted.add(target)
+    elif action == "stop" and target:
+        wanted.discard(target)
+
+    gpu_set = set(gpus)
+    allocations, dropped, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target, previous)
+    if error:
+        result.error = error
+        return result
+
+    result.allocations = allocations
+    result.preempted = sorted(i for i in dropped if i in previous)
+    result.to_stop = sorted(i for i in previous if i not in allocations)
+    result.to_start = [i for i in _priority_order(instances, allocations, target) if i not in previous]
+    result.to_restart = [i for i in _priority_order(instances, allocations, target)
+                         if i in previous and (allocations[i] != previous[i]
+                                               or (action == "restart" and i == target))]
+    return result
+
+
+def _priority_order(instances: dict[str, Instance], ids, target: str | None) -> list[str]:
+    def key(i: str):
+        pol = instances[i].gpu
+        mode_rank = {"fixed": 0, "elastic": 1, "none": 2}[pol.mode]
+        return (0 if i == target else 1, -pol.priority, mode_rank, i)
+    return sorted(ids, key=key)
+
+
+def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance], wanted: set[str],
+              target: str | None, current: dict[str, list[int]]) -> tuple[dict[str, list[int]], list[str], str]:
+    """Two phases: first decide HOW MANY GPUs every instance gets (and who does not fit),
+    then decide WHICH ones, keeping running instances on the GPUs they already have."""
+    order = _priority_order(instances, wanted, target)
+    free = set(gpus)                 # GPUs not taken by a fixed instance yet
+    reserved = 0                     # GPUs promised to elastic instances (picked in phase 2)
+    counts: dict[str, int] = {}
+    fixed: dict[str, list[int]] = {}
+    dropped: list[str] = []
+
+    # phase 1a: minimums in priority order (the target first)
+    for i in order:
+        pol = instances[i].gpu
+        if pol.mode == "none":
+            counts[i] = 0
+        elif pol.mode == "fixed":
+            missing = [g for g in pol.gpus if g not in gpu_set]
+            if missing:
+                if i == target:
+                    return {}, [], (f"{instances[i].name} is set to use GPU {','.join(map(str, missing))}, "
+                                    "which this machine does not have")
+                dropped.append(i)
+                continue
+            # its GPUs must be free, and taking them must still leave room for elastic promises
+            if set(pol.gpus) <= free and len(free) - len(pol.gpus) >= reserved:
+                fixed[i] = sorted(pol.gpus)
+                free -= set(pol.gpus)
+            else:
+                dropped.append(i)
+        else:
+            if len(free) - reserved >= pol.min_gpus:
+                counts[i] = pol.min_gpus
+                reserved += pol.min_gpus
+            elif i == target:
+                return {}, [], (f"{instances[i].name} needs at least {pol.min_gpus} GPU(s); "
+                                f"only {len(free) - reserved} of this machine's {len(gpus)} are available to it")
+            else:
+                dropped.append(i)
+
+    # phase 1b: elastic instances grow into what is left, highest priority first
+    spare = len(free) - reserved
+    for i in order:
+        pol = instances[i].gpu
+        if pol.mode != "elastic" or i not in counts:
+            continue
+        cap = pol.max_gpus or len(gpus)
+        extra = min(spare, cap - counts[i])
+        counts[i] += extra
+        spare -= extra
+
+    # phase 2: pick concrete GPUs for elastic instances from what fixed ones left
+    alloc: dict[str, list[int]] = {i: [] for i, c in counts.items() if instances[i].gpu.mode == "none"}
+    alloc.update(fixed)
+    pool = sorted(free)
+    elastic = [i for i in order if i in counts and instances[i].gpu.mode == "elastic"]
+    # 2a: everyone keeps the GPUs they already have (up to their new count)
+    for i in elastic:
+        keep = sorted(g for g in current.get(i, []) if g in pool)[:counts[i]]
+        alloc[i] = keep
+        pool = [g for g in pool if g not in keep]
+    # 2b: fill the rest in priority order: preferred GPUs first, then next to ones it has, then lowest
+    for i in elastic:
+        pref = instances[i].gpu.gpus
+        while len(alloc[i]) < counts[i] and pool:
+            have = alloc[i]
+
+            def rank(g, pref=pref, have=have):
+                near = min((abs(g - h) for h in have), default=0)
+                return (pref.index(g) if g in pref else len(pref), near, g)
+            g = min(pool, key=rank)
+            alloc[i] = sorted(have + [g])
+            pool.remove(g)
+    return alloc, dropped, ""

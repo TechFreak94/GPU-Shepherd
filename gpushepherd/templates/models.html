@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Models · {{ inst.name }} · GPU Shepherd{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div>
+    <h1>{{ inst.name }} models</h1>
+    <div class="small muted">
+      {% if running %}Running with {{ gpu_count }} GPU{{ "s" if gpu_count != 1 }}.{% else %}Stopped.{% endif %}
+      Clients pick a model by ID or alias; llama-swap loads it and unloads the previous one.
+    </div>
+  </div>
+  <div class="btns">
+    <a class="btn" href="/">Back</a>
+    <a class="btn primary" href="/instances/{{ inst.id }}/models/edit">Add model</a>
+  </div>
+</div>
+
+{% if pending %}
+<div class="notice busy">Catalogue changes are saved but not live yet.
+  <button class="primary" hx-post="/ui/instances/{{ inst.id }}/restart" hx-vals='{"back": "/instances/{{ inst.id }}/models"}' hx-swap="none">Restart {{ inst.name }} to apply</button>
+</div>
+{% endif %}
+{% if models_error %}<div class="notice error">{{ models_error }}</div>{% endif %}
+
+<div class="card scroll">
+  <table class="table">
+    <thead><tr><th>Model</th><th>File</th><th>Context</th><th>Names</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for m in cat.models %}
+      <tr>
+        <td><strong>{{ m.name or m.id }}</strong><div class="mono muted">{{ m.id }}</div></td>
+        <td class="mono" style="overflow-wrap:anywhere">{{ m.file }}</td>
+        <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span></td>
+        <td class="small">{% for a in m.aliases %}<span class="tag">{{ a }}</span>{% endfor %}
+          {% for alias, target in resolved.items() if target == m.id %}<span class="tag accent">{{ alias }}</span>{% endfor %}</td>
+        <td class="small">
+          {% if m.id in loading %}<span class="busy-t">loading…</span>
+          {% elif m.id in loaded %}<span class="pill on">loaded</span>
+          {% elif running %}<span class="muted">not loaded</span>{% else %}<span class="muted">-</span>{% endif %}
+        </td>
+        <td><div class="btns" style="justify-content:flex-end">
+          {% if running %}
+            {% if m.id in loaded %}<button hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/unload" hx-swap="none">Unload</button>
+            {% else %}<button hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/load" hx-swap="none" {{ "disabled" if m.id in loading }}>Load</button>{% endif %}
+          {% endif %}
+          <a class="btn" href="/instances/{{ inst.id }}/models/edit?model={{ m.id|urlencode }}">Edit</a>
+          <button class="danger" hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/delete" hx-confirm="Remove {{ m.id }} from the catalogue? The file stays on disk.">Remove</button>
+        </div></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No models yet. Add one - pick a .gguf file from the model folder.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h3>Auto names</h3>
+<form class="card" hx-post="/instances/{{ inst.id }}/catalog/auto">
+  <p class="small muted" style="margin-top:0">A name that points at different models depending on how many GPUs this server has right now.
+    Point Hermes or other clients at it and they always get the model that fits. Rules: <span class="mono">2=muse-glimmer</span> means "with 2 or more GPUs use muse-glimmer".
+    With {{ preview_gpus }} GPU{{ "s" if preview_gpus != 1 }}:
+    {% for a, t in resolved.items() %}<span class="tag accent">{{ a }} → {{ t }}</span>{% else %}none defined{% endfor %}</p>
+  {% for a in cat.auto_aliases %}
+  <div class="autorow">
+    <div><label>Name</label><input type="text" name="alias" value="{{ a.alias }}"></div>
+    <div><label>Default model</label><select name="default_model">{% for m in cat.models %}<option value="{{ m.id }}" {{ "selected" if m.id == a.default_model }}>{{ m.id }}</option>{% endfor %}</select></div>
+    <div><label>Rules (GPUs=model, comma separated)</label>
+      <div class="btns" style="flex-wrap:nowrap"><input type="text" name="rules" value="{% for r in a.rules %}{{ r.min_gpus }}={{ r.model }}{{ ', ' if not loop.last }}{% endfor %}">
+      <button type="button" data-remove-row title="Remove">✕</button></div></div>
+  </div>
+  {% endfor %}
+  <template id="auto-row">
+    <div class="autorow">
+      <div><label>Name</label><input type="text" name="alias" placeholder="auto"></div>
+      <div><label>Default model</label><select name="default_model">{% for m in cat.models %}<option value="{{ m.id }}">{{ m.id }}</option>{% endfor %}</select></div>
+      <div><label>Rules (GPUs=model, comma separated)</label>
+        <div class="btns" style="flex-wrap:nowrap"><input type="text" name="rules" placeholder="2=model-id"><button type="button" data-remove-row title="Remove">✕</button></div></div>
+    </div>
+  </template>
+  <div class="actions">
+    {% if cat.models %}<button type="button" data-add-row="auto-row">Add auto name</button>{% endif %}
+    <button class="primary" type="submit">Save auto names</button>
+  </div>
+</form>
+
+<h3>Server settings</h3>
+<form class="card" hx-post="/instances/{{ inst.id }}/catalog/settings">
+  <div class="fields">
+    <div><label for="threads">CPU threads</label><input type="number" id="threads" name="threads" min="0" max="512" value="{{ cat.threads }}">
+      <div class="hint">0 = number of physical cores (best when models spill into system RAM).</div></div>
+    <div><label for="health_timeout">Load timeout (seconds)</label><input type="number" id="health_timeout" name="health_timeout" min="15" max="7200" value="{{ cat.health_timeout }}"></div>
+    <div><label for="llama_server">llama-server path in the image</label><input type="text" id="llama_server" name="llama_server" value="{{ cat.llama_server }}" placeholder="detected on first start">
+    </div>
+  </div>
+  <div style="margin-top:12px"><label>API key</label><div class="mono" style="overflow-wrap:anywhere">{{ cat.api_key }}</div>
+    <div class="hint">Clients send it as "Authorization: Bearer …". Base URL: http://&lt;server&gt;:{{ (inst.ports|selectattr('container', 'equalto', 8080)|map(attribute='host')|first) or "port" }}/v1 - other instances use http://{{ inst.id }}:8080/v1</div>
+    <label class="check" style="margin-top:8px"><input type="checkbox" name="new_key"> Generate a new key (clients must be updated)</label></div>
+  <div class="actions"><button class="primary" type="submit">Save settings</button></div>
+</form>
+
+<details style="margin-top:14px"><summary>Generated llama-swap config ({{ preview_gpus }} GPU{{ "s" if preview_gpus != 1 }})</summary><pre>{{ preview }}</pre></details>
+{% endblock %}

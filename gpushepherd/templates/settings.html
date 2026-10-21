@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Settings · GPU Shepherd{% endblock %}
+{% block content %}
+<div class="pagehead"><h1>Settings</h1></div>
+{% if initial %}<div class="notice busy">You are still using the generated first-run password. Change it below.</div>{% endif %}
+
+<h3>Password</h3>
+<form class="card" hx-post="/settings/password">
+  <div class="fields">
+    <div><label for="current">Current password</label><input type="password" id="current" name="current" autocomplete="current-password" required></div>
+    <div><label for="new">New password</label><input type="password" id="new" name="new" minlength="10" autocomplete="new-password" required></div>
+    <div><label for="again">New password again</label><input type="password" id="again" name="again" minlength="10" autocomplete="new-password" required></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Change password</button></div>
+</form>
+
+<h3>Containers</h3>
+<form class="card" hx-post="/settings/general">
+  <div class="fields">
+    <div><label for="bind_address">Publish ports on</label><input type="text" id="bind_address" name="bind_address" value="{{ s.bind_address }}">
+      <div class="hint">0.0.0.0 = your whole network, 127.0.0.1 = this machine only.</div></div>
+    <div><label for="network">Docker network</label><input type="text" id="network" name="network" value="{{ s.network }}">
+      <div class="hint">Instances reach each other by ID on this network.</div></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Save</button></div>
+</form>
+
+<h3>About</h3>
+<div class="card small">
+  <p style="margin-top:0">GPU Shepherd {{ version }} · {{ docker }}</p>
+  <p>Data folder: <span class="mono">{{ data_dir }}</span>{% if host_data_dir != data_dir %} (on the host: <span class="mono">{{ host_data_dir }}</span>){% endif %}</p>
+  <p class="muted" style="margin-bottom:0">Everything you change here is stored as YAML in that folder - back it up, or keep it in git.
+    GPU Shepherd controls Docker, which is root-equivalent on this machine: keep it on a trusted network.</p>
+</div>
+{% endblock %}

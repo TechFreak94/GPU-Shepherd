@@ -1,0 +1,15 @@
+# ComfyUI always uses GPU 0. It has the highest priority, so it keeps its GPU
+# and the LLM server moves aside when ComfyUI starts.
+id: comfyui
+name: ComfyUI
+description: Image generation
+kind: container
+image: aistack/comfyui:local
+ports:
+  - {host: 8188, container: 8188}
+volumes:
+  - {host: /home/you/comfyui/ComfyUI/models, container: /opt/ComfyUI/models}
+  - {host: /home/you/aistack/data/comfyui/output, container: /opt/ComfyUI/output}
+  - {host: /home/you/aistack/data/comfyui/custom_nodes, container: /opt/ComfyUI/custom_nodes}
+gpu: {mode: fixed, gpus: [0], priority: 80}
+autostart: true

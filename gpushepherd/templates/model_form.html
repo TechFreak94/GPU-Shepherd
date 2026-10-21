@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit model" if editing else "Add model" }} · {{ inst.name }}{% endblock %}
+{% block content %}
+<div id="editor">
+<div class="pagehead">
+  <div><h1>{{ "Edit " ~ f.id if editing else "Add model" }}</h1>
+    <div class="small muted">{{ inst.name }} · saved to <span class="mono">catalogs/{{ inst.id }}.yaml</span></div></div>
+  <a class="btn" href="/instances/{{ inst.id }}/models">Back</a>
+</div>
+{% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
+<form hx-post="/instances/{{ inst.id }}/models/save" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
+  <input type="hidden" name="original_id" value="{{ original if original is defined else (f.id if editing else '') }}">
+  <div class="section">
+    <h3 style="margin-top:0">Model file</h3>
+    <label for="file">Path inside the container</label>
+    <input type="text" id="file" name="file" value="{{ f.file }}" required placeholder="/models/model-Q4_K_M.gguf">
+    {% if files %}
+    <div class="hint">Or pick one of the .gguf files GPU Shepherd can see:</div>
+    <div class="files">
+      {% for x in files %}<button type="button" data-pick-file="{{ x.container_path }}" data-suggest-id="{{ x.name|replace('.gguf', '')|lower }}">
+        <span class="mono">{{ x.container_path }}</span><span class="muted small">{{ x.size_gb }} GB</span></button>{% endfor %}
+    </div>
+    {% endif %}
+    {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
+    <div class="hint">Split models: give the first part (…-00001-of-0000N.gguf).</div>
+  </div>
+  <div class="section">
+    <h3 style="margin-top:0">Identity</h3>
+    <div class="fields">
+      <div><label for="id">Model ID</label><input type="text" id="id" name="id" value="{{ f.id }}" required placeholder="qwen3.6-35b-a3b">
+        <div class="hint">The name clients ask for.</div></div>
+      <div><label for="name">Display name</label><input type="text" id="name" name="name" value="{{ f.name }}"></div>
+      <div><label for="aliases_text">Other names (comma separated)</label><input type="text" id="aliases_text" name="aliases_text" value="{{ f.aliases_text }}" placeholder="qwen"></div>
+      <div><label for="description">Description</label><input type="text" id="description" name="description" value="{{ f.description }}"></div>
+    </div>
+  </div>
+  <div class="section">
+    <h3 style="margin-top:0">Runtime</h3>
+    <div class="fields">
+      <div><label for="ctx_size">Context (tokens, all slots together)</label><input type="number" id="ctx_size" name="ctx_size" min="512" value="{{ f.ctx_size }}"></div>
+      <div><label for="parallel">Parallel slots</label><input type="number" id="parallel" name="parallel" min="1" max="64" value="{{ f.parallel }}">
+        <div class="hint">Requests served at once; each gets context ÷ slots.</div></div>
+      <div><label for="kv_cache">KV cache</label><select id="kv_cache" name="kv_cache">
+        {% for k, label in [("f16", "f16 (default)"), ("q8_0", "q8_0 - half the memory"), ("q4_0", "q4_0 - smallest")] %}
+        <option value="{{ k }}" {{ "selected" if f.kv_cache == k }}>{{ label }}</option>{% endfor %}</select></div>
+      <div><label for="sampling">Sampling flags</label><input type="text" id="sampling" name="sampling" value="{{ f.sampling }}" placeholder="--temp 0.6 --top-p 0.95 --top-k 20">
+        <div class="hint">Use the model card's recommended values.</div></div>
+      <div><label for="extra_args">Extra llama-server flags</label><input type="text" id="extra_args" name="extra_args" value="{{ f.extra_args }}" placeholder="--n-cpu-moe 20"></div>
+      <div><label for="mmproj">Vision projector (optional)</label><input type="text" id="mmproj" name="mmproj" value="{{ f.mmproj }}" placeholder="/models/mmproj-BF16.gguf"></div>
+    </div>
+  </div>
+  <div class="actions"><a class="btn" href="/instances/{{ inst.id }}/models">Cancel</a><button class="primary" type="submit">Save model</button></div>
+</form>
+</div>
+{% endblock %}

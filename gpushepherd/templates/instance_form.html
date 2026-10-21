@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit " ~ f.name if editing else "Add instance" }} · GPU Shepherd{% endblock %}
+{% block content %}
+<div id="editor">
+<div class="pagehead">
+  <div><h1>{{ "Edit " ~ f.name if editing else ("Add model server" if f.kind == "llama-swap" else "Add instance") }}</h1>
+  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.</div></div>
+  <a class="btn" href="/">Back</a>
+</div>
+{% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
+<form hx-post="/instances/save" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
+  <input type="hidden" name="editing" value="{{ '1' if editing else '0' }}">
+  <input type="hidden" name="kind" value="{{ f.kind or 'container' }}">
+
+  <div class="section">
+    <h3 style="margin-top:0">Basics</h3>
+    <div class="fields">
+      <div><label for="name">Name</label><input type="text" id="name" name="name" value="{{ f.name or '' }}" required placeholder="ComfyUI"></div>
+      <div><label for="id">ID</label><input type="text" id="id" name="id" value="{{ f.id or '' }}" {{ "readonly" if editing }} required pattern="[a-z0-9][a-z0-9-]{0,39}" placeholder="comfyui">
+        <div class="hint">Lowercase, digits, dashes. Other containers reach it as http://<em>id</em>:port.</div></div>
+      <div><label for="image">Image</label><input type="text" id="image" name="image" value="{{ f.image or '' }}" required placeholder="ghcr.io/org/app:tag"></div>
+      <div><label for="description">Description</label><input type="text" id="description" name="description" value="{{ f.description or '' }}"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin-top:0">GPUs</h3>
+    <div class="fields">
+      <div><label for="gpu_mode">GPU use</label>
+        <select id="gpu_mode" name="gpu_mode">
+          <option value="none" {{ "selected" if f.gpu_mode == "none" }}>No GPU</option>
+          <option value="fixed" {{ "selected" if f.gpu_mode == "fixed" }}>Fixed - always these GPUs</option>
+          <option value="elastic" {{ "selected" if f.gpu_mode == "elastic" }}>Elastic - grows into free GPUs, makes room when needed</option>
+        </select>
+        <div class="hint">ComfyUI-style apps: fixed. LLM servers that can split across GPUs: elastic.</div></div>
+      <div data-gpu-mode="fixed elastic"><label for="priority">Priority (0-100)</label>
+        <input type="number" id="priority" name="priority" min="0" max="100" value="{{ f.priority }}">
+        <div class="hint">When GPUs run short, higher priority keeps its GPUs. The instance you start always wins.</div></div>
+    </div>
+    <div data-gpu-mode="fixed elastic" style="margin-top:12px">
+      <label><span data-gpu-mode="fixed">Use GPUs</span><span data-gpu-mode="elastic">Preferred GPUs (optional)</span></label>
+      <div class="checks">
+        {% for n in gpu_indices %}<label class="check"><input type="checkbox" name="gpu_list" value="{{ n }}" {{ "checked" if n in (f.gpu_list or []) }}> GPU {{ n }}</label>{% endfor %}
+      </div>
+    </div>
+    <div class="fields" data-gpu-mode="elastic" style="margin-top:12px">
+      <div><label for="min_gpus">Minimum GPUs</label><input type="number" id="min_gpus" name="min_gpus" min="1" max="64" value="{{ f.min_gpus }}"></div>
+      <div><label for="max_gpus">Maximum GPUs</label><input type="number" id="max_gpus" name="max_gpus" min="0" max="64" value="{{ f.max_gpus }}">
+        <div class="hint">0 = no limit.</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin-top:0">Network and storage</h3>
+    <div class="fields">
+      <div><label for="ports">Ports (host:container, one per line)</label>
+        <textarea id="ports" name="ports" placeholder="8188:8188">{{ f.ports or '' }}</textarea></div>
+      <div><label for="volumes">Folders (/host/path:/container/path[:ro], one per line)</label>
+        <textarea id="volumes" name="volumes" placeholder="/srv/comfyui/models:/opt/ComfyUI/models">{{ f.volumes or '' }}</textarea>
+        <div class="hint">{% if f.kind == "llama-swap" %}Mount your model folder at /models. {% endif %}Host paths must already exist.</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin-top:0">Command and environment</h3>
+    <div class="fields">
+      <div><label for="command">Command (optional)</label><input type="text" id="command" name="command" value="{{ f.command or '' }}" placeholder="gateway run">
+        <div class="hint">Leave empty to use the image's default.</div></div>
+      <div><label for="env">Environment (NAME=value, one per line)</label>
+        <textarea id="env" name="env" placeholder="TZ=America/New_York">{{ f.env or '' }}</textarea></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin-top:0">Behaviour</h3>
+    <div class="fields">
+      <div><label class="check"><input type="checkbox" name="autostart" {{ "checked" if f.autostart }}> Start automatically when GPU Shepherd starts</label></div>
+      <div><label for="open_port">"Open" button port</label><input type="number" id="open_port" name="open_port" min="1" max="65535" value="{{ f.open_port or '' }}" placeholder="first port">
+      </div>
+      <div><label for="open_path">"Open" button path</label><input type="text" id="open_path" name="open_path" value="{{ f.open_path or '/' }}"></div>
+    </div>
+    <details style="margin-top:12px"><summary>Advanced</summary>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="shm_size">Shared memory</label><input type="text" id="shm_size" name="shm_size" value="{{ f.shm_size or '' }}" placeholder="1g"></div>
+        <div><label for="user_spec">Run as user</label><input type="text" id="user_spec" name="user_spec" value="{{ f.user_spec or '' }}" placeholder="1000:1000"></div>
+        <div><label for="memory_limit">Memory limit</label><input type="text" id="memory_limit" name="memory_limit" value="{{ f.memory_limit or '' }}" placeholder="4g"></div>
+      </div>
+    </details>
+  </div>
+
+  <div class="actions">
+    {% if editing %}<button type="button" class="danger" hx-post="/instances/{{ f.id }}/delete"
+      hx-confirm="Delete {{ f.name }}? Its container is removed; folders on disk are kept.">Delete</button>{% endif %}
+    <a class="btn" href="/">Cancel</a>
+    <button class="primary" type="submit">Save</button>
+  </div>
+</form>
+</div>
+{% endblock %}
