@@ -1,7 +1,7 @@
 # Hermes Agent: CPU only, talks to the LLM server at http://llm:8080/v1 (model "auto").
 id: hermes
 name: Hermes
-description: Agent for homelab and Home Assistant tasks
+description: Agent for homelab tasks
 kind: container
 image: nousresearch/hermes-agent:latest
 command: [gateway, run]

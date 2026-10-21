@@ -2,7 +2,7 @@
 # and the LLM server moves aside when ComfyUI starts.
 id: comfyui
 name: ComfyUI
-description: Image generation (Z-Image coloring pages)
+description: Image generation
 kind: container
 image: aistack/comfyui:local
 ports:
