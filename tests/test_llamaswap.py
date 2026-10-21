@@ -1,6 +1,8 @@
+import pytest
 import yaml
+from pydantic import ValidationError
 
-from gpushepherd.config import AutoAlias, AutoRule, Catalog, CatalogModel
+from gpushepherd.config import AutoAlias, AutoRule, Catalog, CatalogModel, OffloadRule
 from gpushepherd.connectors.llamaswap import render, resolved_aliases
 
 
@@ -36,3 +38,25 @@ def test_auto_alias_follows_gpu_count():
     assert one["qwen"]["aliases"] == ["q", "auto"] and "aliases" not in one["muse"]
     assert two["qwen"]["aliases"] == ["q"] and two["muse"]["aliases"] == ["auto"]
     assert resolved_aliases(catalog(), 4) == {"auto": "muse"}
+
+
+def test_offload_follows_gpu_count():
+    cat = catalog()
+    cat.models[0].offload = [OffloadRule(min_gpus=1, cpu_moe=30), OffloadRule(min_gpus=2, cpu_moe=14),
+                             OffloadRule(min_gpus=4, gpu_layers=99)]
+    cmd = {n: yaml.safe_load(render(cat, n, 8))["models"]["qwen"]["cmd"] for n in (1, 2, 3, 4)}
+    assert "--n-cpu-moe 30" in cmd[1] and "--n-gpu-layers" not in cmd[1]
+    assert "--n-cpu-moe 14" in cmd[2] and "--n-cpu-moe 14" in cmd[3]      # a rule covers larger counts
+    assert "--n-gpu-layers 99" in cmd[4] and "--n-cpu-moe" not in cmd[4]
+    # before the extra flags, so a hand-written flag there still wins
+    assert cmd[1].index("--n-cpu-moe") < cmd[1].index("--temp")
+    muse = yaml.safe_load(render(cat, 1, 8))["models"]["muse"]["cmd"]
+    assert "--n-cpu-moe" not in muse and "--n-gpu-layers" not in muse    # no rules: llama.cpp defaults
+
+
+def test_offload_rules_are_sorted_and_unique():
+    m = CatalogModel(id="x", file="/m/x.gguf", offload=[{"min_gpus": 2, "cpu_moe": 5}, {"min_gpus": 1, "gpu_layers": 0}])
+    assert [r.min_gpus for r in m.offload] == [1, 2]
+    assert m.offload_for(1).gpu_layers == 0 and m.offload_for(3).cpu_moe == 5
+    with pytest.raises(ValidationError):
+        CatalogModel(id="x", file="/m/x.gguf", offload=[{"min_gpus": 1}, {"min_gpus": 1, "cpu_moe": 2}])

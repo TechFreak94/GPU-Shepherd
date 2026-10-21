@@ -13,6 +13,9 @@ models:
     parallel: 2
     sampling: --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0
     aliases: [qwen]
+    offload:                      # experts that don't fit in VRAM stay in system RAM
+      - {min_gpus: 1, cpu_moe: 30}
+      - {min_gpus: 2, cpu_moe: 14}
   - id: muse-glimmer
     name: Muse Glimmer 30B (UD-Q4_K_XL)
     description: Dense agentic/coding model - best with both GPUs

@@ -35,6 +35,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
   unload buttons, and **auto names** - a model name like `auto` that points at different models
   depending on how many GPUs the server currently has. Point an agent at `auto` and it always gets
   the model that fits.
+- **GPU + system RAM**: per model, keep part of it in system RAM (MoE expert layers or whole
+  layers) so models larger than your GPUs still run. Set it per GPU count: e.g. 30 expert layers
+  in RAM when the server has one GPU, 14 when it has two.
 
   ![Models](docs/screenshots/models.png)
 - **Plain files**: everything you change is saved as readable YAML - easy to back up, diff, or

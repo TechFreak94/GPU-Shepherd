@@ -41,6 +41,11 @@ def render(catalog: Catalog, gpu_count: int, threads: int) -> str:
             args += ["--cache-type-k", m.kv_cache, "--cache-type-v", m.kv_cache]
         if m.mmproj:
             args += ["--mmproj", shlex.quote(m.mmproj), "--no-mmproj-offload"]
+        rule = m.offload_for(gpu_count)
+        if rule and rule.gpu_layers is not None:
+            args += ["--n-gpu-layers", str(rule.gpu_layers)]
+        if rule and rule.cpu_moe:
+            args += ["--n-cpu-moe", str(rule.cpu_moe)]
         if m.sampling:
             args.append(m.sampling)
         if m.extra_args:
