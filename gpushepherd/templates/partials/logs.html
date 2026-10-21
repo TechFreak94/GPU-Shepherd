@@ -1,0 +1,3 @@
+<div class="dlg-head"><strong id="modal-title">{{ title }}</strong>
+  <span class="btns">{% if refresh %}<button hx-get="{{ refresh }}" hx-target="#modal-body">Refresh</button>{% endif %}<button data-close-modal>Close</button></span></div>
+<div class="dlg-body"><pre>{{ text or "(empty)" }}</pre></div>

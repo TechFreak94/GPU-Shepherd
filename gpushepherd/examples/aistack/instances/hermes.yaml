@@ -1,0 +1,23 @@
+# Hermes Agent: CPU only, talks to the LLM server at http://llm:8080/v1 (model "auto").
+id: hermes
+name: Hermes
+description: Agent for homelab and Home Assistant tasks
+kind: container
+image: nousresearch/hermes-agent:latest
+command: [gateway, run]
+env:
+  HERMES_UID: "1000"
+  HERMES_GID: "1000"
+  HERMES_DASHBOARD: "1"
+  HERMES_DASHBOARD_BASIC_AUTH_USERNAME: admin
+  HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: change-me-please
+  API_SERVER_ENABLED: "true"
+  API_SERVER_HOST: 0.0.0.0
+  API_SERVER_KEY: change-me-hermes-api-key
+ports:
+  - {host: 9119, container: 9119}
+volumes:
+  - {host: /home/you/aistack/data/hermes, container: /opt/data}
+shm_size: 1g
+memory_limit: 4g
+autostart: true
