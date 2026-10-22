@@ -207,7 +207,7 @@ class AutoRule(BaseModel):
 
 class AutoAlias(BaseModel):
     """A model name that points at different models depending on how many GPUs the
-    model server currently has. Example: "auto" = muse-glimmer with 2+ GPUs, else qwen."""
+    model server currently has. Example: "coder" = qwen3-coder-next with 2+ GPUs, else qwen3.6."""
     alias: str
     default_model: str
     rules: list[AutoRule] = []

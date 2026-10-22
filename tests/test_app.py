@@ -73,11 +73,11 @@ def test_gpu_handoff_flow(stack):
     page = client.get("/")
     assert page.status_code == 200 and "ComfyUI" in page.text and "LLM server" in page.text
 
-    # LLM alone: both GPUs, auto -> muse
+    # LLM alone: both GPUs, coder -> Qwen3 Coder Next
     act(client, app, "llm", "start")
     assert gpus_of(backend, "llm") == [0, 1]
     cfg = yaml.safe_load((data / "generated" / "llm" / "llama-swap.yaml").read_text())
-    assert cfg["models"]["muse-glimmer"]["aliases"] == ["muse", "auto"]
+    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "chat"]
     assert cfg["models"]["qwen3-coder-next"]["aliases"] == ["qwen-coder", "coder"]
     assert "--n-cpu-moe 38" in cfg["models"]["qwen3-coder-next"]["cmd"]
     spec = backend.containers["shepherd-llm"]
@@ -92,7 +92,7 @@ def test_gpu_handoff_flow(stack):
     act(client, app, "comfyui", "start", confirm=True)
     assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == [1]
     cfg = yaml.safe_load((data / "generated" / "llm" / "llama-swap.yaml").read_text())
-    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "auto", "coder"]
+    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "chat", "coder"]
     assert "--n-cpu-moe 30" in cfg["models"]["qwen3.6-35b-a3b"]["cmd"]      # one GPU: more of it in RAM
 
     # CPU-only Hermes starts without bothering anyone
@@ -172,7 +172,7 @@ def test_model_catalogue_editing(stack):
         "mmproj": "", "aliases_text": "gemma", "description": ""})
     assert r.status_code == 204
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
-    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "muse-glimmer", "qwen3-coder-next", "gemma4-26b"]
+    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "qwen3-coder-next", "gemma4-26b"]
 
     bad = client.post("/instances/llm/models/save", headers=HX, data={"original_id": "", "id": "x",
                                                                      "file": "gemma.gguf", "ctx_size": "100"})
@@ -180,7 +180,7 @@ def test_model_catalogue_editing(stack):
 
     # auto names: "auto" -> gemma with 3+ GPUs
     r = client.post("/instances/llm/catalog/auto", headers=HX, data={
-        "alias": "auto", "default_model": "qwen3.6-35b-a3b", "rules": "2=muse-glimmer, 3=gemma4-26b"})
+        "alias": "auto", "default_model": "qwen3.6-35b-a3b", "rules": "2=qwen3-coder-next, 3=gemma4-26b"})
     assert r.status_code == 204
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
     assert cat["auto_aliases"][0]["rules"][1] == {"min_gpus": 3, "model": "gemma4-26b"}
@@ -202,13 +202,13 @@ def test_model_catalogue_editing(stack):
 
     # load / unload while running
     act(client, app, "llm", "start")
-    client.post("/instances/llm/models/muse-glimmer/load", headers=HX)
+    client.post("/instances/llm/models/qwen3-coder-next/load", headers=HX)
     for _ in range(100):
-        if "muse-glimmer" in DemoLlamaClient.loaded:
+        if "qwen3-coder-next" in DemoLlamaClient.loaded:
             break
         time.sleep(0.01)
-    assert "Loaded: <strong>muse-glimmer</strong>" in client.get("/ui/dashboard", headers=HX).text
-    client.post("/instances/llm/models/muse-glimmer/unload", headers=HX)
+    assert "Loaded: <strong>qwen3-coder-next</strong>" in client.get("/ui/dashboard", headers=HX).text
+    client.post("/instances/llm/models/qwen3-coder-next/unload", headers=HX)
     assert not DemoLlamaClient.loaded
 
 

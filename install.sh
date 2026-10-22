@@ -10,7 +10,9 @@
 #   2. installs Docker Engine and the Compose plugin from Ubuntu's own packages
 #   3. installs the NVIDIA Container Toolkit and connects it to Docker
 #   4. checks that a container can see the GPUs
-#   5. writes compose.yaml (if there isn't one yet) and starts GPU Shepherd
+#   5. adds you to the docker group, so docker works without sudo
+#   6. on the first run, offers to load the example setup (ComfyUI, LLM server, Hermes, Open WebUI)
+#   7. writes compose.yaml (if there isn't one yet) and starts GPU Shepherd
 #
 # Nothing is installed or changed until you confirm the plan. A flag answers its question in
 # advance, so the guided mode only asks what the flags left open. Run it again at any time: it
@@ -28,6 +30,8 @@ INSTALL_DRIVER=0
 SKIP_DEPS=0
 NO_START=0
 ASSUME_YES=0
+EXAMPLE=""              # yes / no once decided by a flag or an answer
+DOCKER_GROUP=1
 GPU_TEST_IMAGE=ubuntu:24.04
 # Below this much installed RAM, models must fit entirely in GPU memory. Keeping part of a model in
 # system RAM (MoE expert offload) needs room for those layers plus the OS, Docker and the other
@@ -51,6 +55,10 @@ in advance, for scripted or advanced installs.
   --data-dir DIR      where GPU Shepherd keeps its settings (default: $DEFAULT_DATA_DIR)
   --install-driver    install the recommended NVIDIA driver if none is working (needs a reboot)
   --skip-deps         don't install anything; only write compose.yaml and start GPU Shepherd
+  --example           load the example setup on the first run (ComfyUI, LLM server, Hermes,
+                      Open WebUI); with --yes it is only loaded when this is given
+  --no-example        don't offer the example setup
+  --no-docker-group   don't add you to the docker group (docker then needs sudo)
   --no-start          prepare everything but don't start GPU Shepherd
   -y, --yes           don't ask anything: use the defaults for whatever no option sets
   -h, --help          show this help
@@ -74,6 +82,9 @@ while [ $# -gt 0 ]; do
         --install-driver) INSTALL_DRIVER=1; shift ;;
         --skip-deps)      SKIP_DEPS=1; shift ;;
         --no-start)       NO_START=1; shift ;;
+        --example)        EXAMPLE=yes; shift ;;
+        --no-example)     EXAMPLE=no; shift ;;
+        --no-docker-group) DOCKER_GROUP=0; shift ;;
         -y|--yes)         ASSUME_YES=1; shift ;;
         -h|--help)        usage; exit 0 ;;
         *)                usage >&2; die "unknown option: $1" ;;
@@ -318,6 +329,38 @@ else
     fi
 fi
 
+# --------------------------------------------------------------------------- example setup
+
+EXAMPLE_SRC="$HERE/gpushepherd/examples/aistack"
+first_run=1
+if compgen -G "$DATA_DIR/instances/*.yaml" >/dev/null; then first_run=0; fi
+if [ "$first_run" -eq 0 ] || [ ! -d "$EXAMPLE_SRC" ]; then
+    [ "$EXAMPLE" != yes ] || warn "--example ignored: $DATA_DIR already has instances."
+    EXAMPLE=no
+elif [ -z "$EXAMPLE" ]; then
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        echo "    GPU Shepherd starts empty. It can load an example setup, made for two 8 GB GPUs and"
+        echo "    64+ GB of RAM: ComfyUI on GPU 0 (images, video), an LLM server with a chat and a coding"
+        echo "    model that uses whatever GPUs are free, Hermes (home lab assistant) and Open WebUI (chat)."
+        echo "    Nothing in it starts until you press Start; you can change or delete any of it later."
+        if confirm "Load the example setup?" Y; then EXAMPLE=yes; else EXAMPLE=no; fi
+        echo
+    else
+        EXAMPLE=no
+    fi
+fi
+if [ "$EXAMPLE" = yes ] && [ -z "$MODELS_DIR" ]; then
+    MODELS_DIR="$DATA_DIR/models"       # the example's models need a home
+fi
+
+# --------------------------------------------------------------------------- docker group
+
+DOCKER_USER=""
+if [ "$DOCKER_GROUP" -eq 1 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] \
+        && ! id -nG "$SUDO_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    DOCKER_USER=$SUDO_USER
+fi
+
 # --------------------------------------------------------------------------- the plan
 
 plan=()
@@ -329,10 +372,16 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     [ "$HAS_CURL" -eq 1 ] || plan+=("Install curl")
     plan+=("Check that a test container ($GPU_TEST_IMAGE) can see the GPUs")
 fi
+if [ -n "$DOCKER_USER" ]; then
+    plan+=("Add $DOCKER_USER to the docker group, so docker works without sudo (from your next login)")
+fi
 if [ "$HAS_COMPOSE_FILE" -eq 1 ]; then
     plan+=("Keep your compose.yaml (settings: $DATA_DIR, port $PORT)")
 else
     plan+=("Write compose.yaml: settings in $DATA_DIR, port $PORT, models: ${MODELS_DIR:-none}")
+fi
+if [ "$EXAMPLE" = yes ]; then
+    plan+=("Load the example setup into $DATA_DIR, with new API keys and passwords (nothing starts yet)")
 fi
 if [ "$NO_START" -eq 0 ]; then
     plan+=("Build and start GPU Shepherd (it restarts by itself after a reboot)")
@@ -396,6 +445,12 @@ else
     have docker || die "--skip-deps given, but Docker is not installed"
 fi
 
+if [ -n "$DOCKER_USER" ]; then
+    getent group docker >/dev/null || groupadd docker
+    usermod -aG docker "$DOCKER_USER"
+    say "Added $DOCKER_USER to the docker group (takes effect at your next login)"
+fi
+
 # --------------------------------------------------------------------------- GPU Shepherd
 
 mkdir -p "$DATA_DIR"
@@ -414,6 +469,41 @@ else
         grep -q -- "- $MODELS_DIR:$MODELS_DIR:ro" compose.yaml \
             || warn "could not add the models folder to compose.yaml; add it under volumes by hand"
     fi
+fi
+
+random_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+if [ "$EXAMPLE" = yes ]; then
+    say "Loading the example setup"
+    LLM_KEY="sk-$(random_hex 20)"
+    HERMES_KEY="$(random_hex 24)"
+    HERMES_PASSWORD="$(random_hex 8)"
+    owner_uid=$(id -u "${SUDO_USER:-root}" 2>/dev/null || echo 0)
+    owner_gid=$(id -g "${SUDO_USER:-root}" 2>/dev/null || echo 0)
+    # Fill in this machine's folders, fresh secrets, and autostart off until you have tried it.
+    fill() {
+        sed -e "s#/srv/models#$MODELS_DIR#g" \
+            -e "s#/opt/gpu-shepherd#$DATA_DIR#g" \
+            -e "s#sk-demo-0*#$LLM_KEY#g" \
+            -e "s#REPLACE_WITH_LLM_API_KEY#$LLM_KEY#g" \
+            -e "s#change-me-hermes-api-key#$HERMES_KEY#g" \
+            -e "s#change-me-please#$HERMES_PASSWORD#g" \
+            -e "s#HERMES_UID: \"1000\"#HERMES_UID: \"$owner_uid\"#" \
+            -e "s#HERMES_GID: \"1000\"#HERMES_GID: \"$owner_gid\"#" \
+            -e "s#^autostart: true#autostart: false#" \
+            "$1" > "$2"
+        chmod 600 "$2"
+    }
+    mkdir -p "$DATA_DIR/instances" "$DATA_DIR/catalogs" "$MODELS_DIR/comfyui" \
+        "$DATA_DIR"/appdata/comfyui/{custom_nodes,input,output,user,cache} \
+        "$DATA_DIR/appdata/hermes" "$DATA_DIR/appdata/open-webui"
+    for f in "$EXAMPLE_SRC"/instances/*.yaml "$EXAMPLE_SRC"/catalogs/*.yaml; do
+        dest="$DATA_DIR/${f#"$EXAMPLE_SRC"/}"
+        [ -e "$dest" ] || fill "$f" "$dest"
+    done
+    [ -e "$DATA_DIR/appdata/hermes/config.yaml" ] \
+        || fill "$EXAMPLE_SRC/appdata/hermes/config.yaml" "$DATA_DIR/appdata/hermes/config.yaml"
+    chown -R "$owner_uid:$owner_gid" "$DATA_DIR/appdata/hermes"
+    if [ -n "${SUDO_USER:-}" ]; then chown "$owner_uid:$owner_gid" "$MODELS_DIR" "$MODELS_DIR/comfyui"; fi
 fi
 
 if [ "$NO_START" -eq 1 ]; then
@@ -443,3 +533,21 @@ if [ -f "$DATA_DIR/INITIAL_PASSWORD.txt" ]; then
     echo "    Change the password under Settings; that file is deleted when you do."
 fi
 echo "    Keep it on a trusted network: it controls Docker, which is root-equivalent."
+if [ -n "$DOCKER_USER" ]; then
+    echo "    You ($DOCKER_USER) can run docker without sudo after logging out and back in. Being in"
+    echo "    the docker group is root-equivalent too."
+fi
+if [ "$EXAMPLE" = yes ]; then
+    echo
+    say "Example setup loaded (nothing is running yet)"
+    echo "    Download the two model files into $MODELS_DIR (about 72 GB):"
+    echo "      curl -L -o $MODELS_DIR/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \\"
+    echo "        https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+    echo "      curl -L -o $MODELS_DIR/Qwen3-Coder-Next-UD-Q4_K_XL.gguf \\"
+    echo "        https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-UD-Q4_K_XL.gguf"
+    echo "    ComfyUI checkpoints go in $MODELS_DIR/comfyui/checkpoints."
+    echo "    Then press Start on each card in the dashboard (the first start downloads its image), and"
+    echo "    turn on Autostart for the ones you want running after a reboot."
+    echo "    Open WebUI: http://${host_ip:-<this-machine>}:3000   Hermes dashboard: http://${host_ip:-<this-machine>}:9119"
+    echo "    Hermes dashboard login: admin / $HERMES_PASSWORD  (also in $DATA_DIR/instances/hermes.yaml)"
+fi

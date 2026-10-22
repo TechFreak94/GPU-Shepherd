@@ -1,7 +1,8 @@
-# Open WebUI: chat with the models (and with Hermes through its API).
+# Open WebUI: general chat with the models and with Hermes (through its API), plus image
+# generation through ComfyUI when ComfyUI is running. CPU only.
 id: webui
 name: Chat UI
-description: Open WebUI for the models and Hermes
+description: Open WebUI for chat, Hermes and ComfyUI images
 kind: container
 image: ghcr.io/open-webui/open-webui:main
 ports:
@@ -9,7 +10,11 @@ ports:
 env:
   OPENAI_API_BASE_URLS: http://llm:8080/v1;http://hermes:8642/v1
   OPENAI_API_KEYS: REPLACE_WITH_LLM_API_KEY;change-me-hermes-api-key
+  DEFAULT_MODELS: chat
   ENABLE_OLLAMA_API: "false"
+  ENABLE_IMAGE_GENERATION: "true"
+  IMAGE_GENERATION_ENGINE: comfyui
+  COMFYUI_BASE_URL: http://comfyui:8188
 volumes:
-  - {host: /home/you/aistack/data/open-webui, container: /app/backend/data}
+  - {host: /opt/gpu-shepherd/appdata/open-webui, container: /app/backend/data}
 autostart: false

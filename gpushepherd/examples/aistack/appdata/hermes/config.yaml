@@ -1,0 +1,7 @@
+# Hermes settings written by the GPU Shepherd example: use the LLM server's "chat" model.
+# Hermes may add its own settings to this file on first start.
+model:
+  provider: custom
+  model: chat
+  base_url: http://llm:8080/v1
+  api_key: REPLACE_WITH_LLM_API_KEY

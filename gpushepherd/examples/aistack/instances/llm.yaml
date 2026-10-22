@@ -1,14 +1,15 @@
-# llama-swap: one OpenAI-compatible endpoint, loads the model a client asks for.
-# Elastic: uses every free GPU, shrinks to one when ComfyUI needs GPU 0.
+# llama-swap: one OpenAI-compatible endpoint (http://llm:8080/v1 inside, :8080 outside) that loads
+# whichever model a client asks for. Elastic: both GPUs when they are free, GPU 1 alone while
+# ComfyUI runs. The models' GPU/RAM split follows (see the Models page).
 id: llm
 name: LLM server
-description: llama-swap with Qwen3.6 35B-A3B and Muse Glimmer
+description: llama-swap with Qwen3.6 35B-A3B (chat) and Qwen3 Coder Next (coder)
 kind: llama-swap
 image: ghcr.io/mostlygeek/llama-swap:cuda
 ports:
   - {host: 8080, container: 8080}
 volumes:
-  - {host: /home/you/aistack/models, container: /models, read_only: true}
+  - {host: /srv/models, container: /models, read_only: true}
 gpu: {mode: elastic, min_gpus: 1, max_gpus: 0, priority: 50}
 autostart: true
 open_path: /ui

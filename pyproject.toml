@@ -32,7 +32,7 @@ gpu-shepherd = "gpushepherd.__main__:main"
 include = ["gpushepherd*"]
 
 [tool.setuptools.package-data]
-gpushepherd = ["templates/*.html", "templates/partials/*.html", "static/*", "examples/*/*/*.yaml", "examples/*/*.md"]
+gpushepherd = ["templates/*.html", "templates/partials/*.html", "static/*", "examples/*/*/*.yaml", "examples/*/*/*/*.yaml", "examples/*/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

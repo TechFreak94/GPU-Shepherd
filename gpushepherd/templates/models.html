@@ -57,7 +57,7 @@
 <h3>Auto names</h3>
 <form class="card" hx-post="/instances/{{ inst.id }}/catalog/auto">
   <p class="small muted" style="margin-top:0">A name that points at different models depending on how many GPUs this server has right now.
-    Point Hermes or other clients at it and they always get the model that fits. Rules: <span class="mono">2=muse-glimmer</span> means "with 2 or more GPUs use muse-glimmer".
+    Point Hermes or other clients at it and they always get the model that fits. Rules: <span class="mono">2=qwen3-coder-next</span> means "with 2 or more GPUs use qwen3-coder-next".
     With {{ preview_gpus }} GPU{{ "s" if preview_gpus != 1 }}:
     {% for a, t in resolved.items() %}<span class="tag accent">{{ a }} → {{ t }}</span>{% else %}none defined{% endfor %}</p>
   {% for a in cat.auto_aliases %}
