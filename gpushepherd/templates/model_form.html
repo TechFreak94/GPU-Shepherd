@@ -45,9 +45,29 @@
         <option value="{{ k }}" {{ "selected" if f.kv_cache == k }}>{{ label }}</option>{% endfor %}</select></div>
       <div><label for="sampling">Sampling flags</label><input type="text" id="sampling" name="sampling" value="{{ f.sampling }}" placeholder="--temp 0.6 --top-p 0.95 --top-k 20">
         <div class="hint">Use the model card's recommended values.</div></div>
-      <div><label for="extra_args">Extra llama-server flags</label><input type="text" id="extra_args" name="extra_args" value="{{ f.extra_args }}" placeholder="--n-cpu-moe 20"></div>
+      <div><label for="extra_args">Extra llama-server flags</label><input type="text" id="extra_args" name="extra_args" value="{{ f.extra_args }}" placeholder="--no-mmap"></div>
       <div><label for="mmproj">Vision projector (optional)</label><input type="text" id="mmproj" name="mmproj" value="{{ f.mmproj }}" placeholder="/models/mmproj-BF16.gguf"></div>
     </div>
+  </div>
+  <div class="section">
+    <h3 style="margin-top:0">GPU and system RAM</h3>
+    <p class="small muted" style="margin-top:0">For models bigger than the GPUs' memory: keep part of the model in system RAM.
+      The server can have a different number of GPUs each time it starts, so set it per GPU count.
+      A row also covers larger counts until the next filled-in row. Leave a row empty to put the whole model on the GPUs.</p>
+    <table class="table">
+      <thead><tr><th>Server has</th><th>Layers on GPU</th><th>MoE expert layers in RAM</th></tr></thead>
+      <tbody>
+      {% for r in f.offload_rows %}
+        <tr>
+          <td>{{ r.gpus }} GPU{{ "s" if r.gpus != 1 }}<input type="hidden" name="offload_gpus" value="{{ r.gpus }}"></td>
+          <td><input type="number" id="offload_gpu_layers_{{ r.gpus }}" name="offload_gpu_layers" min="0" max="999" value="{{ r.gpu_layers }}" placeholder="all" aria-label="Layers on GPU with {{ r.gpus }} GPU(s)"></td>
+          <td><input type="number" id="offload_cpu_moe_{{ r.gpus }}" name="offload_cpu_moe" min="0" max="999" value="{{ r.cpu_moe }}" placeholder="none" aria-label="MoE expert layers in RAM with {{ r.gpus }} GPU(s)"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="hint">For mixture-of-experts models (names like 35B-A3B), keep all layers on the GPU and move expert layers to RAM:
+      raise the number until the model loads, then lower it for speed. For dense models, lower the layers on GPU instead.</div>
   </div>
   <div class="actions"><a class="btn" href="/instances/{{ inst.id }}/models">Cancel</a><button class="primary" type="submit">Save model</button></div>
 </form>

@@ -78,6 +78,8 @@ def test_gpu_handoff_flow(stack):
     assert gpus_of(backend, "llm") == [0, 1]
     cfg = yaml.safe_load((data / "generated" / "llm" / "llama-swap.yaml").read_text())
     assert cfg["models"]["muse-glimmer"]["aliases"] == ["muse", "auto"]
+    assert cfg["models"]["qwen3-coder-next"]["aliases"] == ["qwen-coder", "coder"]
+    assert "--n-cpu-moe 38" in cfg["models"]["qwen3-coder-next"]["cmd"]
     spec = backend.containers["shepherd-llm"]
     assert spec.env["LLAMA_SWAP_API_KEY"].startswith("sk-")
     assert (str(data / "generated" / "llm" / "llama-swap.yaml"), "/app/config.yaml", True) in spec.volumes
@@ -90,7 +92,8 @@ def test_gpu_handoff_flow(stack):
     act(client, app, "comfyui", "start", confirm=True)
     assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == [1]
     cfg = yaml.safe_load((data / "generated" / "llm" / "llama-swap.yaml").read_text())
-    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "auto"]
+    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "auto", "coder"]
+    assert "--n-cpu-moe 30" in cfg["models"]["qwen3.6-35b-a3b"]["cmd"]      # one GPU: more of it in RAM
 
     # CPU-only Hermes starts without bothering anyone
     r = act(client, app, "hermes", "start")
@@ -137,6 +140,28 @@ def test_create_edit_and_validation(stack):
     assert r.status_code == 204 and not (data / "instances" / "whisper.yaml").exists()
 
 
+def test_model_offload_settings(stack):
+    app, client, backend, data = stack
+    login(client)
+    form = client.get("/instances/llm/models/edit?model=qwen3.6-35b-a3b").text
+    assert form.count('name="offload_gpus"') == 2                     # one row per GPU on this machine
+    assert 'name="offload_cpu_moe" min="0" max="999" value="30"' in form
+    base = {"original_id": "qwen3.6-35b-a3b", "id": "qwen3.6-35b-a3b", "file": "/models/q.gguf",
+            "ctx_size": "65536", "parallel": "1", "kv_cache": "f16"}
+    r = client.post("/instances/llm/models/save", headers=HX, data={
+        **base, "offload_gpus": ["1", "2"], "offload_gpu_layers": ["", "99"], "offload_cpu_moe": ["24", ""]})
+    assert r.status_code == 204
+    model = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())["models"][0]
+    assert model["offload"] == [{"min_gpus": 1, "gpu_layers": None, "cpu_moe": 24},
+                                {"min_gpus": 2, "gpu_layers": 99, "cpu_moe": 0}]
+    assert "--n-gpu-layers 99" in client.get("/instances/llm/models").text   # config preview, 2 GPUs
+
+    bad = client.post("/instances/llm/models/save", headers=HX, data={
+        **base, "offload_gpus": ["1", "2"], "offload_gpu_layers": ["", ""], "offload_cpu_moe": ["lots", ""]})
+    assert "error-box" in bad.text and "use whole numbers" in bad.text
+    assert 'value="lots"' in bad.text                                  # the form comes back as typed
+
+
 def test_model_catalogue_editing(stack):
     app, client, backend, data = stack
     login(client)
@@ -147,7 +172,7 @@ def test_model_catalogue_editing(stack):
         "mmproj": "", "aliases_text": "gemma", "description": ""})
     assert r.status_code == 204
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
-    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "muse-glimmer", "gemma4-26b"]
+    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "muse-glimmer", "qwen3-coder-next", "gemma4-26b"]
 
     bad = client.post("/instances/llm/models/save", headers=HX, data={"original_id": "", "id": "x",
                                                                      "file": "gemma.gguf", "ctx_size": "100"})

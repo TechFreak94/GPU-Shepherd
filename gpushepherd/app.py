@@ -20,9 +20,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__, auth
 from .backend import Backend, DockerBackend, FakeBackend
-from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, Store,
-                     format_command, format_env, format_ports, format_volumes, friendly_errors, parse_command,
-                     parse_env, parse_ports, parse_volumes)
+from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule,
+                     Store, format_command, format_env, format_ports, format_volumes, friendly_errors,
+                     parse_command, parse_env, parse_ports, parse_volumes)
 from .connectors import llamaswap
 from .engine import Engine
 from .jobs import Busy, JobRunner
@@ -353,8 +353,43 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                      "parallel": 1, "sampling": "", "extra_args": "", "kv_cache": "f16",
                                      "mmproj": "", "aliases": []}
         f["aliases_text"] = ", ".join(f.get("aliases") or [])
+        f["offload_rows"] = offload_rows({r.min_gpus: r for r in (m.offload if m else [])})
         return page(request, "model_form.html", inst=inst, f=f, editing=bool(m), files=files, file_notes=notes,
                     error="")
+
+    def offload_rows(rules: dict) -> list[dict]:
+        """One form row per GPU count this machine can give a model server (1..number of GPUs),
+        plus any count a saved rule mentions. Values are strings, as the form posts them."""
+        top = max([len(engine.snapshot().gpus), 1] + [int(k) for k in rules])
+        rows = []
+        for n in range(1, top + 1):
+            r = rules.get(n)
+            if isinstance(r, OffloadRule):
+                r = {"gpu_layers": "" if r.gpu_layers is None else str(r.gpu_layers),
+                     "cpu_moe": str(r.cpu_moe) if r.cpu_moe else ""}
+            rows.append({"gpus": n, **(r or {"gpu_layers": "", "cpu_moe": ""})})
+        return rows
+
+    def posted_offload(raw) -> dict[int, dict]:
+        """The GPU and RAM rows as posted: GPU count -> {"gpu_layers": str, "cpu_moe": str}."""
+        rows = {}
+        for n, layers, moe in zip(raw.getlist("offload_gpus"), raw.getlist("offload_gpu_layers"),
+                                  raw.getlist("offload_cpu_moe")):
+            if str(n).isdigit() and 1 <= int(n) <= 64:
+                rows[int(n)] = {"gpu_layers": str(layers).strip(), "cpu_moe": str(moe).strip()}
+        return rows
+
+    def offload_rules(rows: dict[int, dict]) -> list[OffloadRule]:
+        """Rows with both boxes empty mean "no setting for this many GPUs"."""
+        rules = []
+        for n, row in rows.items():
+            if not row["gpu_layers"] and not row["cpu_moe"]:
+                continue
+            if not all(v.isdigit() for v in (row["gpu_layers"], row["cpu_moe"]) if v):
+                raise ConfigError(f"GPU and RAM settings for {n} GPU(s): use whole numbers")
+            rules.append(OffloadRule(min_gpus=n, gpu_layers=int(row["gpu_layers"]) if row["gpu_layers"] else None,
+                                     cpu_moe=int(row["cpu_moe"] or 0)))
+        return rules
 
     @app.post("/instances/{iid}/models/save")
     async def save_model(request: Request, iid: str):
@@ -363,13 +398,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         original = str(raw.get("original_id", ""))
         f = {k: str(raw.get(k, "")) for k in ("id", "name", "description", "file", "ctx_size", "parallel",
                                                "sampling", "extra_args", "kv_cache", "mmproj", "aliases_text")}
+        posted = posted_offload(raw)
+        f["offload_rows"] = offload_rows(posted)
         try:
             model = CatalogModel(id=f["id"].strip(), name=f["name"].strip(), description=f["description"].strip(),
                                  file=f["file"], ctx_size=int(f["ctx_size"] or 32768),
                                  parallel=int(f["parallel"] or 1), sampling=f["sampling"],
                                  extra_args=f["extra_args"], kv_cache=f["kv_cache"] or "f16",
                                  mmproj=f["mmproj"].strip(),
-                                 aliases=[a.strip() for a in f["aliases_text"].split(",") if a.strip()])
+                                 aliases=[a.strip() for a in f["aliases_text"].split(",") if a.strip()],
+                                 offload=offload_rules(posted))
             models = [m for m in cat.models if m.id != (original or model.id)]
             if original and original != model.id:
                 for auto in cat.auto_aliases:        # follow a rename

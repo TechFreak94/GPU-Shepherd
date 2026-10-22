@@ -137,6 +137,14 @@ class Instance(BaseModel):
 
 # --------------------------------------------------------------------------- llama-swap catalogue
 
+class OffloadRule(BaseModel):
+    """How much of a model stays on the GPUs when the server has `min_gpus` or more GPUs.
+    The rest is kept in system RAM, so a model larger than the GPUs' memory still runs."""
+    min_gpus: int = Field(ge=1, le=64)
+    gpu_layers: int | None = Field(default=None, ge=0, le=999)   # --n-gpu-layers; None = llama.cpp default
+    cpu_moe: int = Field(default=0, ge=0, le=999)                # --n-cpu-moe: MoE expert layers kept in RAM
+
+
 class CatalogModel(BaseModel):
     id: str
     name: str = ""
@@ -149,6 +157,23 @@ class CatalogModel(BaseModel):
     kv_cache: Literal["f16", "q8_0", "q4_0"] = "f16"
     mmproj: str = ""                   # vision projector path inside the container (optional)
     aliases: list[str] = []
+    offload: list[OffloadRule] = []    # GPU / system RAM split, by how many GPUs the server has
+
+    def offload_for(self, gpu_count: int) -> OffloadRule | None:
+        """The rule with the highest min_gpus that gpu_count reaches, like AutoAlias.resolve()."""
+        best = None
+        for rule in sorted(self.offload, key=lambda r: r.min_gpus):
+            if gpu_count >= rule.min_gpus:
+                best = rule
+        return best
+
+    @field_validator("offload")
+    @classmethod
+    def _offload(cls, v: list[OffloadRule]) -> list[OffloadRule]:
+        counts = [r.min_gpus for r in v]
+        if len(counts) != len(set(counts)):
+            raise ValueError("two offload settings are for the same number of GPUs")
+        return sorted(v, key=lambda r: r.min_gpus)
 
     @field_validator("id")
     @classmethod

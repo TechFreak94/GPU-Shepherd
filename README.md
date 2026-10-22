@@ -35,6 +35,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
   unload buttons, and **auto names** - a model name like `auto` that points at different models
   depending on how many GPUs the server currently has. Point an agent at `auto` and it always gets
   the model that fits.
+- **GPU + system RAM**: per model, keep part of it in system RAM (MoE expert layers or whole
+  layers) so models larger than your GPUs still run. Set it per GPU count: e.g. 30 expert layers
+  in RAM when the server has one GPU, 14 when it has two.
 
   ![Models](docs/screenshots/models.png)
 - **Plain files**: everything you change is saved as readable YAML - easy to back up, diff, or
@@ -42,6 +45,23 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
 
 ## Quick start
+
+### Ubuntu: one script
+
+On Ubuntu 26.04 (24.04 works too) with an NVIDIA GPU:
+
+```bash
+git clone <this repo> gpu-shepherd && cd gpu-shepherd
+sudo ./install.sh --models-dir /srv/models      # the folder with your .gguf files (optional)
+```
+
+It installs whatever is missing (Docker and Compose from Ubuntu's packages, the NVIDIA Container
+Toolkit), checks that a container can see the GPUs, writes `compose.yaml` and starts GPU Shepherd,
+then prints the address and the first login. No NVIDIA driver yet? Add `--install-driver`, reboot,
+and run it again. `./install.sh --help` lists the other options (`--data-dir`, `--port`, ...).
+It is safe to re-run: it only does what is still missing, and keeps an existing `compose.yaml`.
+
+### By hand
 
 Requirements: Linux, Docker with the Compose plugin, NVIDIA driver and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
@@ -95,6 +115,28 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 
 | Stop ComfyUI | stopped | restarted on GPUs 0,1 |
 
 With a single GPU the same settings make them take turns.
+
+## Coding agents
+
+Coding tools (OpenCode, Aider, Continue, OpenHands, ...) don't need a GPU of their own: point them at
+the model server's OpenAI-compatible endpoint and let GPU Shepherd decide what runs there. The
+example stack has an auto name `coder` for this:
+
+| Model server has | `coder` is | Memory |
+|---|---|---|
+| 1 GPU (ComfyUI has the other) | Qwen3.6 35B-A3B, 30 expert layers in RAM | ~22 GB file, mostly RAM |
+| 2 GPUs | Qwen3 Coder Next 80B-A3B, 38 expert layers in RAM | ~49 GB file, ~40 GB of it in RAM |
+
+So 64 GB of system RAM is enough for the larger one. For example with OpenCode or Aider:
+
+```bash
+export OPENAI_API_BASE=http://<server>:8080/v1
+export OPENAI_API_KEY=<the model server's API key, shown on its Models page>
+aider --model openai/coder
+```
+
+The expert-layer numbers are starting points for 8 GB cards: if a model fails to load, raise them on
+its edit page (GPU and system RAM); if there is GPU memory left over, lower them for more speed.
 
 ## Configuration files
 
