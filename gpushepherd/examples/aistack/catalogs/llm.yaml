@@ -25,8 +25,24 @@ models:
     kv_cache: q8_0
     sampling: --temp 1.0 --top-p 0.95 --top-k 64
     aliases: [muse]
+  - id: qwen3-coder-next
+    name: Qwen3 Coder Next 80B-A3B (UD-Q4_K_XL)
+    description: Coding agent model, 3B active - about 49 GB at Q4, most of it in system RAM
+    file: /models/Qwen3-Coder-Next-UD-Q4_K_XL.gguf
+    ctx_size: 131072
+    parallel: 1
+    kv_cache: q8_0
+    sampling: --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01
+    aliases: [qwen-coder]
+    offload:                      # 48 layers; raise these if it runs out of GPU memory
+      - {min_gpus: 1, cpu_moe: 48}
+      - {min_gpus: 2, cpu_moe: 38}
 auto_aliases:
   - alias: auto
     default_model: qwen3.6-35b-a3b
     rules:
       - {min_gpus: 2, model: muse-glimmer}
+  - alias: coder                  # point OpenCode, Aider or Continue at "coder"
+    default_model: qwen3.6-35b-a3b
+    rules:
+      - {min_gpus: 2, model: qwen3-coder-next}

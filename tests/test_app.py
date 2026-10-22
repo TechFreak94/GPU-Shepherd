@@ -78,6 +78,8 @@ def test_gpu_handoff_flow(stack):
     assert gpus_of(backend, "llm") == [0, 1]
     cfg = yaml.safe_load((data / "generated" / "llm" / "llama-swap.yaml").read_text())
     assert cfg["models"]["muse-glimmer"]["aliases"] == ["muse", "auto"]
+    assert cfg["models"]["qwen3-coder-next"]["aliases"] == ["qwen-coder", "coder"]
+    assert "--n-cpu-moe 38" in cfg["models"]["qwen3-coder-next"]["cmd"]
     spec = backend.containers["shepherd-llm"]
     assert spec.env["LLAMA_SWAP_API_KEY"].startswith("sk-")
     assert (str(data / "generated" / "llm" / "llama-swap.yaml"), "/app/config.yaml", True) in spec.volumes
@@ -90,7 +92,8 @@ def test_gpu_handoff_flow(stack):
     act(client, app, "comfyui", "start", confirm=True)
     assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == [1]
     cfg = yaml.safe_load((data / "generated" / "llm" / "llama-swap.yaml").read_text())
-    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "auto"]
+    assert cfg["models"]["qwen3.6-35b-a3b"]["aliases"] == ["qwen", "auto", "coder"]
+    assert "--n-cpu-moe 30" in cfg["models"]["qwen3.6-35b-a3b"]["cmd"]      # one GPU: more of it in RAM
 
     # CPU-only Hermes starts without bothering anyone
     r = act(client, app, "hermes", "start")
@@ -169,7 +172,7 @@ def test_model_catalogue_editing(stack):
         "mmproj": "", "aliases_text": "gemma", "description": ""})
     assert r.status_code == 204
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
-    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "muse-glimmer", "gemma4-26b"]
+    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "muse-glimmer", "qwen3-coder-next", "gemma4-26b"]
 
     bad = client.post("/instances/llm/models/save", headers=HX, data={"original_id": "", "id": "x",
                                                                      "file": "gemma.gguf", "ctx_size": "100"})
