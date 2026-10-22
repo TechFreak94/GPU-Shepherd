@@ -46,20 +46,35 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Quick start
 
-### Ubuntu: one script
+### Ubuntu: guided install
 
 On Ubuntu 26.04 (24.04 works too) with an NVIDIA GPU:
 
 ```bash
 git clone <this repo> gpu-shepherd && cd gpu-shepherd
-sudo ./install.sh --models-dir /srv/models      # the folder with your .gguf files (optional)
+sudo ./install.sh
 ```
 
-It installs whatever is missing (Docker and Compose from Ubuntu's packages, the NVIDIA Container
-Toolkit), checks that a container can see the GPUs, writes `compose.yaml` and starts GPU Shepherd,
-then prints the address and the first login. No NVIDIA driver yet? Add `--install-driver`, reboot,
-and run it again. `./install.sh --help` lists the other options (`--data-dir`, `--port`, ...).
-It is safe to re-run: it only does what is still missing, and keeps an existing `compose.yaml`.
+The installer first shows what the machine already has (driver, GPUs, Docker, NVIDIA Container
+Toolkit, RAM). Then it asks a few questions, each with a default you can accept with Enter: where
+your .gguf model files are, which port to use, and where to keep settings. If the NVIDIA driver is
+missing it offers to install it (that needs a reboot; run the installer again afterwards). Finally
+it shows the plan, and nothing is installed or changed until you confirm. Then it installs what is
+missing, checks that a container can see the GPUs, starts GPU Shepherd and prints the address and
+the first login. It is safe to re-run: it only does what is still missing, and keeps an existing
+`compose.yaml`.
+
+For scripted or advanced installs, every question has a flag, and `--yes` skips the rest:
+
+```bash
+sudo ./install.sh --yes --models-dir /srv/models --port 8090 --data-dir /opt/gpu-shepherd
+```
+
+`./install.sh --help` lists them all (`--install-driver`, `--skip-deps`, `--no-start`, ...).
+
+RAM: with less than 32 GB installed, models have to fit in GPU memory, because keeping part of a
+model in system RAM needs room for it plus the OS and your other containers. 64 GB is recommended
+for the largest models (Qwen3 Coder Next is ~49 GB at Q4).
 
 ### By hand
 
