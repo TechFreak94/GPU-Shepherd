@@ -13,6 +13,7 @@
 #   5. adds you to the docker group, so docker works without sudo
 #   6. on the first run, offers to load the example setup (ComfyUI, LLM server, Hermes, Open WebUI)
 #   7. writes compose.yaml (if there isn't one yet) and starts GPU Shepherd
+#   8. with the example, offers to download its models (LLMs, Z-Image Turbo for ComfyUI)
 #
 # Nothing is installed or changed until you confirm the plan. A flag answers its question in
 # advance, so the guided mode only asks what the flags left open. Run it again at any time: it
@@ -31,6 +32,7 @@ SKIP_DEPS=0
 NO_START=0
 ASSUME_YES=0
 EXAMPLE=""              # yes / no once decided by a flag or an answer
+DOWNLOAD=""             # yes / no: download the example's models at the end
 DOCKER_GROUP=1
 GPU_TEST_IMAGE=ubuntu:24.04
 # Below this much installed RAM, models must fit entirely in GPU memory. Keeping part of a model in
@@ -58,6 +60,9 @@ in advance, for scripted or advanced installs.
   --example           load the example setup on the first run (ComfyUI, LLM server, Hermes,
                       Open WebUI); with --yes it is only loaded when this is given
   --no-example        don't offer the example setup
+  --download-models   with the example, download its models at the end (~83 GB, resumable);
+                      with --yes they are only downloaded when this is given
+  --no-download       don't offer to download the models
   --no-docker-group   don't add you to the docker group (docker then needs sudo)
   --no-start          prepare everything but don't start GPU Shepherd
   -y, --yes           don't ask anything: use the defaults for whatever no option sets
@@ -84,6 +89,8 @@ while [ $# -gt 0 ]; do
         --no-start)       NO_START=1; shift ;;
         --example)        EXAMPLE=yes; shift ;;
         --no-example)     EXAMPLE=no; shift ;;
+        --download-models) DOWNLOAD=yes; shift ;;
+        --no-download)    DOWNLOAD=no; shift ;;
         --no-docker-group) DOCKER_GROUP=0; shift ;;
         -y|--yes)         ASSUME_YES=1; shift ;;
         -h|--help)        usage; exit 0 ;;
@@ -353,6 +360,31 @@ if [ "$EXAMPLE" = yes ] && [ -z "$MODELS_DIR" ]; then
     MODELS_DIR="$DATA_DIR/models"       # the example's models need a home
 fi
 
+DOWNLOADER="$EXAMPLE_SRC/download-models.sh"
+DOWNLOAD_GB=83
+if [ "$EXAMPLE" != yes ]; then
+    [ "$DOWNLOAD" != yes ] || warn "--download-models ignored: it only applies with the example setup."
+    DOWNLOAD=no
+elif [ -z "$DOWNLOAD" ]; then
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        free_dir=$MODELS_DIR
+        while [ ! -d "$free_dir" ]; do free_dir=$(dirname "$free_dir"); done
+        free_gb=$(df -BG --output=avail "$free_dir" 2>/dev/null | tail -n 1 | tr -dc 0-9)
+        echo "    The example's models are about $DOWNLOAD_GB GB: the chat and coding LLMs, and Z-Image Turbo"
+        echo "    for ComfyUI with a coloring-book LoRA and an upscaler. ${free_gb:-?} GB is free in $free_dir."
+        echo "    The download runs last, resumes if it stops, and GPU Shepherd is usable meanwhile."
+        default=Y
+        if [ -n "$free_gb" ] && [ "$free_gb" -lt "$DOWNLOAD_GB" ]; then
+            warn "that is not enough room for all of them; see $DOWNLOADER --help to pick some."
+            default=N
+        fi
+        if confirm "Download the models?" "$default"; then DOWNLOAD=yes; else DOWNLOAD=no; fi
+        echo
+    else
+        DOWNLOAD=no
+    fi
+fi
+
 # --------------------------------------------------------------------------- docker group
 
 DOCKER_USER=""
@@ -382,6 +414,9 @@ else
 fi
 if [ "$EXAMPLE" = yes ]; then
     plan+=("Load the example setup into $DATA_DIR, with new API keys and passwords (nothing starts yet)")
+fi
+if [ "$DOWNLOAD" = yes ]; then
+    plan+=("At the end, download the example's models into $MODELS_DIR (about $DOWNLOAD_GB GB)")
 fi
 if [ "$NO_START" -eq 0 ]; then
     plan+=("Build and start GPU Shepherd (it restarts by itself after a reboot)")
@@ -495,6 +530,7 @@ if [ "$EXAMPLE" = yes ]; then
     }
     mkdir -p "$DATA_DIR/instances" "$DATA_DIR/catalogs" "$MODELS_DIR/comfyui" \
         "$DATA_DIR"/appdata/comfyui/{custom_nodes,input,output,user,cache} \
+        "$DATA_DIR"/appdata/comfyui-2/{input,output,user} \
         "$DATA_DIR/appdata/hermes" "$DATA_DIR/appdata/open-webui"
     for f in "$EXAMPLE_SRC"/instances/*.yaml "$EXAMPLE_SRC"/catalogs/*.yaml; do
         dest="$DATA_DIR/${f#"$EXAMPLE_SRC"/}"
@@ -506,8 +542,21 @@ if [ "$EXAMPLE" = yes ]; then
     if [ -n "${SUDO_USER:-}" ]; then chown "$owner_uid:$owner_gid" "$MODELS_DIR" "$MODELS_DIR/comfyui"; fi
 fi
 
+# Run as the user who ran sudo, so the files are theirs. A failure is reported, not fatal.
+download_models() {
+    [ "$DOWNLOAD" = yes ] || return 0
+    echo
+    say "Downloading the example's models into $MODELS_DIR (Ctrl+C stops it; run it again to resume)"
+    local as=()
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then as=(sudo -u "$SUDO_USER"); fi
+    if ! "${as[@]}" env HF_TOKEN="${HF_TOKEN:-}" bash "$DOWNLOADER" "$MODELS_DIR"; then
+        warn "some models were not downloaded. Finish with:  $DOWNLOADER $MODELS_DIR"
+    fi
+}
+
 if [ "$NO_START" -eq 1 ]; then
     say "Ready. Start GPU Shepherd with:  sudo docker compose up -d --build"
+    download_models
     exit 0
 fi
 
@@ -540,14 +589,16 @@ fi
 if [ "$EXAMPLE" = yes ]; then
     echo
     say "Example setup loaded (nothing is running yet)"
-    echo "    Download the two model files into $MODELS_DIR (about 72 GB):"
-    echo "      curl -L -o $MODELS_DIR/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \\"
-    echo "        https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-    echo "      curl -L -o $MODELS_DIR/Qwen3-Coder-Next-UD-Q4_K_XL.gguf \\"
-    echo "        https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-UD-Q4_K_XL.gguf"
-    echo "    ComfyUI checkpoints go in $MODELS_DIR/comfyui/checkpoints."
-    echo "    Then press Start on each card in the dashboard (the first start downloads its image), and"
+    if [ "$DOWNLOAD" != yes ]; then
+        echo "    Download its models (about $DOWNLOAD_GB GB; pick groups with --help):"
+        echo "      $DOWNLOADER $MODELS_DIR"
+    fi
+    echo "    Press Start on each card in the dashboard (the first start downloads its image), and"
     echo "    turn on Autostart for the ones you want running after a reboot."
+    echo "    ComfyUI: http://${host_ip:-<this-machine>}:8188 (GPU 0) and :8189 (GPU 1, stops the LLM)."
+    echo "    Z-Image: Workflow > Browse Templates > \"Z-Image-Turbo: Text to Image\"."
     echo "    Open WebUI: http://${host_ip:-<this-machine>}:3000   Hermes dashboard: http://${host_ip:-<this-machine>}:9119"
     echo "    Hermes dashboard login: admin / $HERMES_PASSWORD  (also in $DATA_DIR/instances/hermes.yaml)"
 fi
+
+download_models

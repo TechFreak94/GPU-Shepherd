@@ -1,0 +1,22 @@
+# A second ComfyUI on GPU 1, for running two image jobs at once (one per GPU). It shares the
+# models and custom nodes with the first one and keeps its own input, output and settings.
+# Starting it takes GPU 1 from the LLM server, which then stops (you are asked first); the LLM
+# has the higher priority, so it gets GPU 1 back when you start it again.
+id: comfyui-2
+name: ComfyUI (GPU 1)
+description: A second ComfyUI, for two image jobs at once
+kind: container
+image: yanwk/comfyui-boot:cu130-slim-v2
+env:
+  CLI_ARGS: ""
+ports:
+  - {host: 8189, container: 8188}
+volumes:
+  - {host: /srv/models/comfyui, container: /root/ComfyUI/models}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/custom_nodes, container: /root/ComfyUI/custom_nodes}
+  - {host: /opt/gpu-shepherd/appdata/comfyui-2/input, container: /root/ComfyUI/input}
+  - {host: /opt/gpu-shepherd/appdata/comfyui-2/output, container: /root/ComfyUI/output}
+  - {host: /opt/gpu-shepherd/appdata/comfyui-2/user, container: /root/ComfyUI/user}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/cache, container: /root/.cache}
+gpu: {mode: fixed, gpus: [1], priority: 40}
+autostart: false
