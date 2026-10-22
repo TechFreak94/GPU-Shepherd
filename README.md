@@ -46,20 +46,40 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Quick start
 
-### Ubuntu: one script
+### Ubuntu: guided install
 
 On Ubuntu 26.04 (24.04 works too) with an NVIDIA GPU:
 
 ```bash
 git clone <this repo> gpu-shepherd && cd gpu-shepherd
-sudo ./install.sh --models-dir /srv/models      # the folder with your .gguf files (optional)
+sudo ./install.sh
 ```
 
-It installs whatever is missing (Docker and Compose from Ubuntu's packages, the NVIDIA Container
-Toolkit), checks that a container can see the GPUs, writes `compose.yaml` and starts GPU Shepherd,
-then prints the address and the first login. No NVIDIA driver yet? Add `--install-driver`, reboot,
-and run it again. `./install.sh --help` lists the other options (`--data-dir`, `--port`, ...).
-It is safe to re-run: it only does what is still missing, and keeps an existing `compose.yaml`.
+The installer first shows what the machine already has (driver, GPUs, Docker, NVIDIA Container
+Toolkit, RAM). Then it asks a few questions, each with a default you can accept with Enter: where
+your .gguf model files are, which port to use, and where to keep settings. If the NVIDIA driver is
+missing it offers to install it (that needs a reboot; run the installer again afterwards). On the
+first run it offers to load [the example setup](gpushepherd/examples/aistack) (a ComfyUI per GPU
+with Z-Image Turbo, an LLM server with `chat` and `coder` models, Hermes and Open WebUI), filled in
+with your folders and fresh API keys and passwords; nothing in it starts until you press Start. It
+also offers to download the example's models (about 83 GB, resumable) once everything else is done. Finally it shows the plan, and
+nothing is installed or changed until you confirm. Then it installs what is missing, checks that a
+container can see the GPUs, adds you to the `docker` group (so `docker` works without sudo from your
+next login; `--no-docker-group` skips this), starts GPU Shepherd and prints the address, the first
+login, and the example's addresses. It is safe to re-run: it only does what is still missing, and keeps an existing
+`compose.yaml`.
+
+For scripted or advanced installs, every question has a flag, and `--yes` skips the rest:
+
+```bash
+sudo ./install.sh --yes --models-dir /srv/models --port 8090 --data-dir /opt/gpu-shepherd
+```
+
+`./install.sh --help` lists them all (`--example`, `--download-models`, `--install-driver`, `--skip-deps`, `--no-start`, ...).
+
+RAM: with less than 32 GB installed, models have to fit in GPU memory, because keeping part of a
+model in system RAM needs room for it plus the OS and your other containers. 64 GB is recommended
+for the largest models (Qwen3 Coder Next is ~49 GB at Q4).
 
 ### By hand
 
@@ -87,8 +107,9 @@ pip install .
 gpu-shepherd --demo --port 8090      # fake GPUs and containers, log in as admin / demo-password
 ```
 
-The demo loads [an example stack](gpushepherd/examples/aistack): ComfyUI pinned to GPU 0, an
-elastic llama-swap server with two models, an agent and a chat UI.
+The demo loads [the example stack](gpushepherd/examples/aistack), built for two 8 GB GPUs and
+64-128 GB of RAM: ComfyUI pinned to GPU 0 (and a second one for GPU 1), an elastic llama-swap server with a `chat` and a `coder`
+model, Hermes (home lab assistant) and Open WebUI. The installer offers to load it for real.
 
 ## How GPU sharing works
 
@@ -115,6 +136,10 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 
 | Stop ComfyUI | stopped | restarted on GPUs 0,1 |
 
 With a single GPU the same settings make them take turns.
+
+The example adds a second ComfyUI *fixed GPU 1, priority 40*, for two image jobs at once. Starting
+it stops the LLM server (you are asked first); starting the LLM again stops it, since the LLM has the
+higher priority.
 
 ## Coding agents
 

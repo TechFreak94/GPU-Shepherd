@@ -138,3 +138,14 @@ def test_fixed_is_kept_when_elastic_target_can_fit_elsewhere():
     s = {"pin": inst("pin", "fixed", [1], priority=10), "el": inst("el", "elastic", min_gpus=1)}
     p = plan(TWO, s, {"pin": [1]}, "start", "el")
     assert p.allocations == {"pin": [1], "el": [0]} and not p.preempted
+
+
+def test_second_comfyui_takes_gpu1_from_llm():
+    """The example's ComfyUI (GPU 1): starting it stops the LLM, which outranks it afterwards."""
+    s = stack() | {"comfyui-2": inst("comfyui-2", "fixed", [1], priority=40)}
+    p = plan(TWO, s, {"comfyui": [0], "llm": [1]}, "start", "comfyui-2")
+    assert p.allocations == {"comfyui": [0], "comfyui-2": [1]}
+    assert p.preempted == ["llm"] and p.side_effects == ["llm"]
+    p = plan(TWO, s, {"comfyui": [0], "comfyui-2": [1]}, "start", "llm")
+    assert p.allocations == {"comfyui": [0], "llm": [1]}
+    assert p.preempted == ["comfyui-2"]

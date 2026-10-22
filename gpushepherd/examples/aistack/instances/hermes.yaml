@@ -1,9 +1,10 @@
-# Hermes Agent: CPU only, talks to the LLM server at http://llm:8080/v1 (model "auto").
+# Hermes Agent: the home-lab and home-automation assistant. CPU only; it uses the LLM server's
+# "chat" model (set in its config.yaml in the data folder). Dashboard on :9119, API on :8642.
 id: hermes
 name: Hermes
-description: Agent for homelab tasks
+description: Home lab and home automation assistant
 kind: container
-image: nousresearch/hermes-agent:latest
+image: nousresearch/hermes-agent:stable
 command: [gateway, run]
 env:
   HERMES_UID: "1000"
@@ -16,8 +17,9 @@ env:
   API_SERVER_KEY: change-me-hermes-api-key
 ports:
   - {host: 9119, container: 9119}
+  - {host: 8642, container: 8642}
 volumes:
-  - {host: /home/you/aistack/data/hermes, container: /opt/data}
+  - {host: /opt/gpu-shepherd/appdata/hermes, container: /opt/data}
 shm_size: 1g
 memory_limit: 4g
 autostart: true

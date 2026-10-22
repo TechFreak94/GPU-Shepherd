@@ -1,4 +1,7 @@
 # Model catalogue for the "llm" instance. Edit it in the UI (Models page).
+# Tuned for 2x 8 GB GPUs (RTX 3070) and 64+ GB of system RAM. Files are Unsloth's GGUFs:
+#   https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF   Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf   22.4 GB
+#   https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF  Qwen3-Coder-Next-UD-Q4_K_XL.gguf  49.6 GB
 instance_id: llm
 api_key: sk-demo-0000000000000000000000000000000000000000
 threads: 0
@@ -7,42 +10,29 @@ health_timeout: 900
 models:
   - id: qwen3.6-35b-a3b
     name: Qwen3.6 35B-A3B (UD-Q4_K_XL)
-    description: Mixture-of-experts, 3B active - fast on one GPU plus system RAM
+    description: General chat and home-lab agent model. Mixture-of-experts, 3B active
     file: /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
     ctx_size: 131072
     parallel: 2
     sampling: --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0
-    aliases: [qwen]
-    offload:                      # experts that don't fit in VRAM stay in system RAM
+    aliases: [qwen, chat]          # Open WebUI and Hermes ask for "chat"
+    offload:                       # experts that don't fit in VRAM stay in system RAM
       - {min_gpus: 1, cpu_moe: 30}
       - {min_gpus: 2, cpu_moe: 14}
-  - id: muse-glimmer
-    name: Muse Glimmer 30B (UD-Q4_K_XL)
-    description: Dense agentic/coding model - best with both GPUs
-    file: /models/Muse-Glimmer-30B-UD-Q4_K_XL.gguf
-    ctx_size: 131072
-    parallel: 2
-    kv_cache: q8_0
-    sampling: --temp 1.0 --top-p 0.95 --top-k 64
-    aliases: [muse]
   - id: qwen3-coder-next
     name: Qwen3 Coder Next 80B-A3B (UD-Q4_K_XL)
-    description: Coding agent model, 3B active - about 49 GB at Q4, most of it in system RAM
+    description: Coding agent model, 3B active - about 50 GB at Q4, most of it in system RAM
     file: /models/Qwen3-Coder-Next-UD-Q4_K_XL.gguf
     ctx_size: 131072
     parallel: 1
     kv_cache: q8_0
     sampling: --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01
     aliases: [qwen-coder]
-    offload:                      # 48 layers; raise these if it runs out of GPU memory
+    offload:                       # 48 layers; raise these if it runs out of GPU memory
       - {min_gpus: 1, cpu_moe: 48}
       - {min_gpus: 2, cpu_moe: 38}
 auto_aliases:
-  - alias: auto
-    default_model: qwen3.6-35b-a3b
-    rules:
-      - {min_gpus: 2, model: muse-glimmer}
-  - alias: coder                  # point OpenCode, Aider or Continue at "coder"
-    default_model: qwen3.6-35b-a3b
+  - alias: coder                   # point OpenCode, Aider or Continue at "coder"
+    default_model: qwen3.6-35b-a3b # one GPU (ComfyUI has the other): the faster model
     rules:
       - {min_gpus: 2, model: qwen3-coder-next}

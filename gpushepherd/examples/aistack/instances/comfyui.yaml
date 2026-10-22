@@ -1,15 +1,23 @@
-# ComfyUI always uses GPU 0. It has the highest priority, so it keeps its GPU
-# and the LLM server moves aside when ComfyUI starts.
+# ComfyUI for images and video. Always GPU 0, highest priority: when it starts, the LLM server
+# moves to GPU 1; when it stops, the LLM gets both GPUs back.
+# Image: https://github.com/YanWenKun/ComfyUI-Docker (CUDA 13, needs NVIDIA driver 580 or newer).
+# Models go in the models folder's comfyui/ subfolder; download-models.sh fetches Z-Image Turbo
+# (the "Z-Image-Turbo: Text to Image" template), the coloring-book LoRA and an upscaler.
 id: comfyui
 name: ComfyUI
-description: Image generation
+description: Image and video generation
 kind: container
-image: aistack/comfyui:local
+image: yanwk/comfyui-boot:cu130-slim-v2
+env:
+  CLI_ARGS: ""
 ports:
   - {host: 8188, container: 8188}
 volumes:
-  - {host: /home/you/comfyui/ComfyUI/models, container: /opt/ComfyUI/models}
-  - {host: /home/you/aistack/data/comfyui/output, container: /opt/ComfyUI/output}
-  - {host: /home/you/aistack/data/comfyui/custom_nodes, container: /opt/ComfyUI/custom_nodes}
+  - {host: /srv/models/comfyui, container: /root/ComfyUI/models}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/custom_nodes, container: /root/ComfyUI/custom_nodes}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/input, container: /root/ComfyUI/input}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/output, container: /root/ComfyUI/output}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/user, container: /root/ComfyUI/user}
+  - {host: /opt/gpu-shepherd/appdata/comfyui/cache, container: /root/.cache}
 gpu: {mode: fixed, gpus: [0], priority: 80}
 autostart: true
