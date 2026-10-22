@@ -1,0 +1,9 @@
+# Model files for this preset, fetched by presets/download-models.sh into the models folder.
+#   group <name> <default|optional> <size> <description>
+#   file  <group> <path under the models folder> <url> [fallback url ...]
+group chat  default ~5GB   Qwen3 8B, the LLM server's "chat" model (fits an 8 GB GPU)
+group image default ~18GB  Z-Image Turbo for ComfyUI: model, text encoder and VAE
+file chat  Qwen3-8B-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-UD-Q4_K_XL.gguf
+file image comfyui/diffusion_models/z_image_turbo_bf16.safetensors  https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors
+file image comfyui/text_encoders/qwen_3_4b_fp8_mixed.safetensors  https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors
+file image comfyui/vae/ae.safetensors  https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors

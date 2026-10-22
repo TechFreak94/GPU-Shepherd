@@ -11,9 +11,9 @@
 #   3. installs the NVIDIA Container Toolkit and connects it to Docker
 #   4. checks that a container can see the GPUs
 #   5. adds you to the docker group, so docker works without sudo
-#   6. on the first run, offers to load the example setup (ComfyUI, LLM server, Hermes, Open WebUI)
+#   6. on the first run, offers a preset: a ready-made set of instances to start from
 #   7. writes compose.yaml (if there isn't one yet) and starts GPU Shepherd
-#   8. with the example, offers to download its models (LLMs, Z-Image Turbo for ComfyUI)
+#   8. with a preset, offers to download its models
 #
 # Nothing is installed or changed until you confirm the plan. A flag answers its question in
 # advance, so the guided mode only asks what the flags left open. Run it again at any time: it
@@ -31,14 +31,15 @@ INSTALL_DRIVER=0
 SKIP_DEPS=0
 NO_START=0
 ASSUME_YES=0
-EXAMPLE=""              # yes / no once decided by a flag or an answer
-DOWNLOAD=""             # yes / no: download the example's models at the end
+LIST_PRESETS=0
+PRESET=""               # preset name or folder, or "none", once decided by a flag or an answer
+DOWNLOAD=""             # yes / no: download the preset's models at the end
 DOCKER_GROUP=1
 GPU_TEST_IMAGE=ubuntu:24.04
 # Below this much installed RAM, models must fit entirely in GPU memory. Keeping part of a model in
 # system RAM (MoE expert offload) needs room for those layers plus the OS, Docker and the other
 # containers: a 35B-A3B model at Q4 is ~22 GB on its own, so 32 GB is the smallest size where offload
-# is practical. 64 GB fits the largest models in the example stack (Qwen3 Coder Next, ~49 GB at Q4).
+# is practical. 64 GB fits the largest models in the zimage-2x8gb preset (Qwen3 Coder Next, ~49 GB at Q4).
 MIN_RAM_GB=32
 RECOMMENDED_RAM_GB=64
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,10 +58,12 @@ in advance, for scripted or advanced installs.
   --data-dir DIR      where GPU Shepherd keeps its settings (default: $DEFAULT_DATA_DIR)
   --install-driver    install the recommended NVIDIA driver if none is working (needs a reboot)
   --skip-deps         don't install anything; only write compose.yaml and start GPU Shepherd
-  --example           load the example setup on the first run (ComfyUI, LLM server, Hermes,
-                      Open WebUI); with --yes it is only loaded when this is given
-  --no-example        don't offer the example setup
-  --download-models   with the example, download its models at the end (~83 GB, resumable);
+  --preset NAME|DIR   on the first run, create the instances of a preset: one of the folders in
+                      gpushepherd/presets (see --list-presets) or a preset folder of your own;
+                      with --yes nothing is created unless this is given
+  --no-preset         don't offer a preset
+  --list-presets      list the presets and exit
+  --download-models   with a preset, download its models at the end (resumable);
                       with --yes they are only downloaded when this is given
   --no-download       don't offer to download the models
   --no-docker-group   don't add you to the docker group (docker then needs sudo)
@@ -87,8 +90,9 @@ while [ $# -gt 0 ]; do
         --install-driver) INSTALL_DRIVER=1; shift ;;
         --skip-deps)      SKIP_DEPS=1; shift ;;
         --no-start)       NO_START=1; shift ;;
-        --example)        EXAMPLE=yes; shift ;;
-        --no-example)     EXAMPLE=no; shift ;;
+        --preset)         PRESET="${2:?--preset needs a preset name or folder}"; shift 2 ;;
+        --no-preset)      PRESET=none; shift ;;
+        --list-presets)   LIST_PRESETS=1; shift ;;
         --download-models) DOWNLOAD=yes; shift ;;
         --no-download)    DOWNLOAD=no; shift ;;
         --no-docker-group) DOCKER_GROUP=0; shift ;;
@@ -121,6 +125,31 @@ if [ -n "$DATA_DIR" ]; then p=$(dir_problem "$DATA_DIR" settings); [ -z "$p" ] |
 if [ -n "$MODELS_DIR" ]; then
     p=$(dir_problem "$MODELS_DIR" models); [ -z "$p" ] || die "--models-dir: $p"
     [ -d "$MODELS_DIR" ] || die "--models-dir: $MODELS_DIR does not exist"
+fi
+
+# Presets: folders with preset.yaml (name, description, needs, download_gb), instances/, and
+# optionally catalogs/, appdata/, downloads.txt and NOTES.txt. See gpushepherd/presets/README.md.
+PRESETS_DIR="$HERE/gpushepherd/presets"
+preset_field() { sed -n "s/^$2: *//p" "$1/preset.yaml" 2>/dev/null | head -n 1; }
+preset_list() {
+    local d
+    for d in "$PRESETS_DIR"/*/; do [ -f "$d/preset.yaml" ] && basename "$d"; done
+}
+preset_dir() {   # name or folder -> folder (empty if it isn't a preset)
+    local d=$1
+    case "$d" in */*) ;; *) d="$PRESETS_DIR/$d" ;; esac
+    if [ -d "$d/instances" ]; then (cd "$d" && pwd); fi
+}
+if [ "$LIST_PRESETS" -eq 1 ]; then
+    for p in $(preset_list); do
+        printf '%s\n    %s: %s\n    needs %s\n' "$p" "$(preset_field "$PRESETS_DIR/$p" name)" \
+            "$(preset_field "$PRESETS_DIR/$p" description)" "$(preset_field "$PRESETS_DIR/$p" needs)"
+    done
+    exit 0
+fi
+if [ -n "$PRESET" ] && [ "$PRESET" != none ]; then
+    [ -n "$(preset_dir "$PRESET")" ] || die "--preset: '$PRESET' is not a preset (see --list-presets, or give a folder with instances/ in it)"
+    PRESET=$(preset_dir "$PRESET")
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -336,46 +365,70 @@ else
     fi
 fi
 
-# --------------------------------------------------------------------------- example setup
+# --------------------------------------------------------------------------- preset
 
-EXAMPLE_SRC="$HERE/gpushepherd/examples/aistack"
 first_run=1
 if compgen -G "$DATA_DIR/instances/*.yaml" >/dev/null; then first_run=0; fi
-if [ "$first_run" -eq 0 ] || [ ! -d "$EXAMPLE_SRC" ]; then
-    [ "$EXAMPLE" != yes ] || warn "--example ignored: $DATA_DIR already has instances."
-    EXAMPLE=no
-elif [ -z "$EXAMPLE" ]; then
-    if [ "$INTERACTIVE" -eq 1 ]; then
-        echo "    GPU Shepherd starts empty. It can load an example setup, made for two 8 GB GPUs and"
-        echo "    64+ GB of RAM: ComfyUI on GPU 0 (images, video), an LLM server with a chat and a coding"
-        echo "    model that uses whatever GPUs are free, Hermes (home lab assistant) and Open WebUI (chat)."
-        echo "    Nothing in it starts until you press Start; you can change or delete any of it later."
-        if confirm "Load the example setup?" Y; then EXAMPLE=yes; else EXAMPLE=no; fi
+if [ "$first_run" -eq 0 ]; then
+    [ -z "$PRESET" ] || [ "$PRESET" = none ] || warn "--preset ignored: $DATA_DIR already has instances."
+    PRESET=none
+elif [ -z "$PRESET" ]; then
+    PRESET=none
+    mapfile -t presets < <(preset_list)
+    if [ "$INTERACTIVE" -eq 1 ] && [ ${#presets[@]} -gt 0 ]; then
+        echo "    GPU Shepherd starts empty. It can start you off with a preset: a set of instances"
+        echo "    (and their settings) that you can change or delete later. Nothing in it starts until"
+        echo "    you press Start."
+        default=1
+        for i in "${!presets[@]}"; do
+            d="$PRESETS_DIR/${presets[$i]}"
+            [ "${presets[$i]}" != starter ] || default=$((i + 1))
+            printf '      %d) %s - %s\n         needs %s\n' "$((i + 1))" "$(preset_field "$d" name)" \
+                "$(preset_field "$d" description)" "$(preset_field "$d" needs)"
+        done
+        echo "      0) None: start empty"
+        echo "    Or type the folder of a preset of your own."
+        choice=""
+        while :; do
+            ask choice "Preset" "$default"
+            case "$choice" in
+                0) break ;;
+                *[!0-9]*)
+                    if [ -n "$(preset_dir "$choice")" ]; then PRESET=$(preset_dir "$choice"); break; fi
+                    echo "    $choice is not a preset folder (it needs an instances/ folder)." ;;
+                *)
+                    if [ "$choice" -ge 1 ] && [ "$choice" -le ${#presets[@]} ]; then
+                        PRESET="$PRESETS_DIR/${presets[$((choice - 1))]}"; break
+                    fi
+                    echo "    Please pick a number from the list." ;;
+            esac
+        done
         echo
-    else
-        EXAMPLE=no
     fi
 fi
-if [ "$EXAMPLE" = yes ] && [ -z "$MODELS_DIR" ]; then
-    MODELS_DIR="$DATA_DIR/models"       # the example's models need a home
+PRESET_NAME=""
+if [ "$PRESET" != none ]; then
+    PRESET_NAME=$(preset_field "$PRESET" name); PRESET_NAME=${PRESET_NAME:-$(basename "$PRESET")}
+    [ -n "$MODELS_DIR" ] || MODELS_DIR="$DATA_DIR/models"       # the preset's models need a home
 fi
 
-DOWNLOADER="$EXAMPLE_SRC/download-models.sh"
-DOWNLOAD_GB=83
-if [ "$EXAMPLE" != yes ]; then
-    [ "$DOWNLOAD" != yes ] || warn "--download-models ignored: it only applies with the example setup."
+DOWNLOADER="$PRESETS_DIR/download-models.sh"
+DOWNLOAD_GB=$( [ "$PRESET" = none ] || preset_field "$PRESET" download_gb )
+if [ "$PRESET" = none ] || [ ! -f "$PRESET/downloads.txt" ]; then
+    [ "$DOWNLOAD" != yes ] || warn "--download-models ignored: no preset with downloads was chosen."
     DOWNLOAD=no
 elif [ -z "$DOWNLOAD" ]; then
     if [ "$INTERACTIVE" -eq 1 ]; then
         free_dir=$MODELS_DIR
         while [ ! -d "$free_dir" ]; do free_dir=$(dirname "$free_dir"); done
         free_gb=$(df -BG --output=avail "$free_dir" 2>/dev/null | tail -n 1 | tr -dc 0-9)
-        echo "    The example's models are about $DOWNLOAD_GB GB: the chat and coding LLMs, and Z-Image Turbo"
-        echo "    for ComfyUI with a coloring-book LoRA and an upscaler. ${free_gb:-?} GB is free in $free_dir."
-        echo "    The download runs last, resumes if it stops, and GPU Shepherd is usable meanwhile."
+        echo "    The preset's models (about ${DOWNLOAD_GB:-?} GB) can be downloaded for you:"
+        bash "$DOWNLOADER" "$PRESET" | tail -n +2
+        echo "    ${free_gb:-?} GB is free in $free_dir. The download runs last, resumes if it"
+        echo "    stops, and GPU Shepherd is usable meanwhile."
         default=Y
-        if [ -n "$free_gb" ] && [ "$free_gb" -lt "$DOWNLOAD_GB" ]; then
-            warn "that is not enough room for all of them; see $DOWNLOADER --help to pick some."
+        if [ -n "$free_gb" ] && [ -n "$DOWNLOAD_GB" ] && [ "$free_gb" -lt "$DOWNLOAD_GB" ]; then
+            warn "that is not enough room for all of them; $DOWNLOADER can fetch only some."
             default=N
         fi
         if confirm "Download the models?" "$default"; then DOWNLOAD=yes; else DOWNLOAD=no; fi
@@ -412,11 +465,11 @@ if [ "$HAS_COMPOSE_FILE" -eq 1 ]; then
 else
     plan+=("Write compose.yaml: settings in $DATA_DIR, port $PORT, models: ${MODELS_DIR:-none}")
 fi
-if [ "$EXAMPLE" = yes ]; then
-    plan+=("Load the example setup into $DATA_DIR, with new API keys and passwords (nothing starts yet)")
+if [ "$PRESET" != none ]; then
+    plan+=("Create the instances of the \"$PRESET_NAME\" preset, with new API keys and passwords (nothing starts yet)")
 fi
 if [ "$DOWNLOAD" = yes ]; then
-    plan+=("At the end, download the example's models into $MODELS_DIR (about $DOWNLOAD_GB GB)")
+    plan+=("At the end, download the preset's models into $MODELS_DIR (about ${DOWNLOAD_GB:-?} GB)")
 fi
 if [ "$NO_START" -eq 0 ]; then
     plan+=("Build and start GPU Shepherd (it restarts by itself after a reboot)")
@@ -507,8 +560,8 @@ else
 fi
 
 random_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
-if [ "$EXAMPLE" = yes ]; then
-    say "Loading the example setup"
+if [ "$PRESET" != none ]; then
+    say "Creating the \"$PRESET_NAME\" preset"
     LLM_KEY="sk-$(random_hex 20)"
     HERMES_KEY="$(random_hex 24)"
     HERMES_PASSWORD="$(random_hex 8)"
@@ -526,31 +579,46 @@ if [ "$EXAMPLE" = yes ]; then
             -e "s#HERMES_GID: \"1000\"#HERMES_GID: \"$owner_gid\"#" \
             -e "s#^autostart: true#autostart: false#" \
             "$1" > "$2"
-        chmod 600 "$2"
     }
-    mkdir -p "$DATA_DIR/instances" "$DATA_DIR/catalogs" "$MODELS_DIR/comfyui" \
-        "$DATA_DIR"/appdata/comfyui/{custom_nodes,input,output,user,cache} \
-        "$DATA_DIR"/appdata/comfyui-2/{input,output,user} \
-        "$DATA_DIR/appdata/hermes" "$DATA_DIR/appdata/open-webui"
-    for f in "$EXAMPLE_SRC"/instances/*.yaml "$EXAMPLE_SRC"/catalogs/*.yaml; do
-        dest="$DATA_DIR/${f#"$EXAMPLE_SRC"/}"
-        [ -e "$dest" ] || fill "$f" "$dest"
+    mkdir -p "$DATA_DIR/instances" "$DATA_DIR/catalogs" "$DATA_DIR/appdata" "$MODELS_DIR"
+    for f in "$PRESET"/instances/*.yaml "$PRESET"/catalogs/*.yaml; do
+        [ -f "$f" ] || continue
+        dest="$DATA_DIR/${f#"$PRESET"/}"
+        if [ ! -e "$dest" ]; then fill "$f" "$dest"; chmod 600 "$dest"; fi
     done
-    [ -e "$DATA_DIR/appdata/hermes/config.yaml" ] \
-        || fill "$EXAMPLE_SRC/appdata/hermes/config.yaml" "$DATA_DIR/appdata/hermes/config.yaml"
-    chown -R "$owner_uid:$owner_gid" "$DATA_DIR/appdata/hermes"
-    if [ -n "${SUDO_USER:-}" ]; then chown "$owner_uid:$owner_gid" "$MODELS_DIR" "$MODELS_DIR/comfyui"; fi
+    # appdata/ holds starting files for the instances' folders (configs, tools, notes). Copied as
+    # the user, text files filled in; existing files are kept.
+    if [ -d "$PRESET/appdata" ]; then
+        while IFS= read -r -d '' f; do
+            rel=${f#"$PRESET"/}; dest="$DATA_DIR/$rel"
+            [ ! -e "$dest" ] || continue
+            mkdir -p "$(dirname "$dest")"
+            if ! grep -Iq . "$f"; then cp -p "$f" "$dest"
+            else fill "$f" "$dest"; case "$f" in *.yaml) chmod 600 "$dest" ;; *) chmod --reference="$f" "$dest" ;; esac
+            fi
+        done < <(find "$PRESET/appdata" -type f -print0)
+        for d in "$PRESET"/appdata/*/; do chown -R "$owner_uid:$owner_gid" "$DATA_DIR/appdata/$(basename "$d")"; done
+    fi
+    # Create every host folder the instances mount, so Docker doesn't make them root-only.
+    grep -ho 'host: /[^,}]*' "$DATA_DIR"/instances/*.yaml | sed 's/^host: //' | sort -u | while read -r d; do
+        case "$d" in "$DATA_DIR"/*|"$MODELS_DIR"|"$MODELS_DIR"/*) ;; *) continue ;; esac
+        [ -e "$d" ] || { mkdir -p "$d"; chown "$owner_uid:$owner_gid" "$d"; }
+    done
+    if [ -n "${SUDO_USER:-}" ]; then chown "$owner_uid:$owner_gid" "$MODELS_DIR"; fi
+    if [ -f "$PRESET/NOTES.txt" ]; then   # may hold a password
+        fill "$PRESET/NOTES.txt" "$DATA_DIR/PRESET_NOTES.txt"; chmod 600 "$DATA_DIR/PRESET_NOTES.txt"
+    fi
 fi
 
 # Run as the user who ran sudo, so the files are theirs. A failure is reported, not fatal.
 download_models() {
     [ "$DOWNLOAD" = yes ] || return 0
     echo
-    say "Downloading the example's models into $MODELS_DIR (Ctrl+C stops it; run it again to resume)"
+    say "Downloading the preset's models into $MODELS_DIR (Ctrl+C stops it; run it again to resume)"
     local as=()
     if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then as=(sudo -u "$SUDO_USER"); fi
-    if ! "${as[@]}" env HF_TOKEN="${HF_TOKEN:-}" bash "$DOWNLOADER" "$MODELS_DIR"; then
-        warn "some models were not downloaded. Finish with:  $DOWNLOADER $MODELS_DIR"
+    if ! "${as[@]}" env HF_TOKEN="${HF_TOKEN:-}" bash "$DOWNLOADER" "$PRESET" "$MODELS_DIR"; then
+        warn "some models were not downloaded. Finish with:  $DOWNLOADER $PRESET $MODELS_DIR"
     fi
 }
 
@@ -586,19 +654,18 @@ if [ -n "$DOCKER_USER" ]; then
     echo "    You ($DOCKER_USER) can run docker without sudo after logging out and back in. Being in"
     echo "    the docker group is root-equivalent too."
 fi
-if [ "$EXAMPLE" = yes ]; then
+if [ "$PRESET" != none ]; then
     echo
-    say "Example setup loaded (nothing is running yet)"
-    if [ "$DOWNLOAD" != yes ]; then
-        echo "    Download its models (about $DOWNLOAD_GB GB; pick groups with --help):"
-        echo "      $DOWNLOADER $MODELS_DIR"
+    say "\"$PRESET_NAME\" preset created (nothing is running yet)"
+    if [ "$DOWNLOAD" != yes ] && [ -f "$PRESET/downloads.txt" ]; then
+        echo "    Download its models (about ${DOWNLOAD_GB:-?} GB; run it without the folder to list them):"
+        echo "      $DOWNLOADER $PRESET $MODELS_DIR"
     fi
     echo "    Press Start on each card in the dashboard (the first start downloads its image), and"
     echo "    turn on Autostart for the ones you want running after a reboot."
-    echo "    ComfyUI: http://${host_ip:-<this-machine>}:8188 (GPU 0) and :8189 (GPU 1, stops the LLM)."
-    echo "    Z-Image: Workflow > Browse Templates > \"Z-Image-Turbo: Text to Image\"."
-    echo "    Open WebUI: http://${host_ip:-<this-machine>}:3000   Hermes dashboard: http://${host_ip:-<this-machine>}:9119"
-    echo "    Hermes dashboard login: admin / $HERMES_PASSWORD  (also in $DATA_DIR/instances/hermes.yaml)"
+    if [ -f "$DATA_DIR/PRESET_NOTES.txt" ]; then
+        sed -e "s#HOST#${host_ip:-<this-machine>}#g" -e 's/^/    /' "$DATA_DIR/PRESET_NOTES.txt"
+    fi
 fi
 
 download_models

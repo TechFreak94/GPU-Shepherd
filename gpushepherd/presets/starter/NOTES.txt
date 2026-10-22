@@ -1,0 +1,2 @@
+Open WebUI: http://HOST:3000   ComfyUI: http://HOST:8188   LLM server: http://HOST:8080/ui
+In ComfyUI: Workflow > Browse Templates > "Z-Image-Turbo: Text to Image" (8 steps, CFG 1).

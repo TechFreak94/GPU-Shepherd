@@ -1,0 +1,5 @@
+# Shown by the installer when it asks which setup to create. One "key: value" per line.
+name: Starter
+description: An LLM server with a chat model, ComfyUI for images and Open WebUI to use both
+needs: 1 or more NVIDIA GPUs with 8+ GB, 16+ GB of RAM
+download_gb: 23

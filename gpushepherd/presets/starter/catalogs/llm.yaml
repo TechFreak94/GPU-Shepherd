@@ -1,0 +1,18 @@
+# Model catalogue for the "llm" instance. Edit it in the UI (Models page), or add models there.
+#   https://huggingface.co/unsloth/Qwen3-8B-GGUF   Qwen3-8B-UD-Q4_K_XL.gguf   ~5 GB, fits one 8 GB GPU
+instance_id: llm
+api_key: sk-demo-0000000000000000000000000000000000000000
+threads: 0
+llama_server: ""
+health_timeout: 600
+models:
+  - id: qwen3-8b
+    name: Qwen3 8B (UD-Q4_K_XL)
+    description: General chat and light coding; fits entirely on one 8 GB GPU
+    file: /models/Qwen3-8B-UD-Q4_K_XL.gguf
+    ctx_size: 32768
+    parallel: 1
+    kv_cache: q8_0
+    sampling: --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0
+    aliases: [chat, coder]
+auto_aliases: []

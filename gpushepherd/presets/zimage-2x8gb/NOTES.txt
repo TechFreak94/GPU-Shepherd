@@ -1,0 +1,4 @@
+ComfyUI: http://HOST:8188 (GPU 0) and http://HOST:8189 (GPU 1; starting it stops the LLM server)
+Open WebUI: http://HOST:3000   Hermes dashboard: http://HOST:9119 (admin / change-me-please)
+Z-Image settings, LoRA and prompt tips: /opt/gpu-shepherd/appdata/comfyui/COLORING_BOOK_SETTINGS.md
+Build a KDP book: /opt/gpu-shepherd/appdata/comfyui/tools/kdp-book.sh <folder of pages> book.pdf

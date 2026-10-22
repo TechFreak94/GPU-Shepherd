@@ -1,0 +1,19 @@
+# Open WebUI: chat with the LLM server's models, and make images through ComfyUI when it runs.
+id: webui
+name: Chat UI
+description: Open WebUI for chat and ComfyUI images
+kind: container
+image: ghcr.io/open-webui/open-webui:main
+ports:
+  - {host: 3000, container: 8080}
+env:
+  OPENAI_API_BASE_URLS: http://llm:8080/v1
+  OPENAI_API_KEYS: REPLACE_WITH_LLM_API_KEY
+  DEFAULT_MODELS: chat
+  ENABLE_OLLAMA_API: "false"
+  ENABLE_IMAGE_GENERATION: "true"
+  IMAGE_GENERATION_ENGINE: comfyui
+  COMFYUI_BASE_URL: http://comfyui:8188
+volumes:
+  - {host: /opt/gpu-shepherd/appdata/open-webui, container: /app/backend/data}
+autostart: true

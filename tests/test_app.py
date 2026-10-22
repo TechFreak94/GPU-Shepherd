@@ -12,7 +12,8 @@ import gpushepherd.gpu as gpu_mod
 from gpushepherd.app import DemoLlamaClient, create_app
 from gpushepherd.backend import FakeBackend
 
-EXAMPLE = Path(gpushepherd.__file__).parent / "examples" / "aistack"
+PRESETS = Path(gpushepherd.__file__).parent / "presets"
+EXAMPLE = PRESETS / "zimage-2x8gb"
 HX = {"HX-Request": "true"}
 
 

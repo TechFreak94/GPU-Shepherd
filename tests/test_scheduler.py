@@ -8,7 +8,7 @@ def inst(iid, mode="none", gpus=(), min_gpus=1, max_gpus=0, priority=50):
 
 
 def stack():
-    """The aistack setup: ComfyUI pinned to GPU 0, an elastic LLM server, a CPU-only agent."""
+    """The zimage-2x8gb preset: ComfyUI pinned to GPU 0, an elastic LLM server, a CPU-only agent."""
     return {
         "comfyui": inst("comfyui", "fixed", [0], priority=80),
         "llm": inst("llm", "elastic", min_gpus=1, priority=50),
