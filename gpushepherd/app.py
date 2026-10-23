@@ -186,9 +186,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         form = await request.form()
         s = store.settings()
         user, password = str(form.get("user", "")), str(form.get("password", ""))
-        if secrets.compare_digest(user, s.admin_user) and auth.verify_password(password, s.password_hash):
+        # Copying the password out of a terminal easily picks up a space or line break at either end.
+        ok = auth.verify_password(password, s.password_hash) or (
+            password != password.strip() and auth.verify_password(password.strip(), s.password_hash))
+        if secrets.compare_digest(user.strip(), s.admin_user) and ok:
             request.session.clear()
-            request.session["user"] = user
+            request.session["user"] = s.admin_user
             return RedirectResponse("/", status_code=303)
         return page(request, "login.html", status=401, error="Wrong user name or password.",
                     first_run=auth.initial_password_file(store).exists())

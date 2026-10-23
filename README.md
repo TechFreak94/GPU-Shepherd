@@ -96,6 +96,8 @@ docker compose logs gpu-shepherd | grep "First start"   # the generated admin pa
 ```
 
 Open `http://<server>:8090`, log in as `admin`, then **Add instance** or **Add model server**.
+Lost the password? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one
+(also saved in `INITIAL_PASSWORD.txt` in the data folder); it works at once, no restart needed.
 
 The data folder must be mounted at the **same path** inside and outside the container (like
 Dockge's stacks folder), because GPU Shepherd hands paths in it to Docker for the containers it
