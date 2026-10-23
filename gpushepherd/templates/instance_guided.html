@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Set up {{ t.title }} · GPU Shepherd{% endblock %}
+{% block content %}
+<div id="editor">
+<div class="pagehead">
+  <div><h1>Set up {{ t.title }}</h1>
+  <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}</div></div>
+  <a class="btn" href="/instances/new">Back to templates</a>
+</div>
+{% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
+<form class="guided" hx-post="/instances/guided" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
+  <input type="hidden" name="template" value="{{ t.key }}">
+
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>Name and address</h3>
+    <div class="fields">
+      <div><label for="name">Name</label><input type="text" id="name" name="name" value="{{ f.name }}" required>
+        <div class="hint">Shown on the dashboard.</div></div>
+      <div><label for="id">ID</label><input type="text" id="id" name="id" value="{{ f.id }}" required pattern="[a-z0-9][a-z0-9-]{0,39}">
+        <div class="hint">Other containers reach it as <span class="mono">http://{{ f.id or "id" }}:{{ t.container_port }}</span>.</div></div>
+      <div><label for="port">Port on this machine</label><input type="number" id="port" name="port" min="1" max="65535" value="{{ f.port }}" required>
+        <div class="hint">Open it at http://<em>this machine</em>:<em>port</em>{{ t.open_path if t.open_path != "/" }}. A free port is suggested.</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>GPUs</h3>
+    <fieldset class="choices">
+      <legend class="sr-only">GPU use</legend>
+      {% for value, label in gpu_choices %}
+      <label class="check"><input type="radio" name="gpu" value="{{ value }}" {{ "checked" if f.gpu == value }}> {{ label }}{% if value == t.gpu %} <span class="tag accent">recommended</span>{% endif %}</label>
+      {% endfor %}
+    </fieldset>
+    <div class="hint">{% if gpus %}This machine has {{ gpus|length }} GPU{{ "s" if gpus|length != 1 }}. {% endif %}When GPUs run short, {{ "this instance outranks model servers" if t.priority > 50 else "higher-priority instances keep theirs" }}; you are asked before anything is stopped. Priority and GPU limits can be changed later under Edit.</div>
+  </div>
+
+  {% if t.models_mount or t.appdata %}
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>Folders</h3>
+    <div class="fields">
+      {% if t.models_mount %}
+      <div><label for="models_dir">Models folder on this machine</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}" required>
+        <div class="hint">{% if t.models_mount[0] %}Mounted from its <span class="mono">{{ t.models_mount[0] }}/</span> subfolder at <span class="mono">{{ t.models_mount[1] }}</span>.{% else %}Mounted read-only at <span class="mono">{{ t.models_mount[1] }}</span>.{% endif %}</div></div>
+      {% endif %}
+      {% if t.appdata %}
+      <div><label for="appdata_dir">App data folder</label><input type="text" id="appdata_dir" name="appdata_dir" value="{{ f.appdata_dir }}" required>
+        <div class="hint">Keeps {{ t.appdata|map('first')|join(', ') }} when the container is re-created.</div></div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if t.connects %}
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>Connections</h3>
+    <div class="fields">
+      <div><label for="server">Model server to chat with</label>
+        <select id="server" name="server">
+          <option value="">None for now</option>
+          {% for id, name in servers %}<option value="{{ id }}" {{ "selected" if f.server == id }}>{{ name }} ({{ id }})</option>{% endfor %}
+        </select>
+        <div class="hint">{% if servers %}Its address and API key are filled in for you.{% else %}There is no model server yet: <a href="/instances/new/llm-chat">set one up first</a>, or add it later under Edit.{% endif %}</div></div>
+      <div><label for="comfyui">Make images with</label>
+        <select id="comfyui" name="comfyui">
+          <option value="">Nothing (no image generation)</option>
+          {% for id, name in comfy %}<option value="{{ id }}" {{ "selected" if f.comfyui == id }}>{{ name }} ({{ id }})</option>{% endfor %}
+        </select>
+        <div class="hint">Pick your ComfyUI instance to generate images from the chat.</div></div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if t.first_model %}
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>First model <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span></h3>
+    <label for="file">Model file (.gguf)</label>
+    <input type="text" id="file" name="file" value="{{ f.file }}" placeholder="{{ t.models_mount[1] }}/model-Q4_K_M.gguf">
+    {% if files %}
+    <div class="hint">Pick one of the files in the models folder:</div>
+    <div class="files">
+      {% for x in files %}<button type="button" data-pick-file="{{ x.container_path }}">
+        <span class="mono">{{ x.container_path }}</span><span class="muted small">{{ x.size_gb }} GB</span></button>{% endfor %}
+    </div>
+    {% endif %}
+    {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
+    <div class="hint">Leave it empty to add models on the Models page next. Clients can ask for it as <span class="mono">{{ t.first_model.alias }}</span>.</div>
+    <div class="fields" style="margin-top:12px">
+      <div><label for="ctx_size">Context (tokens)</label><input type="number" id="ctx_size" name="ctx_size" min="512" value="{{ f.ctx_size }}"></div>
+      <div><label for="offload">GPU memory and system RAM</label>
+        <select id="offload" name="offload">
+          {% for value, label in offload_choices.items() %}<option value="{{ value }}" {{ "selected" if f.offload == value }}>{{ label }}</option>{% endfor %}
+        </select>
+        <div class="hint">Automatic keeps the model on the GPUs when it fits and moves MoE expert layers to RAM when it doesn't, separately for each number of GPUs. Fine-tune it on the Models page.</div></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="section">
+    <h3 style="margin-top:0">What gets created</h3>
+    <dl class="facts">
+      <dt>Image</dt><dd class="mono">{{ t.image }}</dd>
+      <dt>Type</dt><dd>{{ "Model server (llama-swap)" if t.kind == "llama-swap" else "Container" }}</dd>
+      <dt>Settings file</dt><dd class="mono">instances/{{ f.id or "id" }}.yaml</dd>
+      {% if t.env %}<dt>Environment</dt><dd class="mono">{% for k, v in t.env.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
+    </dl>
+    <label class="check"><input type="checkbox" name="autostart" {{ "checked" if f.autostart }}> Start automatically when GPU Shepherd starts</label>
+  </div>
+
+  <div class="actions">
+    <a class="btn" href="/instances/new">Cancel</a>
+    <button type="submit" name="action" value="advanced" title="Open the full form with these answers filled in">Customize every field…</button>
+    <button class="primary" type="submit" name="action" value="create">Create {{ t.title }}</button>
+  </div>
+</form>
+</div>
+{% endblock %}

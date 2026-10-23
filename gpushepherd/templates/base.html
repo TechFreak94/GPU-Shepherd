@@ -19,7 +19,7 @@
     <nav>
       {% set here = request.url.path %}
       <a href="/"{% if here == "/" %} aria-current="page"{% endif %}>Dashboard</a>
-      <a href="/instances/new"{% if here == "/instances/new" %} aria-current="page"{% endif %}>Add instance</a>
+      <a href="/instances/new"{% if here.startswith("/instances/new") %} aria-current="page"{% endif %}>Add instance</a>
       <a href="/settings"{% if here == "/settings" %} aria-current="page"{% endif %}>Settings</a>
       <button class="link" hx-post="/logout" title="Log out of GPU Shepherd">Log out</button>
     </nav>

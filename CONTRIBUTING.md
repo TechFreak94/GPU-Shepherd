@@ -17,6 +17,8 @@ gpu-shepherd --demo --port 8090     # no Docker or GPU needed; log in as admin /
   existing YAML files keep loading.
 - No JavaScript build step. Prefer htmx attributes and server-rendered templates; keep
   `static/app.js` small and free of inline scripts (the CSP forbids them).
+- Guided-setup templates (`instance_templates.py`) are generic starting points for widely used
+  apps. They must work on any NVIDIA machine: no personal models, paths or hardware assumptions.
 - User-facing text: plain language, say what will happen and why.
 - Security: every state-changing route is `POST`, requires a login, and must be called by htmx
   (the `HX-Request` header). Validate anything that ends up in a Docker call.

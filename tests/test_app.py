@@ -324,3 +324,52 @@ def test_login_without_cookie_explains(stack):
     r = client.get("/?login=1", follow_redirects=False)
     assert r.headers["location"] == "/login?nocookie=1"
     assert "did not keep the login cookie" in client.get("/login?nocookie=1").text
+
+
+def test_guided_setup(stack, tmp_path_factory):
+    app, client, backend, data = stack
+    login(client)
+    page = client.get("/instances/new").text
+    for key in ("llm-chat", "llm-coder", "comfyui", "open-webui", "custom"):
+        assert f'href="/instances/new/{key}' in page
+    # old "Add model server" links still reach the full form
+    assert 'name="kind" value="llama-swap"' in client.get("/instances/new?kind=llama-swap").text
+
+    models = tmp_path_factory.mktemp("models")
+    with open(models / "Big-MoE-Q4.gguf", "wb") as fh:
+        fh.truncate(10 * 1_073_741_824)                   # sparse: 10 GB on two 8 GB GPUs
+    form = client.get("/instances/new/llm-coder").text
+    assert 'value="coder"' in form and 'value="8081"' in form and 'value="/srv/models"' in form
+
+    answers = {"template": "llm-coder", "name": "Coder", "id": "coder", "port": "8081", "gpu": "all",
+               "models_dir": str(models), "file": "/models/Big-MoE-Q4.gguf", "ctx_size": "65536",
+               "offload": "auto", "action": "create"}
+    r = client.post("/instances/guided", headers=HX, data=answers)
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/instances/coder/models")
+    inst = yaml.safe_load((data / "instances" / "coder.yaml").read_text())
+    assert inst["kind"] == "llama-swap" and inst["gpu"]["mode"] == "elastic"
+    assert inst["volumes"] == [{"host": str(models), "container": "/models", "read_only": True}]
+    cat = yaml.safe_load((data / "catalogs" / "coder.yaml").read_text())
+    assert cat["models"][0]["id"] == "big-moe-q4" and cat["models"][0]["aliases"] == ["coder"]
+    assert [(o["min_gpus"], o["cpu_moe"]) for o in cat["models"][0]["offload"]] == [(1, 999), (2, 0)]
+
+    # the same ID again is refused, and the form keeps the answers
+    r = client.post("/instances/guided", headers=HX, data=answers)
+    assert "already exists" in r.text and r.headers["HX-Retarget"] == "#editor"
+
+    # Open WebUI wires itself to a model server, with its API key
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "open-webui", "name": "Chat 2", "id": "chat2", "port": "3001", "gpu": "none",
+        "appdata_dir": str(data / "appdata" / "chat2"), "server": "coder", "comfyui": "comfyui", "action": "create"})
+    assert r.status_code == 204
+    env = yaml.safe_load((data / "instances" / "chat2.yaml").read_text())["env"]
+    assert env["OPENAI_API_BASE_URLS"] == "http://coder:8080/v1" and env["OPENAI_API_KEYS"] == cat["api_key"]
+    assert (data / "appdata" / "chat2" / "data").is_dir()
+
+    # "Customize every field" opens the full form filled in, without saving
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "comfyui", "name": "ComfyUI 2", "id": "comfyui-2", "port": "8189", "gpu": "pin:1",
+        "models_dir": "/srv/models", "appdata_dir": "/opt/gpu-shepherd/appdata/comfyui-2", "action": "advanced"})
+    assert r.status_code == 200 and 'action="/instances/save"' not in r.text
+    assert 'hx-post="/instances/save"' in r.text and "8189:8188" in r.text and "yanwk/comfyui-boot" in r.text
+    assert not (data / "instances" / "comfyui-2.yaml").exists()
