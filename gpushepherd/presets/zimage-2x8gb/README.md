@@ -3,10 +3,8 @@
 Zach's setup, which GPU Shepherd grew out of: two 8 GB GPUs (RTX 3070) and 64-128 GB of RAM, used
 for Z-Image Turbo coloring-book pages, local chat and coding models, and a home-lab assistant.
 
-[`install-zimage.sh`](../../install-zimage.sh) at the top of the repository installs GPU Shepherd
-with this preset and downloads the Z-Image files, like the original `setup_comfyui_zimage.sh`
-did for a bare-metal ComfyUI (`ZIMAGE_VARIANT=fp8|bf16|both`, `INSTALL_LORAS`, `INSTALL_UPSCALER`,
-`INSTALL_LLMS`, `HF_TOKEN`).
+`sudo ./install.sh --preset zimage-2x8gb` creates it; the download step can fetch only some groups
+(`gpushepherd/presets/download-models.sh zimage-2x8gb` lists them).
 
 | Instance | GPUs | What for |
 |---|---|---|

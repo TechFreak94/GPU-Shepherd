@@ -76,10 +76,6 @@ For scripted or advanced installs, every question has a flag, and `--yes` skips 
 sudo ./install.sh --yes --models-dir /srv/models --port 8090 --data-dir /opt/gpu-shepherd
 ```
 
-For Z-Image Turbo (one ComfyUI per GPU, the coloring-book LoRA, an upscaler), run
-`./install-zimage.sh` instead: it installs with the `zimage-2x8gb` preset and downloads the Z-Image
-files. `./install-zimage.sh --help` lists its settings.
-
 `./install.sh --help` lists them all (`--preset`, `--list-presets`, `--download-models`, `--install-driver`, `--skip-deps`, `--no-start`, ...).
 
 RAM: with less than 32 GB installed, models have to fit in GPU memory, because keeping part of a

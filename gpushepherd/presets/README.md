@@ -8,7 +8,7 @@ folder and asks which one to use (or none); `--preset NAME` picks one up front, 
 | Preset | For | What it creates |
 |---|---|---|
 | [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3 8B), ComfyUI (SDXL), Open WebUI |
-| [`zimage-2x8gb`](zimage-2x8gb) | 2x 8 GB GPUs, 64+ GB RAM | a ComfyUI per GPU for Z-Image Turbo and a coloring-book LoRA; LLM server with chat and coding models; Hermes; Open WebUI. [`install-zimage.sh`](../../install-zimage.sh) installs it with the Z-Image models |
+| [`zimage-2x8gb`](zimage-2x8gb) | 2x 8 GB GPUs, 64+ GB RAM | a ComfyUI per GPU for Z-Image Turbo and a coloring-book LoRA; LLM server with chat and coding models; Hermes; Open WebUI |
 
 Nothing in a preset starts by itself: the installer turns autostart off until you have tried it.
 
