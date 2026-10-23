@@ -1,8 +1,3 @@
-# ComfyUI for images and video. Always GPU 0, highest priority: when it starts, the LLM server
-# moves to GPU 1; when it stops, the LLM gets both GPUs back.
-# Image: https://github.com/YanWenKun/ComfyUI-Docker (CUDA 13, needs NVIDIA driver 580 or newer).
-# Models go in the models folder's comfyui/ subfolder; the preset's downloads fetch Z-Image Turbo
-# (the "Z-Image-Turbo: Text to Image" template), the coloring-book LoRA and an upscaler.
 id: comfyui
 name: ComfyUI
 description: Image and video generation

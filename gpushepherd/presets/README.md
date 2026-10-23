@@ -8,7 +8,6 @@ folder and asks which one to use (or none); `--preset NAME` picks one up front, 
 | Preset | For | What it creates |
 |---|---|---|
 | [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3 8B), ComfyUI (SDXL), Open WebUI |
-| [`zimage-2x8gb`](zimage-2x8gb) | 2x 8 GB GPUs, 64+ GB RAM | a ComfyUI per GPU for Z-Image Turbo and a coloring-book LoRA; LLM server with chat and coding models; Hermes; Open WebUI |
 
 Nothing in a preset starts by itself: the installer turns autostart off until you have tried it.
 
@@ -57,8 +56,8 @@ The installer offers to download the default groups at the end of the install. Y
 folder it downloads the default groups, and you can name groups to download only those:
 
 ```bash
-gpushepherd/presets/download-models.sh zimage-2x8gb                       # list the groups
-gpushepherd/presets/download-models.sh zimage-2x8gb /srv/models zimage lora
+gpushepherd/presets/download-models.sh starter                  # list the groups
+gpushepherd/presets/download-models.sh starter /srv/models chat
 ```
 
 Downloads resume where they stopped and skip files you already have. Set `HF_TOKEN` for gated
