@@ -1,0 +1,14 @@
+# llama-swap: one OpenAI-compatible endpoint (http://llm:8080/v1 inside, :8080 outside) that loads
+# whichever model a client asks for. Elastic: it takes every GPU nobody else needs.
+id: llm
+name: LLM server
+description: llama-swap with Qwen3 8B (chat)
+kind: llama-swap
+image: ghcr.io/mostlygeek/llama-swap:cuda
+ports:
+  - {host: 8080, container: 8080}
+volumes:
+  - {host: /srv/models, container: /models, read_only: true}
+gpu: {mode: elastic, min_gpus: 1, max_gpus: 0, priority: 50}
+autostart: true
+open_path: /ui

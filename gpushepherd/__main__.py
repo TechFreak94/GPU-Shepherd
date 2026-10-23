@@ -12,7 +12,7 @@ import uvicorn
 
 from . import __version__
 
-EXAMPLES = Path(__file__).resolve().parent / "examples"
+PRESETS = Path(__file__).resolve().parent / "presets"
 
 
 def main() -> None:
@@ -21,7 +21,9 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=int(os.environ.get("SHEPHERD_PORT", "8090")))
     ap.add_argument("--data-dir", default=os.environ.get("SHEPHERD_DATA_DIR", "/opt/gpu-shepherd"))
     ap.add_argument("--demo", action="store_true",
-                    help="no Docker needed: fake GPUs and containers, seeded with the example stack")
+                    help="no Docker needed: fake GPUs and containers, seeded with a preset")
+    ap.add_argument("--demo-preset", default="starter", metavar="NAME",
+                    help="preset the demo starts with (a folder in gpushepherd/presets; default: starter)")
     ap.add_argument("--version", action="version", version=f"gpu-shepherd {__version__}")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,9 +34,12 @@ def main() -> None:
         os.environ.setdefault("SHEPHERD_FAKE_GPUS", "2x8192:NVIDIA GeForce RTX 3070")
         os.environ.setdefault("SHEPHERD_ADMIN_PASSWORD", "demo-password")
         data_dir = tempfile.mkdtemp(prefix="gpushepherd-demo-")
-        example = EXAMPLES / "aistack"
-        if example.is_dir():
-            shutil.copytree(example, data_dir, dirs_exist_ok=True)
+        preset = PRESETS / args.demo_preset
+        if not (preset / "instances").is_dir():
+            ap.error(f"no preset named '{args.demo_preset}' in {PRESETS}")
+        for part in ("instances", "catalogs", "appdata"):
+            if (preset / part).is_dir():
+                shutil.copytree(preset / part, Path(data_dir) / part, dirs_exist_ok=True)
         logging.getLogger("gpushepherd").warning("Demo mode: log in as admin / demo-password (data in %s)", data_dir)
 
     from .app import create_app

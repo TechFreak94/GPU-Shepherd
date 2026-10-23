@@ -1,8 +1,7 @@
-# ComfyUI for images and video. Always GPU 0, highest priority: when it starts, the LLM server
-# moves to GPU 1; when it stops, the LLM gets both GPUs back.
+# ComfyUI for images and video. It needs one GPU, any one, and outranks the LLM server: with two
+# or more GPUs they run side by side; with one GPU, starting either stops the other (you are asked).
 # Image: https://github.com/YanWenKun/ComfyUI-Docker (CUDA 13, needs NVIDIA driver 580 or newer).
-# Models go in the models folder's comfyui/ subfolder; download-models.sh fetches Z-Image Turbo
-# (the "Z-Image-Turbo: Text to Image" template), the coloring-book LoRA and an upscaler.
+# Models go in the models folder's comfyui/ subfolder (checkpoints/, loras/, vae/ ...).
 id: comfyui
 name: ComfyUI
 description: Image and video generation
@@ -19,5 +18,5 @@ volumes:
   - {host: /opt/gpu-shepherd/appdata/comfyui/output, container: /root/ComfyUI/output}
   - {host: /opt/gpu-shepherd/appdata/comfyui/user, container: /root/ComfyUI/user}
   - {host: /opt/gpu-shepherd/appdata/comfyui/cache, container: /root/.cache}
-gpu: {mode: fixed, gpus: [0], priority: 80}
+gpu: {mode: elastic, min_gpus: 1, max_gpus: 1, priority: 60}
 autostart: true

@@ -59,14 +59,15 @@ The installer first shows what the machine already has (driver, GPUs, Docker, NV
 Toolkit, RAM). Then it asks a few questions, each with a default you can accept with Enter: where
 your .gguf model files are, which port to use, and where to keep settings. If the NVIDIA driver is
 missing it offers to install it (that needs a reboot; run the installer again afterwards). On the
-first run it offers to load [the example setup](gpushepherd/examples/aistack) (a ComfyUI per GPU
-with Z-Image Turbo, an LLM server with `chat` and `coder` models, Hermes and Open WebUI), filled in
-with your folders and fresh API keys and passwords; nothing in it starts until you press Start. It
-also offers to download the example's models (about 83 GB, resumable) once everything else is done. Finally it shows the plan, and
+first run it offers a [preset](gpushepherd/presets): a ready-made set of instances to start from,
+such as `starter` (an LLM server, ComfyUI with SDXL and Open WebUI for any 8+ GB GPU), a preset of
+your own, or none. The preset is filled in with your folders and fresh API keys and passwords, and nothing in
+it starts until you press Start. It also offers to download the preset's models (resumable) once
+everything else is done. Finally it shows the plan, and
 nothing is installed or changed until you confirm. Then it installs what is missing, checks that a
 container can see the GPUs, adds you to the `docker` group (so `docker` works without sudo from your
 next login; `--no-docker-group` skips this), starts GPU Shepherd and prints the address, the first
-login, and the example's addresses. It is safe to re-run: it only does what is still missing, and keeps an existing
+login, and the preset's addresses. It is safe to re-run: it only does what is still missing, and keeps an existing
 `compose.yaml`.
 
 For scripted or advanced installs, every question has a flag, and `--yes` skips the rest:
@@ -75,7 +76,7 @@ For scripted or advanced installs, every question has a flag, and `--yes` skips 
 sudo ./install.sh --yes --models-dir /srv/models --port 8090 --data-dir /opt/gpu-shepherd
 ```
 
-`./install.sh --help` lists them all (`--example`, `--download-models`, `--install-driver`, `--skip-deps`, `--no-start`, ...).
+`./install.sh --help` lists them all (`--preset`, `--list-presets`, `--download-models`, `--install-driver`, `--skip-deps`, `--no-start`, ...).
 
 RAM: with less than 32 GB installed, models have to fit in GPU memory, because keeping part of a
 model in system RAM needs room for it plus the OS and your other containers. 64 GB is recommended
@@ -107,9 +108,9 @@ pip install .
 gpu-shepherd --demo --port 8090      # fake GPUs and containers, log in as admin / demo-password
 ```
 
-The demo loads [the example stack](gpushepherd/examples/aistack), built for two 8 GB GPUs and
-64-128 GB of RAM: ComfyUI pinned to GPU 0 (and a second one for GPU 1), an elastic llama-swap server with a `chat` and a `coder`
-model, Hermes (home lab assistant) and Open WebUI. The installer offers to load it for real.
+The demo starts with the [`starter` preset](gpushepherd/presets/starter); `--demo-preset zimage-2x8gb`
+shows a bigger one (a ComfyUI per GPU, an LLM server with chat and coding models, Hermes and Open
+WebUI on two 8 GB GPUs).
 
 ## How GPU sharing works
 
@@ -137,7 +138,7 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 
 
 With a single GPU the same settings make them take turns.
 
-The example adds a second ComfyUI *fixed GPU 1, priority 40*, for two image jobs at once. Starting
+The `zimage-2x8gb` preset adds a second ComfyUI *fixed GPU 1, priority 40*, for two image jobs at once. Starting
 it stops the LLM server (you are asked first); starting the LLM again stops it, since the LLM has the
 higher priority.
 
@@ -145,7 +146,7 @@ higher priority.
 
 Coding tools (OpenCode, Aider, Continue, OpenHands, ...) don't need a GPU of their own: point them at
 the model server's OpenAI-compatible endpoint and let GPU Shepherd decide what runs there. The
-example stack has an auto name `coder` for this:
+`zimage-2x8gb` preset has an auto name `coder` for this:
 
 | Model server has | `coder` is | Memory |
 |---|---|---|

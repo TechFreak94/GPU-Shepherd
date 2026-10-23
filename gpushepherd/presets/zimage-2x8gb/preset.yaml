@@ -1,0 +1,5 @@
+# Shown by the installer when it asks which setup to create. One "key: value" per line.
+name: Z-Image studio on 2x 8 GB
+description: A ComfyUI per GPU with Z-Image Turbo and a coloring-book LoRA; an LLM server with chat and coding models; Hermes and Open WebUI
+needs: 2 NVIDIA GPUs with 8 GB (built on 2x RTX 3070), 64+ GB of RAM
+download_gb: 84
