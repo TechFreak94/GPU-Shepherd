@@ -1,3 +1,9 @@
+FROM python:3.13-slim AS buildinfo
+# Records which commit this image is built from (read from .git without needing git), so the
+# dashboard can show it and tell when an update is waiting. Only the result reaches the image.
+COPY . /ctx
+RUN python3 /ctx/gpushepherd/buildinfo.py /ctx /build.json
+
 FROM python:3.13-slim
 
 LABEL org.opencontainers.image.title="GPU Shepherd" \
@@ -8,6 +14,7 @@ WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
 COPY gpushepherd ./gpushepherd
 RUN pip install --no-cache-dir . && rm -rf /src
+COPY --from=buildinfo /build.json /usr/share/gpu-shepherd/build.json
 
 ENV SHEPHERD_DATA_DIR=/opt/gpu-shepherd \
     PYTHONUNBUFFERED=1

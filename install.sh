@@ -4,6 +4,7 @@
 #   sudo ./install.sh              # guided: looks at the machine, asks a few questions, then installs
 #   sudo ./install.sh --yes        # no questions: defaults plus whatever flags you give
 #   sudo ./install.sh --help       # every flag (for scripted or advanced installs)
+#   sudo ./install.sh --update     # update GPU Shepherd later (the same as ./update.sh)
 #
 # What it does, skipping anything already in place:
 #   1. checks the NVIDIA driver (offers to install the recommended one)
@@ -14,6 +15,7 @@
 #   6. on the first run, offers a preset: a ready-made set of instances to start from
 #   7. writes compose.yaml (if there isn't one yet) and starts GPU Shepherd
 #   8. with a preset, offers to download its models
+#   9. offers to let the dashboard check for updates and update GPU Shepherd for you
 #
 # Nothing is installed or changed until you confirm the plan. A flag answers its question in
 # advance, so the guided mode only asks what the flags left open. Run it again at any time: it
@@ -36,6 +38,7 @@ LIST_PRESETS=0
 PRESET=""               # preset name or folder, or "none", once decided by a flag or an answer
 DOWNLOAD=""             # yes / no: download the preset's models at the end
 DOCKER_GROUP=1
+DASH_UPDATES=""         # yes / no: install the service that lets the dashboard update GPU Shepherd
 GPU_TEST_IMAGE=ubuntu:24.04
 # Below this much installed RAM, models must fit entirely in GPU memory. Keeping part of a model in
 # system RAM (MoE expert offload) needs room for those layers plus the OS, Docker and the other
@@ -45,6 +48,7 @@ MIN_RAM_GB=32
 RECOMMENDED_RAM_GB=64
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGS=("$@")
+if [ "${1:-}" = --update ]; then exec "$HERE/update.sh" "${@:2}"; fi
 
 usage() {
     cat <<EOF
@@ -68,6 +72,11 @@ in advance, for scripted or advanced installs.
                       with --yes they are only downloaded when this is given
   --no-download       don't offer to download the models
   --no-docker-group   don't add you to the docker group (docker then needs sudo)
+  --dashboard-updates     let the dashboard check for updates daily and update GPU Shepherd when
+                          you press its button (a small systemd service; see update.sh);
+                          with --yes this is only set up when given
+  --no-dashboard-updates  don't offer that; update with ./update.sh instead
+  --update [OPTIONS]  update GPU Shepherd instead of installing: runs ./update.sh (see --help there)
   --no-start          prepare everything but don't start GPU Shepherd
   -y, --yes           don't ask anything: use the defaults for whatever no option sets
   -h, --help          show this help
@@ -97,6 +106,8 @@ while [ $# -gt 0 ]; do
         --download-models) DOWNLOAD=yes; shift ;;
         --no-download)    DOWNLOAD=no; shift ;;
         --no-docker-group) DOCKER_GROUP=0; shift ;;
+        --dashboard-updates) DASH_UPDATES=yes; shift ;;
+        --no-dashboard-updates) DASH_UPDATES=no; shift ;;
         -y|--yes)         ASSUME_YES=1; shift ;;
         -h|--help)        usage; exit 0 ;;
         *)                usage >&2; die "unknown option: $1" ;;
@@ -439,6 +450,27 @@ elif [ -z "$DOWNLOAD" ]; then
     fi
 fi
 
+# --------------------------------------------------------------------------- updates
+
+if [ -z "$DASH_UPDATES" ]; then
+    if systemctl is-enabled --quiet gpu-shepherd-update.path 2>/dev/null; then
+        DASH_UPDATES=no                       # already on; nothing to do
+    elif [ "$INTERACTIVE" -eq 1 ] && [ -d /run/systemd/system ] && [ -e "$HERE/.git" ]; then
+        echo "    GPU Shepherd can check for updates once a day and show them on the dashboard, with a"
+        echo "    button that updates it for you (a small systemd service runs ./update.sh). Without it,"
+        echo "    update any time with:  sudo ./update.sh"
+        if confirm "Let the dashboard check for updates and update GPU Shepherd?" Y; then
+            DASH_UPDATES=yes; else DASH_UPDATES=no; fi
+        echo
+    else
+        DASH_UPDATES=no
+    fi
+fi
+if [ "$DASH_UPDATES" = yes ] && [ ! -e "$HERE/.git" ]; then
+    warn "--dashboard-updates ignored: $HERE is not a git clone, so it can't be updated in place."
+    DASH_UPDATES=no
+fi
+
 # --------------------------------------------------------------------------- docker group
 
 DOCKER_USER=""
@@ -474,6 +506,9 @@ if [ "$DOWNLOAD" = yes ]; then
 fi
 if [ "$NO_START" -eq 0 ]; then
     plan+=("Build and start GPU Shepherd (it restarts by itself after a reboot)")
+fi
+if [ "$DASH_UPDATES" = yes ]; then
+    plan+=("Install the gpu-shepherd-update service: daily update checks, and updates from the dashboard")
 fi
 
 say "The plan:"
@@ -623,6 +658,10 @@ download_models() {
     fi
 }
 
+if [ "$DASH_UPDATES" = yes ]; then
+    "$HERE/update.sh" --enable-dashboard-updates || warn "could not set up dashboard updates; update with: sudo ./update.sh"
+fi
+
 if [ "$NO_START" -eq 1 ]; then
     say "Ready. Start GPU Shepherd with:  sudo docker compose up -d --build"
     download_models
@@ -652,6 +691,7 @@ if [ -f "$DATA_DIR/INITIAL_PASSWORD.txt" ]; then
     echo "    Lost it? sudo docker exec gpu-shepherd gpu-shepherd --reset-password"
 fi
 echo "    Keep it on a trusted network: it controls Docker, which is root-equivalent."
+echo "    Update it later with:  sudo $HERE/update.sh   (your settings and instances are kept)"
 if [ -n "$DOCKER_USER" ]; then
     echo "    You ($DOCKER_USER) can run docker without sudo after logging out and back in. Being in"
     echo "    the docker group is root-equivalent too."
