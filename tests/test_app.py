@@ -173,7 +173,7 @@ def test_model_catalogue_editing(stack):
         "mmproj": "", "aliases_text": "gemma", "description": ""})
     assert r.status_code == 204
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
-    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "qwen3-coder-next", "gemma4-26b"]
+    assert [m["id"] for m in cat["models"]] == ["qwen3.6-35b-a3b", "qwen3-coder-next", "muse-glimmer", "gemma4-26b"]
 
     bad = client.post("/instances/llm/models/save", headers=HX, data={"original_id": "", "id": "x",
                                                                      "file": "gemma.gguf", "ctx_size": "100"})

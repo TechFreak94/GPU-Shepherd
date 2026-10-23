@@ -10,7 +10,7 @@ for Z-Image Turbo coloring-book pages, local chat and coding models, and a home-
 |---|---|---|
 | ComfyUI | GPU 0, always (priority 80) | Z-Image Turbo, coloring-book LoRA, upscaler |
 | ComfyUI (GPU 1) | GPU 1 (priority 40) | a second image job at once; starting it stops the LLM server |
-| LLM server (llama-swap) | elastic: both, or GPU 1 while ComfyUI runs | `chat` = Qwen3.6 35B-A3B, `coder` = Qwen3 Coder Next on 2 GPUs (Qwen3.6 on 1) |
+| LLM server (llama-swap) | elastic: both, or GPU 1 while ComfyUI runs | `chat` = Qwen3.6 35B-A3B, `coder` = Qwen3 Coder Next on 2 GPUs (Qwen3.6 on 1), `muse` = Muse Glimmer 30B (optional download) |
 | Hermes | none | home lab / home automation assistant, uses `chat` |
 | Open WebUI | none | chat with the models and Hermes, images through ComfyUI |
 
@@ -22,7 +22,9 @@ zimage-2x8gb` shows it with fake GPUs.
 
 `chat`, `coder` (the two GGUFs), `zimage` (Kijai's fp8 Z-Image Turbo, the fp8 Qwen3 4B text encoder,
 the VAE), `lora` (coloring book, trigger words `Coloring Book, ColoringBookAF`) and `upscaler`
-(RealESRGAN x4plus anime 6B). `zimage-bf16` (the official full-precision files) is optional.
+(RealESRGAN x4plus anime 6B). Optional: `zimage-bf16` (the official full-precision files) and
+`glimmer` (Muse Glimmer 30B, a dense coding/agent model that also reads images; it needs both GPUs
+to be fast).
 
 ## Z-Image in ComfyUI
 

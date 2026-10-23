@@ -3,12 +3,15 @@
 #   file  <group> <path under the models folder> <url> [fallback url ...]
 group chat        default  ~22GB  Qwen3.6 35B-A3B, the LLM server's "chat" model
 group coder       default  ~50GB  Qwen3 Coder Next 80B-A3B, "coder" when the LLM has both GPUs
+group glimmer     optional ~18GB  Muse Glimmer 30B ("muse"), a dense coding/agent model that reads images
 group zimage      default  ~12GB  Z-Image Turbo for ComfyUI: Kijai's fp8 build, fp8 text encoder, VAE
 group zimage-bf16 optional ~20GB  the official full-precision Z-Image Turbo model and text encoder
 group lora        default  <1GB   the coloring-book LoRA for Z-Image (loras/zimage/)
 group upscaler    default  <1GB   RealESRGAN x4plus anime 6B, for line art
 file chat   Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
 file coder  Qwen3-Coder-Next-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-UD-Q4_K_XL.gguf
+file glimmer Muse-Glimmer-30B-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/Muse-Glimmer-30B-UD-Q4_K_XL.gguf
+file glimmer mmproj-Muse-Glimmer-30B-Q8_0.gguf  https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/mmproj-Muse-Glimmer-30B-Q8_0.gguf
 file zimage comfyui/diffusion_models/z-image-turbo_fp8_scaled_e4m3fn_KJ.safetensors  https://huggingface.co/Kijai/Z-Image_comfy_fp8_scaled/resolve/main/z-image-turbo_fp8_scaled_e4m3fn_KJ.safetensors
 file zimage comfyui/text_encoders/qwen_3_4b_fp8_mixed.safetensors  https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors
 file zimage comfyui/vae/ae.safetensors  https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
