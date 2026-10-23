@@ -25,9 +25,14 @@
   <div class="actions"><button class="primary" type="submit">Save</button></div>
 </form>
 
+<h3>Updates</h3>
+<div class="card" id="updates" hx-get="/ui/update/card" hx-trigger="every 10s, refresh from:body">
+  {% include "partials/update_card.html" %}
+</div>
+
 <h3>About</h3>
 <div class="card small">
-  <p style="margin-top:0">GPU Shepherd {{ version }} · {{ docker }}</p>
+  <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }}</p>
   <p>Data folder: <span class="mono">{{ data_dir }}</span>{% if host_data_dir != data_dir %} (on the host: <span class="mono">{{ host_data_dir }}</span>){% endif %}</p>
   <p class="muted" style="margin-bottom:0">Everything you change here is stored as YAML in that folder - back it up, or keep it in git.
     GPU Shepherd controls Docker, which is root-equivalent on this machine: keep it on a trusted network.</p>

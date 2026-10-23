@@ -1,0 +1,19 @@
+{# Update details, in the dialog. u = updates.UpdateStatus #}
+<div class="dlg-head"><strong id="modal-title">{% if confirm %}Update GPU Shepherd?{% else %}Updates{% endif %}</strong>
+  <span class="btns"><button hx-get="/ui/update" hx-target="#modal-body">Refresh</button><button data-close-modal>Close</button></span></div>
+<div class="dlg-body">
+  {% include "partials/update_status.html" %}
+  {% set can_update = u.dashboard_updates and (u.available or u.rebuild_needed or confirm) %}
+  {% if can_update and not u.busy %}
+  <p>GPU Shepherd will download the new version into <span class="mono">{{ u.repo }}</span>, rebuild itself and restart.
+    Your instances keep running, and your settings, instances and models are kept. The dashboard is unreachable for a minute or two.</p>
+  {% endif %}
+  <div class="actions">
+    {% if u.dashboard_updates %}
+    <button hx-post="/ui/update/check" hx-swap="none" {% if u.busy %}disabled{% endif %}>Check now</button>
+    {% if can_update %}
+    <button class="primary" hx-post="/ui/update/update" hx-swap="none" {% if u.busy or u.local_changes %}disabled{% endif %}>{% if u.available %}Update now{% else %}Rebuild now{% endif %}</button>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>

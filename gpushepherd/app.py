@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth, host as host_mod
+from . import __version__, auth, buildinfo, host as host_mod, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule,
                      Store, format_command, format_env, format_ports, format_volumes, friendly_errors,
@@ -88,7 +88,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     app.state.store, app.state.engine, app.state.jobs, app.state.demo = store, engine, jobs, demo
     app.state.loading: dict[str, set[str]] = {}
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.globals.update(version=__version__, gpu_text=gpu_text, demo=demo, level=meter_level)
+    build = buildinfo.load()
+    # static files are cached per build, so an update never runs with the old CSS or JS
+    templates.env.globals.update(version=__version__, asset_version=build.get("commit", __version__)[:12],
+                                 gpu_text=gpu_text, demo=demo, level=meter_level)
     templates.env.filters["gib"] = gib
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
@@ -197,7 +200,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "host": machine, "cpu_rows": cpu_rows, "mem_rows": mem_rows,
                 "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
                 "running_count": len(running), "instance_count": len(snap.instances),
-                "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None)}
+                "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None),
+                "u": updates.status(store.root)}
 
     def run_plan(request: Request, action: str, iid: str, confirm: bool, back: str = "") -> Response:
         names = {i.id: i.name for i in store.instances()[0].values()}
@@ -230,7 +234,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ login
     @app.get("/healthz")
     def healthz():
-        return {"ok": True, "version": __version__}
+        return {"ok": True, "version": __version__, "commit": build.get("commit", "")}
 
     @app.get("/login", response_class=HTMLResponse)
     def login_form(request: Request):
@@ -578,12 +582,49 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), msg, "error")
         return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg=Auto names saved."})
 
+    # ------------------------------------------------------------------ updates (done by update.sh on the host)
+    @app.get("/ui/update", response_class=HTMLResponse)
+    def update_dialog(request: Request, confirm: str = ""):
+        return page(request, "partials/update.html", u=updates.status(store.root), confirm=confirm == "1")
+
+    @app.get("/ui/update/card", response_class=HTMLResponse)
+    def update_card(request: Request):
+        return page(request, "partials/update_card.html", u=updates.status(store.root))
+
+    @app.get("/ui/update/log", response_class=HTMLResponse)
+    def update_log(request: Request):
+        u = updates.status(store.root)
+        return page(request, "partials/logs.html", title="Update log", refresh="/ui/update/log" if u.busy else "",
+                    text=updates.log_text(store.root) or "Nothing yet: the updater writes here once it starts.")
+
+    @app.post("/ui/update/{action}")
+    def update_request(action: str):
+        if action not in updates.ACTIONS:
+            return PlainTextResponse("unknown action", status_code=400)
+        u = updates.status(store.root)
+        if not u.dashboard_updates:
+            return toast(Response(status_code=204), f"Updating from the dashboard is off. On the server run: {u.command}", "warn")
+        if u.busy:
+            return toast(Response(status_code=204), "An update or check is already running.", "warn")
+        if action == "update" and jobs.busy:
+            return toast(Response(status_code=204), "Wait for the current change to finish, then update.", "warn")
+        if action == "update" and u.local_changes:
+            return toast(Response(status_code=204), f"Files in the clone were changed by hand. Run {u.command} --stash on the server.", "error")
+        updates.request(store.root, action)
+        log.info("update: %s requested from the dashboard", action)
+        resp = Response(status_code=204)
+        resp.headers["HX-Trigger"] = json.dumps({
+            "toast": {"msg": "Checking for updates…" if action == "check" else
+                      "Updating: GPU Shepherd restarts in a moment and this page reconnects by itself.", "kind": "info"},
+            "close-modal": True, "refresh": True})
+        return resp
+
     # ------------------------------------------------------------------ settings
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
-                    error="")
+                    error="", u=updates.status(store.root))
 
     @app.post("/settings/password")
     async def change_password(request: Request):
@@ -623,6 +664,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         machine = host_mod.query()
         return JSONResponse({
             "version": __version__,
+            "commit": build.get("commit", ""),
+            "update_available": updates.status(store.root).behind,
             "gpus": [g.__dict__ | {"users": snap.gpu_users(g.index)} for g in snap.gpus],
             "instances": {i: {"name": inst.name, "running": bool(snap.states.get(i) and snap.states[i].running),
                               "gpus": snap.allocations.get(i, []), "policy": inst.gpu.model_dump()}

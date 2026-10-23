@@ -106,6 +106,33 @@ The data folder must be mounted at the **same path** inside and outside the cont
 Dockge's stacks folder), because GPU Shepherd hands paths in it to Docker for the containers it
 creates. To pick model files in the UI, mount your model folders the same way (read-only is fine).
 
+### Updating
+
+No need to clone again. In the folder you installed from:
+
+```bash
+sudo ./update.sh            # shows what's new, asks, downloads it, rebuilds and restarts GPU Shepherd
+sudo ./update.sh --check    # only look (exit status 10 means an update is available)
+sudo ./update.sh --rollback # something wrong? go back to the version before the last update
+```
+
+Your settings, instances, model lists and password live in the data folder and are kept, and so
+is your `compose.yaml`. Instances keep running while GPU Shepherd restarts. Updates only move
+forward along the branch you cloned: if you edited files in the clone, the update stops and lists
+them, and `--stash` sets them aside and puts them back afterwards. `./install.sh --update` does
+the same as `./update.sh`.
+
+**Updating from the dashboard.** GPU Shepherd runs in a container and can't rebuild itself, so
+this is done by a small systemd service on the host, which the guided installer offers (or turn it
+on any time with `sudo ./update.sh --enable-dashboard-updates`; `--disable-dashboard-updates`
+removes it). It checks for updates once a day; the dashboard then shows **Update available** with
+the list of changes and an **Update** button, and Settings > Updates has **Check now**. The two
+sides only talk through files in `<data folder>/update/`, so the container never needs git, your
+GitHub credentials or more access to the host than it already has. Without the service, the
+dashboard still shows what is running and tells you which command to run.
+
+Installed before `update.sh` existed? Run `git pull && sudo ./update.sh --rebuild` once.
+
 ### Try it without Docker or GPUs
 
 ```bash

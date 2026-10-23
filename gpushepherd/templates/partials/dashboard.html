@@ -1,3 +1,4 @@
+{% include "partials/update_banner.html" %}
 {% if problems %}
 <div class="notice error">Some instance files could not be read:
   <ul>{% for p in problems %}<li class="mono">{{ p }}</li>{% endfor %}</ul>

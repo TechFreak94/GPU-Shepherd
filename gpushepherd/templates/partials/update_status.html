@@ -1,0 +1,29 @@
+{# Shared by the dialog and the Settings page. u = updates.UpdateStatus #}
+<dl class="facts">
+  <dt>Running</dt><dd>{{ version }}{% if u.running.commit %} · <span class="mono">{{ u.running.commit[:7] }}</span>{% if u.running.branch %} on {{ u.running.branch }}{% endif %}{% if u.running.built %} · built {{ u.running.built[:10] }}{% endif %}{% else %} <span class="muted">(build details unknown: built before updates existed, or not from a git clone)</span>{% endif %}</dd>
+  {% if u.checked %}
+  <dt>Last check</dt><dd>{{ u.checked_ago or u.checked_at }}{% if u.upstream %} against <span class="mono">{{ u.upstream }}</span>{% endif %} ·
+    {% if u.available %}<strong>{{ u.behind }} new change{{ "s" if u.behind != 1 }}</strong>{% elif u.state == "failed" %}<span class="bad">failed</span>{% else %}up to date{% endif %}</dd>
+  {% if u.repo %}<dt>Installed from</dt><dd class="mono">{{ u.repo }}</dd>{% endif %}
+  {% endif %}
+</dl>
+{% if u.state == "failed" %}<div class="notice error"><div>{{ u.message }}{% if u.dashboard_updates %} <button class="link small" hx-get="/ui/update/log" hx-target="#modal-body">Show the log</button>{% endif %}</div></div>{% endif %}
+{% if u.local_changes %}
+<div class="notice busy"><div>Files in the clone were changed by hand, so updating from here is blocked to keep them safe:
+  <span class="mono">{{ u.local_changes|join(", ") }}</span>. Run <span class="mono">{{ u.command }} --stash</span> on the server to keep them and update.</div></div>
+{% endif %}
+{% if u.commits %}
+<p class="small muted" style="margin-bottom:4px">What's new{% if u.behind > u.commits|length %} (newest {{ u.commits|length }} of {{ u.behind }}){% endif %}:</p>
+<ul class="changes">{% for c in u.commits %}<li><span class="mono muted">{{ c.date }}</span> {{ c.subject }}</li>{% endfor %}</ul>
+{% endif %}
+{% if u.rebuild_needed %}<p class="small">The clone is on <span class="mono">{{ u.current[:7] }}</span> but this image was built from <span class="mono">{{ u.running.commit[:7] }}</span>. Rebuild with <span class="mono">{{ u.command }} --rebuild</span>{% if u.dashboard_updates %} or the button below{% endif %}.</p>{% endif %}
+{% if not u.checked %}
+<p class="small">GPU Shepherd hasn't checked for updates yet. On the server, in the folder you installed from, run
+  <span class="mono">sudo ./update.sh</span> to update now, or <span class="mono">sudo ./update.sh --enable-dashboard-updates</span>
+  so it checks daily and you can update from here.</p>
+{% elif not u.dashboard_updates %}
+<p class="small">To update, run <span class="mono">{{ u.command }}</span> on the server. To check daily and update from this page instead,
+  run <span class="mono">{{ u.command }} --enable-dashboard-updates</span> once.</p>
+{% else %}
+<p class="small muted">GPU Shepherd checks for updates once a day. To update from a terminal instead: <span class="mono">{{ u.command }}</span>; to go back to the previous version: <span class="mono">{{ u.command }} --rollback</span>.</p>
+{% endif %}
