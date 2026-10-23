@@ -21,17 +21,23 @@
   document.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target.id === "modal-body") openModal(); });
   document.addEventListener("htmx:responseError", (e) => toast("Request failed (HTTP " + e.detail.xhr.status + ")", "error"));
   document.addEventListener("htmx:sendError", () => toast("GPU Shepherd is not reachable", "error"));
+  // the dashboard re-renders every few seconds: keep the "More details" boxes the user opened open
+  const openDetails = new Set();
+  document.addEventListener("toggle", (e) => {
+    const d = e.target;
+    if (d.tagName !== "DETAILS" || !d.closest("#dash")) return;
+    const card = d.closest("[id]");
+    if (card) (d.open ? openDetails.add(card.id) : openDetails.delete(card.id));
+  }, true);
+  document.addEventListener("htmx:afterSwap", (e) => {
+    if (e.detail.target.id !== "dash") return;
+    openDetails.forEach((id) => { const d = document.querySelector("#" + CSS.escape(id) + " details"); if (d) d.open = true; });
+  });
   document.addEventListener("refresh", () => { const d = document.getElementById("dash"); if (d && window.htmx) htmx.trigger(d, "refresh"); });
 
   document.addEventListener("click", (e) => {
     const t = e.target;
     if (t.closest("[data-close-modal]")) { closeModal(); return; }
-    const open = t.closest("[data-open-port]");
-    if (open) {
-      e.preventDefault();
-      window.open("http://" + location.hostname + ":" + open.dataset.openPort + (open.dataset.openPath || "/"), "_blank", "noopener");
-      return;
-    }
     const pick = t.closest("[data-pick-file]");
     if (pick) {
       e.preventDefault();

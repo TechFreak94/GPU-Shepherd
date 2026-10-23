@@ -36,7 +36,10 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
 4. The job runner executes the plan: stop affected containers, then (re)create containers in
    priority order. For llama-swap instances the config is rendered from the catalogue for the
    number of GPUs assigned, written under `generated/`, and mounted read-only.
-5. The dashboard polls `/ui/dashboard` every 4 seconds and shows the job's progress.
+5. The dashboard polls `/ui/dashboard` every 4 seconds and shows the job's progress. Each poll
+   also reads host CPU and memory from `/proc` (`host.py`; not namespaced, so it sees the whole
+   machine from inside the app's container) and one-shot Docker stats for running containers.
+   CPU figures are the change since the previous poll.
 
 ## Adding a model-server connector
 

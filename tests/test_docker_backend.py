@@ -48,3 +48,26 @@ def test_cpu_only_container_gets_no_gpu_request():
     b.create_and_start(spec(gpus=[], name="shepherd-hermes", instance_id="hermes", alias="hermes"))
     hc = b.calls[1][2]["host_config"]
     assert not hc.get("DeviceRequests")
+
+
+def test_stats_cpu_from_two_samples_and_memory_without_cache():
+    b = make_backend()
+    b._cpu_prev = {}
+    samples = iter([(1_000, 100_000), (6_000, 200_000)])
+
+    def stats(name, stream, one_shot):
+        assert stream is False and one_shot is True
+        total, system = next(samples)
+        return {"cpu_stats": {"cpu_usage": {"total_usage": total}, "system_cpu_usage": system},
+                "memory_stats": {"usage": 3 * 2**30, "limit": 64 * 2**30, "stats": {"inactive_file": 2**30}}}
+    b.api.stats = stats
+    first = b.stats(["shepherd-llm"])["shepherd-llm"]
+    assert first.cpu_pct is None and first.mem_used == 2 * 2**30 and first.mem_limit == 64 * 2**30
+    assert b.stats(["shepherd-llm"])["shepherd-llm"].cpu_pct == 5.0     # 5,000 of 100,000 jiffies
+
+
+def test_stats_skip_containers_that_fail():
+    b = make_backend()
+    b._cpu_prev = {}
+    b.api.stats = lambda *a, **kw: (_ for _ in ()).throw(derr.NotFound("gone"))
+    assert b.stats(["shepherd-x"]) == {} and b.stats([]) == {}

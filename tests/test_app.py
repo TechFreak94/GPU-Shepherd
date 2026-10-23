@@ -106,7 +106,7 @@ def test_gpu_handoff_flow(stack):
     state = client.get("/api/state").json()
     assert state["instances"]["llm"]["gpus"] == [0, 1] and state["instances"]["comfyui"]["running"] is False
     dash = client.get("/ui/dashboard", headers=HX).text
-    assert dash.count('<span class="small on">LLM server</span>') == 2     # both GPU cards show the LLM
+    assert dash.count('<a href="#inst-llm" title="Go to LLM server">LLM server</a><span class="on">assigned</span>') == 2  # both GPU cards
 
 
 def test_create_edit_and_validation(stack):
@@ -207,9 +207,28 @@ def test_model_catalogue_editing(stack):
         if "qwen3-coder-next" in DemoLlamaClient.loaded:
             break
         time.sleep(0.01)
-    assert "Loaded: <strong>qwen3-coder-next</strong>" in client.get("/ui/dashboard", headers=HX).text
+    assert "<strong>qwen3-coder-next</strong> loaded" in client.get("/ui/dashboard", headers=HX).text
     client.post("/instances/llm/models/qwen3-coder-next/unload", headers=HX)
     assert not DemoLlamaClient.loaded
+
+
+def test_dashboard_details_and_machine_panels(stack):
+    app, client, backend, _ = stack
+    login(client)
+    act(client, app, "hermes", "start")
+    dash = client.get("/ui/dashboard", headers=HX).text
+    assert "<strong>CPU</strong>" in dash and "<strong>Memory (RAM)</strong>" in dash
+    assert '<ul class="usage" aria-label="Memory use by instance">' in dash and 'href="#inst-hermes"' in dash
+    card = dash[dash.index('id="inst-hermes"'):]
+    card = card[:card.index("</article>")]
+    assert "nousresearch/hermes-agent:stable" in card and "shepherd-hermes" in card
+    assert 'href="http://testserver:9119/"' in card and '>testserver:9119</a>' in card and "· limit 4g" in card and "Up " in card
+    assert "HERMES_UID" in card and "change-me-please" not in card     # setting names, never their values
+    assert "% of the machine" in card
+    stopped = dash[dash.index('id="inst-webui"'):]
+    assert "Never started" in stopped[:stopped.index("</article>")]
+    state = client.get("/api/state").json()
+    assert state["host"]["mem_total"] > 0
 
 
 def test_password_change(stack):
