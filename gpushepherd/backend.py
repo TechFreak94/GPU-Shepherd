@@ -10,9 +10,11 @@ re-creating its container (its data lives in volumes, so nothing is lost).
 from __future__ import annotations
 
 import os
+import random
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -48,8 +50,15 @@ class ContainerState:
     gpus: list[int]
     config_hash: str
     image: str
-    started_at: str = ""
+    status_text: str = ""       # Docker's own summary, e.g. "Up 3 hours" or "Exited (1) 2 minutes ago"
     exit_code: int | None = None
+
+
+@dataclass
+class ContainerStats:
+    cpu_pct: float | None = None   # share of the whole machine's CPU time, 0-100; None = no sample yet
+    mem_used: int = 0           # bytes, without reclaimable file cache (like `docker stats`)
+    mem_limit: int = 0          # bytes; the host's total memory when the container has no limit
 
 
 class BackendError(RuntimeError):
@@ -64,6 +73,7 @@ class Backend(Protocol):
     def stop(self, name: str, timeout: int = 30) -> None: ...
     def remove(self, name: str) -> None: ...
     def logs(self, name: str, tail: int = 300) -> str: ...
+    def stats(self, names: list[str]) -> dict[str, ContainerStats]: ...
     def probe(self, image: str, script: str) -> str: ...
     def ping(self) -> str: ...
 
@@ -84,6 +94,7 @@ class DockerBackend:
             self.api = self.client.api
         except Exception as err:  # noqa: BLE001
             raise BackendError(f"cannot connect to Docker: {err}. Is /var/run/docker.sock mounted?") from err
+        self._cpu_prev: dict[str, tuple[int, int]] = {}
 
     def ping(self) -> str:
         try:
@@ -102,7 +113,7 @@ class DockerBackend:
                 instance_id=iid, name=name, running=state == "running", status=state,
                 gpus=_gpus_from_label(labels.get(LABEL_GPUS, "")),
                 config_hash=labels.get(LABEL_CONFIG, ""), image=c.get("Image", ""),
-                started_at=c.get("Status", ""))
+                status_text=c.get("Status", ""))
         return out
 
     def ensure_network(self, name: str) -> None:
@@ -195,6 +206,42 @@ class DockerBackend:
         except self._errors.APIError as err:
             return f"(could not read logs: {err.explanation or err})"
 
+    def stats(self, names: list[str]) -> dict[str, ContainerStats]:
+        """CPU and memory use of running containers. Docker's one-shot stats return at once but
+        carry a single CPU sample, so CPU use is measured against the previous call's sample."""
+        if not names:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(len(names), 8)) as pool:
+            raw = dict(zip(names, pool.map(self._raw_stats, names)))
+        out = {}
+        for name, data in raw.items():
+            if not data:
+                continue
+            cpu = data.get("cpu_stats") or {}
+            mem = data.get("memory_stats") or {}
+            total = (cpu.get("cpu_usage") or {}).get("total_usage", 0)
+            system = cpu.get("system_cpu_usage", 0)
+            st = ContainerStats()
+            prev = self._cpu_prev.get(name)
+            if prev and system > prev[1] and total >= prev[0]:
+                st.cpu_pct = round(100 * (total - prev[0]) / (system - prev[1]), 1)
+            self._cpu_prev[name] = (total, system)
+            detail = mem.get("stats") or {}
+            cache = detail.get("inactive_file", detail.get("total_inactive_file", 0))
+            st.mem_used = max(mem.get("usage", 0) - cache, 0)
+            st.mem_limit = mem.get("limit", 0)
+            out[name] = st
+        return out
+
+    def _raw_stats(self, name: str) -> dict:
+        try:
+            try:
+                return self.api.stats(name, stream=False, one_shot=True)
+            except self._errors.InvalidVersion:       # Docker older than API 1.41
+                return self.api.stats(name, stream=False)
+        except Exception:  # noqa: BLE001 - a missing number is not worth failing the page for
+            return {}
+
     def probe(self, image: str, script: str) -> str:
         """Run a throwaway container from `image` with `sh -c script` and return its output."""
         try:
@@ -205,6 +252,15 @@ class DockerBackend:
             return ""
 
 
+def _ago(since: float) -> str:
+    secs = max(int(time.time() - since), 0)
+    if secs < 60:
+        return "less than a minute"
+    if secs < 3600:
+        return f"{secs // 60} minute{'s' if secs >= 120 else ''}"
+    return f"{secs // 3600} hour{'s' if secs >= 7200 else ''}"
+
+
 class FakeBackend:
     """In-memory backend: used by the test suite and by demo mode (SHEPHERD_DEMO=1)."""
 
@@ -213,6 +269,7 @@ class FakeBackend:
         self.running: dict[str, bool] = {}
         self.calls: list[str] = []
         self.slow = slow
+        self.started: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def ping(self) -> str:
@@ -223,7 +280,9 @@ class FakeBackend:
             return {spec.instance_id: ContainerState(
                 instance_id=spec.instance_id, name=name, running=self.running[name],
                 status="running" if self.running[name] else "exited", gpus=list(spec.gpus),
-                config_hash=spec.config_hash, image=spec.image)
+                config_hash=spec.config_hash, image=spec.image,
+                status_text=(f"Up {_ago(self.started.get(name, time.time()))}" if self.running[name]
+                             else "Exited (0)"))
                 for name, spec in self.containers.items()}
 
     def ensure_network(self, name: str) -> None:
@@ -237,6 +296,7 @@ class FakeBackend:
         with self._lock:
             self.containers[spec.name] = spec
             self.running[spec.name] = True
+            self.started[spec.name] = time.time()
         self.calls.append(f"create {spec.name} gpus={','.join(map(str, spec.gpus))}")
 
     def stop(self, name: str, timeout: int = 30) -> None:
@@ -254,6 +314,12 @@ class FakeBackend:
 
     def logs(self, name: str, tail: int = 300) -> str:
         return f"[demo] {name} is {'running' if self.running.get(name) else 'stopped'}\n"
+
+    def stats(self, names: list[str]) -> dict[str, ContainerStats]:
+        rnd = random.Random(int(time.time() / 4))      # steady between two dashboard refreshes
+        return {n: ContainerStats(cpu_pct=round(rnd.uniform(0.2, 6.0), 1),
+                                  mem_used=int(rnd.uniform(0.3, 3.5) * 2**30), mem_limit=64 * 2**30)
+                for n in names if self.running.get(n)}
 
     def probe(self, image: str, script: str) -> str:
         return "/app/llama-server\n"

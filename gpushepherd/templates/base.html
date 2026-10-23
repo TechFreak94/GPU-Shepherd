@@ -17,10 +17,11 @@
     {% if demo %}<span class="tag warn">demo mode - nothing real is started</span>{% endif %}
     {% if user %}
     <nav>
-      <a href="/">Dashboard</a>
-      <a href="/instances/new">Add instance</a>
-      <a href="/settings">Settings</a>
-      <button class="link" hx-post="/logout">Log out</button>
+      {% set here = request.url.path %}
+      <a href="/"{% if here == "/" %} aria-current="page"{% endif %}>Dashboard</a>
+      <a href="/instances/new"{% if here == "/instances/new" %} aria-current="page"{% endif %}>Add instance</a>
+      <a href="/settings"{% if here == "/settings" %} aria-current="page"{% endif %}>Settings</a>
+      <button class="link" hx-post="/logout" title="Log out of GPU Shepherd">Log out</button>
     </nav>
     {% endif %}
   </div>

@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth
+from . import __version__, auth, host as host_mod
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule,
                      Store, format_command, format_env, format_ports, format_volumes, friendly_errors,
@@ -54,6 +54,18 @@ class DemoLlamaClient:
         DemoLlamaClient.loaded.clear()
 
 
+def gib(n: float | int | None) -> str:
+    """Bytes as GB the way people read them: 0.4 GB, 12.3 GB, 125 GB."""
+    v = (n or 0) / 2**30
+    return f"{v:.0f} GB" if v >= 100 else f"{v:.1f} GB"
+
+
+def meter_level(pct: float | None) -> str:
+    """CSS class for a usage meter, so a nearly full one stands out."""
+    pct = pct or 0
+    return "full" if pct >= 90 else "high" if pct >= 75 else ""
+
+
 def create_app(data_dir: str | None = None, backend: Backend | None = None, demo: bool | None = None,
                autostart: bool | None = None) -> FastAPI:
     demo = demo if demo is not None else os.environ.get("SHEPHERD_DEMO") == "1"
@@ -76,7 +88,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     app.state.store, app.state.engine, app.state.jobs, app.state.demo = store, engine, jobs, demo
     app.state.loading: dict[str, set[str]] = {}
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.globals.update(version=__version__, gpu_text=gpu_text, demo=demo)
+    templates.env.globals.update(version=__version__, gpu_text=gpu_text, demo=demo, level=meter_level)
+    templates.env.filters["gib"] = gib
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     # ------------------------------------------------------------------ security
@@ -123,28 +136,67 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return DemoLlamaClient(store.catalog(iid))
         return engine.llama_client(iid)
 
-    def dashboard_ctx() -> dict:
+    def base_url(request: Request, port: int, path: str = "/") -> str:
+        """The address an instance's port is reached at, from the browser's point of view."""
+        name = request.url.hostname or "localhost"
+        if ":" in name:                   # IPv6 literal
+            name = f"[{name}]"
+        return f"http://{name}:{port}{path if path.startswith('/') else '/' + path}"
+
+    def dashboard_ctx(request: Request) -> dict:
         snap = engine.snapshot()
-        cards = []
+        machine = host_mod.query()
+        running = [i for i, st in snap.states.items() if st.running and i in snap.instances]
+        try:
+            usage = backend.stats([engine.container_name(i) for i in running])
+        except Exception:  # noqa: BLE001
+            usage = {}
+        gpu_by_index = {g.index: g for g in snap.gpus}
+        cards, cpu_rows, mem_rows = [], [], []
         order = sorted(snap.instances.values(), key=lambda i: (-i.gpu.priority if i.gpu.mode != "none" else 1, i.name.lower()))
         for inst in order:
             st = snap.states.get(inst.id)
+            gpus = snap.allocations.get(inst.id, [])
+            assigned = [gpu_by_index[g] for g in gpus if g in gpu_by_index]
             card = {"inst": inst, "state": st, "running": bool(st and st.running),
                     "status": (st.status if st else "not created"),
-                    "gpus": snap.allocations.get(inst.id, []),
+                    "container": engine.container_name(inst.id),
+                    "gpus": gpus, "assigned": assigned,
+                    "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
+                    "usage": usage.get(engine.container_name(inst.id)),
+                    "ports": [{"port": p, "url": (u := base_url(request, p.host)), "label": u[7:].rstrip("/")}
+                              for p in inst.ports],
+                    "open_url": base_url(request, inst.open_url_port, inst.open_path) if inst.open_url_port else "",
                     "pending": bool(st and st.running and st.config_hash and st.config_hash != engine.config_hash(inst)),
-                    "loaded": [], "models_error": "",
+                    "loaded": [], "models_error": "", "model_count": 0, "aliases": {}, "offload": {},
                     "loading": sorted(app.state.loading.get(inst.id, set()))}
-            if inst.kind == "llama-swap" and card["running"]:
-                try:
-                    client = llama_client(inst.id)
-                    known = {m.id for m in store.catalog(inst.id).models}
-                    card["loaded"] = sorted(client.running(known))
-                except Exception:  # noqa: BLE001
-                    card["models_error"] = "model server not answering yet"
+            if inst.kind == "llama-swap":
+                cat = store.catalog(inst.id)
+                card["model_count"] = len(cat.models)
+                if card["running"]:
+                    card["aliases"] = llamaswap.resolved_aliases(cat, len(gpus))
+                    try:
+                        client = llama_client(inst.id)
+                        card["loaded"] = sorted(client.running({m.id for m in cat.models}))
+                    except Exception:  # noqa: BLE001
+                        card["models_error"] = "model server not answering yet"
+                    by_id = {m.id: m for m in cat.models}
+                    for mid in card["loaded"]:
+                        rule = by_id[mid].offload_for(len(gpus)) if mid in by_id else None
+                        if rule:
+                            card["offload"][mid] = rule
+            if card["usage"]:
+                cpu_rows.append({"name": inst.name, "id": inst.id, "value": card["usage"].cpu_pct})
+                mem_rows.append({"name": inst.name, "id": inst.id, "value": card["usage"].mem_used})
             cards.append(card)
-        gpus = [{"gpu": g, "users": snap.gpu_users(g.index)} for g in snap.gpus]
+        gpus = [{"gpu": g, "users": [(i, snap.instances[i].name) for i, a in snap.allocations.items()
+                                     if g.index in a and i in snap.instances]} for g in snap.gpus]
+        mem_rows.sort(key=lambda r: -r["value"])
+        cpu_rows.sort(key=lambda r: -(r["value"] or 0))
         return {"cards": cards, "gpus": gpus, "gpu_error": snap.gpu_error, "problems": snap.problems,
+                "host": machine, "cpu_rows": cpu_rows, "mem_rows": mem_rows,
+                "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
+                "running_count": len(running), "instance_count": len(snap.instances),
                 "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None)}
 
     def run_plan(request: Request, action: str, iid: str, confirm: bool, back: str = "") -> Response:
@@ -170,7 +222,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), str(err), "warn")
         if back:
             return Response(status_code=204, headers={"HX-Redirect": f"{back}?msg={verb} {names.get(iid, iid)}…"})
-        resp = page(request, "partials/dashboard.html", **dashboard_ctx())
+        resp = page(request, "partials/dashboard.html", **dashboard_ctx(request))
         resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": f"{verb} {names.get(iid, iid)}…", "kind": "info"},
                                                  "close-modal": True})
         return resp
@@ -213,11 +265,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ dashboard
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
-        return page(request, "dashboard.html", **dashboard_ctx(), docker=backend.ping())
+        return page(request, "dashboard.html", **dashboard_ctx(request), docker=backend.ping())
 
     @app.get("/ui/dashboard", response_class=HTMLResponse)
     def dashboard_partial(request: Request):
-        return page(request, "partials/dashboard.html", **dashboard_ctx())
+        return page(request, "partials/dashboard.html", **dashboard_ctx(request))
 
     @app.post("/ui/instances/{iid}/{action}")
     async def instance_action(request: Request, iid: str, action: str):
@@ -568,12 +620,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/api/state")
     def api_state():
         snap = engine.snapshot()
+        machine = host_mod.query()
         return JSONResponse({
             "version": __version__,
             "gpus": [g.__dict__ | {"users": snap.gpu_users(g.index)} for g in snap.gpus],
             "instances": {i: {"name": inst.name, "running": bool(snap.states.get(i) and snap.states[i].running),
                               "gpus": snap.allocations.get(i, []), "policy": inst.gpu.model_dump()}
                           for i, inst in snap.instances.items()},
+            "host": {"cpu_pct": machine.cpu_pct, "cpu_threads": machine.cpu_threads, "load": machine.load,
+                     "mem_total": machine.mem_total, "mem_used": machine.mem_used,
+                     "mem_available": machine.mem_available},
             "job": jobs.current.title if jobs.current else None,
         })
 

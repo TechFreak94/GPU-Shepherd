@@ -4,71 +4,152 @@
 </div>
 {% endif %}
 {% if job %}
-<div class="notice busy"><strong>{{ job.title }}…</strong>
-  <span class="muted small">{{ job.lines[-1][10:] if job.lines else "" }}</span>
-  <button class="link small" hx-get="/ui/jobs/{{ job.id }}" hx-target="#modal-body">details</button>
+<div class="notice busy"><div><strong>{{ job.title }}…</strong>
+  <span class="muted small">{{ job.lines[-1][10:] if job.lines else "" }}</span></div>
+  <button class="small" hx-get="/ui/jobs/{{ job.id }}" hx-target="#modal-body" title="Show every step of this change">View progress ›</button>
 </div>
 {% elif last_job and last_job.status == "failed" %}
-<div class="notice error"><strong>{{ last_job.title }} failed:</strong> {{ last_job.error }}
-  <button class="link small" hx-get="/ui/jobs/{{ last_job.id }}" hx-target="#modal-body">details</button>
+<div class="notice error"><div><strong>{{ last_job.title }} failed:</strong> {{ last_job.error }}</div>
+  <button class="small" hx-get="/ui/jobs/{{ last_job.id }}" hx-target="#modal-body" title="Show every step of this change">View log ›</button>
 </div>
 {% endif %}
 
-<section class="gpus" aria-label="GPUs">
+<h3 class="section-title">This machine</h3>
+<section class="machine" aria-label="This machine">
+  {% set h = host %}
+  <div class="card stat">
+    <div class="row"><strong>CPU</strong><span class="figure">{{ h.cpu_pct|round|int }}%</span></div>
+    <div class="small muted model" title="{{ h.cpu_model }}">{{ h.cpu_model or "Processor" }}</div>
+    <div class="meter" role="img" aria-label="{{ h.cpu_pct|round|int }}% CPU used"><i class="{{ level(h.cpu_pct) }}" style="width: {{ h.cpu_pct }}%"></i></div>
+    <div class="small muted">{{ h.cpu_cores }} cores / {{ h.cpu_threads }} threads · load {{ "%.2f"|format(h.load[0]) }}, {{ "%.2f"|format(h.load[1]) }}, {{ "%.2f"|format(h.load[2]) }}</div>
+    {% if cpu_rows %}
+    <ul class="usage" aria-label="CPU use by instance">
+      {% for r in cpu_rows %}<li><a href="#inst-{{ r.id }}" title="Go to {{ r.name }}">{{ r.name }}</a>
+        <span>{{ "measuring…" if r.value is none else ("%.1f"|format(r.value) ~ "%") }}</span></li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% for e in h.errors if "CPU" in e %}<div class="small bad">{{ e }}</div>{% endfor %}
+  </div>
+  <div class="card stat">
+    <div class="row"><strong>Memory (RAM)</strong><span class="figure">{{ h.mem_pct }}%</span></div>
+    <div class="small muted">{{ h.mem_used|gib }} used of {{ h.mem_total|gib }} · {{ h.mem_available|gib }} free</div>
+    <div class="meter" role="img" aria-label="{{ h.mem_pct }}% memory used"><i class="{{ level(h.mem_pct) }}" style="width: {{ h.mem_pct }}%"></i></div>
+    <div class="small muted">{% if h.swap_total %}Swap {{ h.swap_used|gib }} of {{ h.swap_total|gib }}{% else %}No swap{% endif %} · models offloaded from the GPUs live here</div>
+    {% if mem_rows %}
+    <ul class="usage" aria-label="Memory use by instance">
+      {% for r in mem_rows %}<li><a href="#inst-{{ r.id }}" title="Go to {{ r.name }}">{{ r.name }}</a><span>{{ r.value|gib }}</span></li>{% endfor %}
+      <li class="muted"><span>Everything else</span><span>{{ mem_other|gib }}</span></li>
+    </ul>
+    {% endif %}
+    {% for e in h.errors if "memory" in e %}<div class="small bad">{{ e }}</div>{% endfor %}
+  </div>
 {% for row in gpus %}{% set g = row.gpu %}
-  <div class="card">
-    <div class="row"><strong>GPU {{ g.index }}</strong>
-      <span class="small {{ 'on' if row.users else 'muted' }}">{{ row.users|join(" + ") if row.users else "free" }}</span></div>
+  <div class="card stat">
+    <div class="row"><strong>GPU {{ g.index }}</strong><span class="figure">{{ g.mem_pct }}%</span></div>
     <div class="small muted">{{ g.name }}</div>
-    <div class="meter" role="img" aria-label="{{ g.mem_pct }}% memory used"><i style="width: {{ g.mem_pct }}%"></i></div>
-    <div class="small muted">{{ "%.1f"|format(g.mem_used / 1024) }} / {{ "%.1f"|format(g.mem_total / 1024) }} GB · {{ g.util|int }}% busy</div>
+    <div class="meter" role="img" aria-label="{{ g.mem_pct }}% video memory used"><i class="{{ level(g.mem_pct) }}" style="width: {{ g.mem_pct }}%"></i></div>
+    <div class="small muted">VRAM {{ "%.1f"|format(g.mem_used / 1024) }} of {{ "%.1f"|format(g.mem_total / 1024) }} GB · {{ g.util|int }}% busy</div>
+    <ul class="usage" aria-label="Instances on GPU {{ g.index }}">
+      {% for iid, name in row.users %}<li><a href="#inst-{{ iid }}" title="Go to {{ name }}">{{ name }}</a><span class="on">assigned</span></li>
+      {% else %}<li class="muted"><span>Free - nothing is using this GPU</span></li>{% endfor %}
+    </ul>
   </div>
 {% else %}
-  <div class="card small muted">{{ gpu_error or "No GPUs detected." }}</div>
+  <div class="card stat small muted"><strong>GPUs</strong><p>{{ gpu_error or "No GPUs detected." }}</p></div>
 {% endfor %}
 </section>
 
+<h3 class="section-title">Instances <span class="count">{{ running_count }} of {{ instance_count }} running</span></h3>
 <section class="grid" aria-label="Instances">
-{% for c in cards %}{% set i = c.inst %}{% set g = i.gpu %}
-  <article class="card">
+{% for c in cards %}{% set i = c.inst %}{% set g = i.gpu %}{% set u = c.usage %}
+  <article class="card inst" id="inst-{{ i.id }}">
     <div class="row">
       <h2>{{ i.name }}{% if i.kind == "llama-swap" %}<span class="tag accent">model server</span>{% endif %}</h2>
-      {% if c.running %}<span class="pill on">running</span>
-      {% elif c.state %}<span class="pill off">{{ "stopped" if c.status in ("exited", "created") else c.status }}</span>
-      {% else %}<span class="pill off">not created</span>{% endif %}
+      {% if c.running %}<span class="pill on" title="{{ c.state.status_text }}">running</span>
+      {% elif c.state %}<span class="pill off" title="{{ c.state.status_text }}">{{ "stopped" if c.status in ("exited", "created") else c.status }}</span>
+      {% else %}<span class="pill off" title="No container has been created for this instance yet">not created</span>{% endif %}
     </div>
-    <p class="sub">{{ i.description or i.image }}</p>
-    <p class="meta">
-      {% if c.running %}<strong>{{ gpu_text(c.gpus) }}</strong>{% endif %}
-      <span class="muted">
-      {% if g.mode == "fixed" %}{% if c.running %} · {% endif %}needs GPU {{ g.gpus|join(",") }}
-      {% elif g.mode == "elastic" %}{% if c.running %} · {% endif %}{% if not g.max_gpus %}{{ g.min_gpus }}+ GPUs{% elif g.max_gpus == g.min_gpus %}{{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }}–{{ g.max_gpus }} GPUs{% endif %}, makes room for others
-      {% else %}{% if not c.running %}no GPU{% endif %}{% endif %}
-      {% if g.mode != "none" %} · priority {{ g.priority }}{% endif %}
-      {% if i.autostart %} · autostart{% endif %}
-      </span>
-    </p>
+    {% if i.description %}<p class="sub">{{ i.description }}</p>{% endif %}
     {% if c.pending %}<p class="meta"><span class="tag warn">Saved changes not applied - restart to apply</span></p>{% endif %}
+
+    <dl class="facts">
+      <dt>State</dt>
+      <dd>{% if c.state %}{{ c.state.status_text or c.status }}{% else %}Never started{% endif %}</dd>
+
+      <dt>GPU</dt>
+      <dd>{% if c.running and c.gpus %}<strong>{{ gpu_text(c.gpus) }}</strong>{% if c.assigned %} <span class="muted">({{ c.assigned|map(attribute="name")|unique|join(", ") }})</span>{% endif %}
+          {% elif c.running %}<strong>none</strong>
+          {% else %}<span class="muted">none while stopped</span>{% endif %}
+          <div class="muted small">
+          {%- if g.mode == "fixed" %}Always GPU {{ g.gpus|join(", ") }}
+          {%- elif g.mode == "elastic" %}{% if not g.max_gpus %}{{ g.min_gpus }} or more GPUs{% elif g.max_gpus == g.min_gpus %}Exactly {{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }} to {{ g.max_gpus }} GPUs{% endif %}, gives them up for others
+          {%- else %}Does not use a GPU{% endif %}
+          {%- if g.mode != "none" %} · priority {{ g.priority }}{% endif %}</div></dd>
+
+      {% if c.running and c.vram_total %}
+      <dt>VRAM</dt>
+      <dd>{{ "%.1f"|format(c.vram_used / 1024) }} of {{ "%.1f"|format(c.vram_total / 1024) }} GB
+        <div class="meter thin" role="img" aria-label="{{ (100 * c.vram_used / c.vram_total)|round|int }}% video memory used"><i class="{{ level(100 * c.vram_used / c.vram_total) }}" style="width: {{ (100 * c.vram_used / c.vram_total)|round|int }}%"></i></div></dd>
+      {% endif %}
+
+      {% if c.running %}
+      <dt>CPU</dt>
+      <dd>{% if u and u.cpu_pct is not none %}{{ "%.1f"|format(u.cpu_pct) }}% of the machine{% elif u %}<span class="muted">measuring…</span>{% else %}<span class="muted">not available</span>{% endif %}</dd>
+      <dt>RAM</dt>
+      <dd>{% if u %}{{ u.mem_used|gib }}{% else %}<span class="muted">not available</span>{% endif %}
+        <span class="muted">{% if i.memory_limit %}· limit {{ i.memory_limit }}{% else %}· no limit{% endif %}</span></dd>
+      {% elif i.memory_limit %}
+      <dt>RAM</dt><dd><span class="muted">limit {{ i.memory_limit }}</span></dd>
+      {% endif %}
+
+      <dt>Address</dt>
+      <dd>{% for p in c.ports %}<div>{% if c.running %}<a class="ext" href="{{ p.url }}" target="_blank" rel="noopener" title="Open {{ p.url }} in a new tab">{{ p.label }}</a>{% else %}<span class="mono">port {{ p.port.host }}</span>{% endif %}
+          {%- if p.port.container != p.port.host or p.port.protocol == "udp" %} <span class="muted small">(container port {{ p.port.container }}{{ "/udp" if p.port.protocol == "udp" }})</span>{% endif %}</div>
+          {% else %}<span class="muted">no ports published</span>{% endfor %}</dd>
+
+      <dt>Image</dt>
+      <dd class="mono" title="{{ i.image }}">{{ i.image }}</dd>
+
+      {% if i.kind == "llama-swap" %}
+      <dt>Models</dt>
+      <dd>{% if not c.running %}<span class="muted">{{ c.model_count }} in the catalogue</span>
+          {% elif c.models_error %}<span class="muted">{{ c.models_error }}</span>
+          {% elif c.loading %}<span class="busy-t">Loading {{ c.loading|join(", ") }}…</span>
+          {% elif c.loaded %}<strong>{{ c.loaded|join(", ") }}</strong> loaded
+          {% else %}<span class="muted">none loaded · one loads on the first request</span>{% endif %}
+          {% for mid, r in c.offload.items() %}<div class="small muted">{{ mid }}:
+            {%- if r.gpu_layers is not none %} {{ r.gpu_layers }} layers on GPU{% endif %}
+            {%- if r.cpu_moe %}{{ "," if r.gpu_layers is not none }} {{ r.cpu_moe }} expert layers in system RAM{% endif %}</div>{% endfor %}
+          {% if c.aliases %}<div class="small muted">Auto names: {% for a, m in c.aliases.items() %}<span class="mono">{{ a }}</span> → {{ m }}{{ ", " if not loop.last }}{% endfor %}</div>{% endif %}</dd>
+      {% endif %}
+    </dl>
+
+    <details class="more">
+      <summary>More details</summary>
+      <dl class="facts">
+        <dt>ID</dt><dd class="mono">{{ i.id }}</dd>
+        <dt>Container</dt><dd class="mono">{{ c.container }}</dd>
+        <dt>Start on boot</dt><dd>{{ "yes" if i.autostart else "no" }}</dd>
+        {% if i.command %}<dt>Command</dt><dd class="mono">{{ i.command|join(" ") }}</dd>{% endif %}
+        <dt>Folders</dt><dd>{% for v in i.volumes %}<div class="mono small">{{ v.host }} → {{ v.container }}{{ " (read only)" if v.read_only }}</div>{% else %}<span class="muted">none</span>{% endfor %}</dd>
+        {% if i.env %}<dt>Settings</dt><dd class="mono small">{{ i.env.keys()|join(", ") }}</dd>{% endif %}
+        {% if i.shm_size %}<dt>Shared memory</dt><dd>{{ i.shm_size }}</dd>{% endif %}
+        {% if i.user %}<dt>Runs as</dt><dd class="mono">{{ i.user }}</dd>{% endif %}
+      </dl>
+    </details>
+
     <div class="btns">
       {% if c.running %}
-        <button class="danger" hx-post="/ui/instances/{{ i.id }}/stop" hx-target="#dash" {{ "disabled" if job }}>Stop</button>
-        <button hx-post="/ui/instances/{{ i.id }}/restart" hx-target="#dash" {{ "disabled" if job }}>Restart</button>
-        {% if i.open_url_port %}<a class="btn" href="#" data-open-port="{{ i.open_url_port }}" data-open-path="{{ i.open_path }}">Open ↗</a>{% endif %}
+        {% if c.open_url %}<a class="btn primary" href="{{ c.open_url }}" target="_blank" rel="noopener" title="Open {{ c.open_url }} in a new tab">Open ↗</a>{% endif %}
+        <button class="danger" hx-post="/ui/instances/{{ i.id }}/stop" hx-target="#dash" {{ "disabled" if job }} title="Stop {{ i.name }} and free its GPUs">Stop</button>
+        <button hx-post="/ui/instances/{{ i.id }}/restart" hx-target="#dash" {{ "disabled" if job }} title="Restart {{ i.name }} (applies saved changes)">Restart</button>
       {% else %}
-        <button class="primary" hx-post="/ui/instances/{{ i.id }}/start" hx-target="#dash" {{ "disabled" if job }}>Start</button>
+        <button class="primary" hx-post="/ui/instances/{{ i.id }}/start" hx-target="#dash" {{ "disabled" if job }} title="Start {{ i.name }}; GPU Shepherd asks first if others must move">Start</button>
       {% endif %}
-      {% if i.kind == "llama-swap" %}<a class="btn" href="/instances/{{ i.id }}/models">Models</a>{% endif %}
-      {% if c.state %}<button hx-get="/ui/instances/{{ i.id }}/logs" hx-target="#modal-body">Logs</button>{% endif %}
-      <a class="btn" href="/instances/{{ i.id }}/edit">Edit</a>
+      {% if i.kind == "llama-swap" %}<a class="btn" href="/instances/{{ i.id }}/models" title="Load, unload and configure models">Models</a>{% endif %}
+      {% if c.state %}<button hx-get="/ui/instances/{{ i.id }}/logs" hx-target="#modal-body" title="Show the container's recent output">Logs</button>{% endif %}
+      <a class="btn" href="/instances/{{ i.id }}/edit" title="Change image, ports, GPUs and other settings">Edit</a>
     </div>
-    {% if i.kind == "llama-swap" and c.running %}
-    <div class="loaded">
-      {% if c.models_error %}<span class="muted">{{ c.models_error }}</span>
-      {% elif c.loading %}<span class="busy-t">Loading {{ c.loading|join(", ") }}…</span>
-      {% elif c.loaded %}Loaded: <strong>{{ c.loaded|join(", ") }}</strong>
-      {% else %}<span class="muted">No model loaded - one loads on the first request.</span>{% endif %}
-    </div>
-    {% endif %}
   </article>
 {% else %}
   <div class="card empty">
