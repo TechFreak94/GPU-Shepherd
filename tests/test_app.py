@@ -295,3 +295,13 @@ def test_reset_password(stack, monkeypatch):
     assert client.post("/login", data={"user": "admin", "password": "correct-horse"}).status_code == 401
     r = client.post("/login", data={"user": user, "password": password}, follow_redirects=False)
     assert r.status_code == 303
+
+
+def test_login_without_cookie_explains(stack):
+    app, client, _, data = stack
+    r = client.post("/login", data={"user": "admin", "password": "correct-horse"}, follow_redirects=False)
+    assert r.headers["location"] == "/?login=1"
+    client.cookies.clear()                       # a browser that drops the session cookie
+    r = client.get("/?login=1", follow_redirects=False)
+    assert r.headers["location"] == "/login?nocookie=1"
+    assert "did not keep the login cookie" in client.get("/login?nocookie=1").text
