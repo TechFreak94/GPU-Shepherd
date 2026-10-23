@@ -13,7 +13,7 @@ NAMES = sorted(p.name for p in PRESETS.iterdir() if (p / "instances").is_dir())
 
 
 def test_presets_exist():
-    assert "starter" in NAMES and "zimage-2x8gb" in NAMES
+    assert "starter" in NAMES
 
 
 @pytest.mark.parametrize("name", NAMES)

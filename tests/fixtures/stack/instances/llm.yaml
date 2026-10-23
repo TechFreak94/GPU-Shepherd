@@ -1,6 +1,3 @@
-# llama-swap: one OpenAI-compatible endpoint (http://llm:8080/v1 inside, :8080 outside) that loads
-# whichever model a client asks for. Elastic: both GPUs when they are free, GPU 1 alone while
-# ComfyUI runs. The models' GPU/RAM split follows (see the Models page).
 id: llm
 name: LLM server
 description: llama-swap with Qwen3.6 35B-A3B (chat) and Qwen3 Coder Next (coder)

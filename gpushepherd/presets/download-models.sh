@@ -2,7 +2,7 @@
 # Downloads a preset's model files (listed in its downloads.txt) into your models folder.
 #
 #   ./download-models.sh starter /srv/models               # the preset's default groups
-#   ./download-models.sh zimage-2x8gb /srv/models zimage lora   # only some groups
+#   ./download-models.sh starter /srv/models chat         # only some groups
 #   ./download-models.sh ~/my-preset /srv/models           # a preset folder of your own
 #   ./download-models.sh starter                           # list the preset's groups
 #   HF_TOKEN=hf_xxx ./download-models.sh ...               # only if a download says 401/403

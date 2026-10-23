@@ -1,5 +1,3 @@
-# Open WebUI: general chat with the models and with Hermes (through its API), plus image
-# generation through ComfyUI when ComfyUI is running. CPU only.
 id: webui
 name: Chat UI
 description: Open WebUI for chat, Hermes and ComfyUI images

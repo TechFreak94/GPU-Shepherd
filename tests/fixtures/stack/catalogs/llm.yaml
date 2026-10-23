@@ -1,8 +1,3 @@
-# Model catalogue for the "llm" instance. Edit it in the UI (Models page).
-# Tuned for 2x 8 GB GPUs (RTX 3070) and 64+ GB of system RAM. Files are Unsloth's GGUFs:
-#   https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF   Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf   22.4 GB
-#   https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF  Qwen3-Coder-Next-UD-Q4_K_XL.gguf  49.6 GB
-#   https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF  Muse-Glimmer-30B-UD-Q4_K_XL.gguf  15.9 GB (+ mmproj)
 instance_id: llm
 api_key: sk-demo-0000000000000000000000000000000000000000
 threads: 0
@@ -32,20 +27,6 @@ models:
     offload:                       # 48 layers; raise these if it runs out of GPU memory
       - {min_gpus: 1, cpu_moe: 48}
       - {min_gpus: 2, cpu_moe: 38}
-  - id: muse-glimmer
-    name: Muse Glimmer 30B (UD-Q4_K_XL)
-    description: Dense agentic/coding model that also reads images (screenshots, charts). 15.9 GB at
-      Q4, so it needs both GPUs to be quick; on one GPU most of it runs from system RAM (slow)
-    file: /models/Muse-Glimmer-30B-UD-Q4_K_XL.gguf
-    mmproj: /models/mmproj-Muse-Glimmer-30B-Q8_0.gguf
-    ctx_size: 65536
-    parallel: 1
-    kv_cache: q8_0
-    sampling: --temp 1.0 --top-p 0.95 --top-k 64
-    aliases: [muse]
-    offload:                       # 52 layers; lower these if it runs out of GPU memory
-      - {min_gpus: 1, gpu_layers: 20}
-      - {min_gpus: 2, gpu_layers: 46}
 auto_aliases:
   - alias: coder                   # point OpenCode, Aider or Continue at "coder"
     default_model: qwen3.6-35b-a3b # one GPU (ComfyUI has the other): the faster model

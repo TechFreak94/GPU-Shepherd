@@ -108,9 +108,8 @@ pip install .
 gpu-shepherd --demo --port 8090      # fake GPUs and containers, log in as admin / demo-password
 ```
 
-The demo starts with the [`starter` preset](gpushepherd/presets/starter); `--demo-preset zimage-2x8gb`
-shows a bigger one (a ComfyUI per GPU, an LLM server with chat and coding models, Hermes and Open
-WebUI on two 8 GB GPUs).
+The demo starts with the [`starter` preset](gpushepherd/presets/starter); `--demo-preset NAME` picks
+another one from `gpushepherd/presets`.
 
 ## How GPU sharing works
 
@@ -138,15 +137,16 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 
 
 With a single GPU the same settings make them take turns.
 
-The `zimage-2x8gb` preset adds a second ComfyUI *fixed GPU 1, priority 40*, for two image jobs at once. Starting
-it stops the LLM server (you are asked first); starting the LLM again stops it, since the LLM has the
-higher priority.
+A second ComfyUI *fixed GPU 1, priority 40* would give two image jobs at once: starting it stops the
+LLM server (you are asked first), and starting the LLM again stops it, since the LLM has the higher
+priority.
 
 ## Coding agents
 
 Coding tools (OpenCode, Aider, Continue, OpenHands, ...) don't need a GPU of their own: point them at
-the model server's OpenAI-compatible endpoint and let GPU Shepherd decide what runs there. The
-`zimage-2x8gb` preset has an auto name `coder` for this:
+the model server's OpenAI-compatible endpoint and let GPU Shepherd decide what runs there. An auto
+name on the Models page, say `coder`, picks the model by how many GPUs the server has. For example,
+on two 8 GB GPUs with 64 GB of RAM:
 
 | Model server has | `coder` is | Memory |
 |---|---|---|

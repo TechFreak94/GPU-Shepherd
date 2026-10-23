@@ -40,7 +40,7 @@ GPU_TEST_IMAGE=ubuntu:24.04
 # Below this much installed RAM, models must fit entirely in GPU memory. Keeping part of a model in
 # system RAM (MoE expert offload) needs room for those layers plus the OS, Docker and the other
 # containers: a 35B-A3B model at Q4 is ~22 GB on its own, so 32 GB is the smallest size where offload
-# is practical. 64 GB fits the largest models in the zimage-2x8gb preset (Qwen3 Coder Next, ~49 GB at Q4).
+# is practical. 64 GB fits a large MoE coding model such as Qwen3 Coder Next (~49 GB at Q4).
 MIN_RAM_GB=32
 RECOMMENDED_RAM_GB=64
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
