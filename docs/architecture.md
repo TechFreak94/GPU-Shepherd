@@ -57,6 +57,12 @@ app: `check` or `update`) and `log.txt`. The optional systemd units from
 `update.sh --from-dashboard` when `request` appears. A request no one picks up within two minutes
 is reported on the dashboard as "the update service isn't running".
 
+Recovery: before an update, `update.sh` tags the running image `gpu-shepherd:previous` and tars
+the settings YAML into `update/backups/`. If the build fails or `/healthz` doesn't answer within
+90 s, `recover()` resets the clone to the old commit, re-tags and starts the saved image with
+`--no-build` (falling back to rebuilding the old code), restores the settings, and reports
+`failed` with what it did. It never starts another update, so it can't loop.
+
 ## Adding a model-server connector
 
 A connector needs: a `kind` value on `Instance`, a hook in `Engine.build_spec()` that adds its

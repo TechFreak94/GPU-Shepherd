@@ -133,6 +133,24 @@ dashboard still shows what is running and tells you which command to run.
 
 Installed before `update.sh` existed? Run `git pull && sudo ./update.sh --rebuild` once.
 
+**If an update goes wrong.** Before every update, `update.sh` keeps the image that is running
+(as `gpu-shepherd:previous`) and backs up `settings.yaml`, `instances/` and `catalogs/` to
+`<data folder>/update/backups/` (the newest 10 are kept). If the new version fails to build, or
+builds but doesn't answer within 90 seconds, it goes back by itself: the clone returns to the old
+commit, the saved image is started again (no rebuild or network needed) and the settings from just
+before are restored. The dashboard then says the update failed and that it went back, with the log.
+Everything runs on the host, so this works even when the dashboard is down. By hand:
+
+```bash
+sudo ./update.sh --rollback          # back to the version before the last update (saved image)
+sudo ./update.sh --restore-settings  # settings from just before it (current ones -> *.before-restore)
+sudo docker compose logs gpu-shepherd   # why it failed
+```
+
+Updates never touch your models or app data, and never delete the data folder. As a last resort,
+`git -C <clone> log` lists every version; `git -C <clone> reset --keep <commit>` and
+`sudo ./update.sh --rebuild` run any of them.
+
 ### Try it without Docker or GPUs
 
 ```bash

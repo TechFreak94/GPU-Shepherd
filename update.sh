@@ -6,10 +6,13 @@
 #   sudo ./update.sh              # shows what is new, asks, then updates and rebuilds
 #   sudo ./update.sh --check      # only looks: exit 0 up to date, 10 an update is available
 #   sudo ./update.sh --rollback   # goes back to the version before the last update
+#   sudo ./update.sh --restore-settings   # puts back the settings backed up before it
 #   sudo ./update.sh --help       # every option
 #
 # Updates are fast-forward only: if you changed files in this folder it stops and tells you
 # (or sets them aside and puts them back with --stash), and it never discards commits of yours.
+# Before updating it keeps the running image and backs up your settings; if the new version fails
+# to build or start, it goes back to the old one by itself and says so.
 # With --enable-dashboard-updates, the dashboard can check for updates and run this script for
 # you through a small systemd service, since GPU Shepherd can't rebuild itself from inside its
 # container. Exit status: 0 done or up to date, 10 (--check) update available, 2 you declined,
@@ -23,6 +26,8 @@ ASSUME_YES=0
 STASH=0
 REBUILD=0
 ROLLBACK=0
+RESTORE=0
+RESTORE_FILE=""
 QUIET=0
 FROM_DASHBOARD=0
 FINISH=""               # internal: the commit we updated from, after re-running the new script
@@ -44,7 +49,11 @@ rebuild GPU Shepherd.
   --stash                      set your own changes to files in this folder aside during the update
                                and put them back afterwards (otherwise the update stops)
   --rebuild                    rebuild and restart GPU Shepherd even if nothing new was downloaded
-  --rollback                   go back to the version that ran before the last update, and rebuild
+  --rollback                   go back to the version that ran before the last update (uses the
+                               image kept from before it, so no rebuild or network is needed)
+  --restore-settings [FILE]    put back the settings, instances and model lists backed up just
+                               before the last update (or from FILE); the current ones are kept
+                               as *.before-restore
   --enable-dashboard-updates   install a systemd service so the dashboard can check for updates
                                daily and update when you press its button
   --disable-dashboard-updates  remove that service again
@@ -72,6 +81,8 @@ while [ $# -gt 0 ]; do
         --stash)        STASH=1; shift ;;
         --rebuild)      REBUILD=1; shift ;;
         --rollback)     ROLLBACK=1; shift ;;
+        --restore-settings) RESTORE=1; shift
+                        if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then RESTORE_FILE=$1; shift; fi ;;
         --enable-dashboard-updates)  SERVICE=enable; shift ;;
         --disable-dashboard-updates) SERVICE=disable; shift ;;
         --from-dashboard) FROM_DASHBOARD=1; ASSUME_YES=1; shift ;;
@@ -96,6 +107,9 @@ STATE_DIR="$DATA_DIR/update"          # shared with the dashboard (same path ins
 STATUS="$STATE_DIR/status.json"
 REQUEST="$STATE_DIR/request"
 PREVIOUS="$STATE_DIR/previous-commit"
+BACKUPS="$STATE_DIR/backups"
+SAVED_IMAGE=gpu-shepherd:previous   # the image that ran before the last update
+SAVED_IMAGE_FILE="$STATE_DIR/previous-image"
 
 # Docker is root-equivalent, so this needs root unless you can already use docker.
 if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1; }; then
@@ -274,6 +288,95 @@ fi
 
 # --------------------------------------------------------------------------- rebuild
 
+healthy() {   # wait up to 90 s for the web UI; true when it answers (or curl is missing)
+    have curl || return 0
+    info "Waiting for the web UI"
+    for _ in $(seq 1 90); do
+        curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    return 1
+}
+
+# Before anything changes, keep what is needed to get back: the image GPU Shepherd is running now
+# (tagged gpu-shepherd:previous, so going back needs no rebuild and no network) and a copy of the
+# settings, instances and model lists (small YAML files; model files and app data are not copied).
+save_recovery() {
+    local img name stamp
+    mkdir -p "$BACKUPS"
+    img=$(docker inspect -f '{{.Image}}' "$CONTAINER" 2>/dev/null || true)
+    name=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)
+    if [ -n "$img" ] && [ -n "$name" ] && docker tag "$img" "$SAVED_IMAGE" 2>/dev/null; then
+        echo "$name $(g rev-parse HEAD)" >"$SAVED_IMAGE_FILE"
+        info "Kept the running version as $SAVED_IMAGE, to go back to if needed"
+    else
+        rm -f "$SAVED_IMAGE_FILE"
+    fi
+    stamp="$(date -u +%Y%m%d-%H%M%S)-$(g rev-parse --short HEAD)"
+    if (cd "$DATA_DIR" && tar -czf "$BACKUPS/settings-$stamp.tar.gz" --ignore-failed-read \
+            settings.yaml instances catalogs 2>/dev/null); then
+        chmod 600 "$BACKUPS/settings-$stamp.tar.gz"
+        echo "$BACKUPS/settings-$stamp.tar.gz" >"$STATE_DIR/last-backup"
+        info "Backed up your settings to $BACKUPS/settings-$stamp.tar.gz"
+        # keep the newest 10
+        find "$BACKUPS" -name 'settings-*.tar.gz' -printf '%T@ %p\n' | sort -rn | tail -n +11 | cut -d' ' -f2- \
+            | xargs -r rm -f
+    else
+        warn "could not back up the settings in $DATA_DIR (continuing)"
+    fi
+}
+
+restore_settings() {   # restore_settings FILE: put the backed-up YAML files back (current ones -> .before-restore)
+    local f
+    for f in $(tar -tzf "$1" | grep -v '/$'); do
+        [ -e "$DATA_DIR/$f" ] && cp -p "$DATA_DIR/$f" "$DATA_DIR/$f.before-restore"
+    done
+    tar -xzf "$1" -C "$DATA_DIR"
+}
+
+start_saved_image() {   # put the image saved by save_recovery back in place and start it
+    local name
+    read -r name _ <"$SAVED_IMAGE_FILE" 2>/dev/null || return 1
+    [ -n "$name" ] && docker image inspect "$SAVED_IMAGE" >/dev/null 2>&1 || return 1
+    docker tag "$SAVED_IMAGE" "$name" &&
+        (cd "$HERE" && docker compose up -d --no-build --force-recreate "$CONTAINER")
+}
+
+# recover OLD_COMMIT REASON: the update failed, so put back the version that worked: its code, its
+# image and the settings from just before. Called once; it never starts another update.
+recover() {
+    local old=$1 reason=$2 code_back=1 how="" backup
+    err "$reason"
+    say "Going back to the version that was running before"
+    write_status updating "The update failed; going back to the version that worked"
+    if [ -n "$old" ] && [ "$old" != "$(g rev-parse HEAD)" ]; then
+        g reset --keep "$old" || code_back=0
+    fi
+    if start_saved_image; then
+        how="the saved image"
+    elif (cd "$HERE" && docker compose up -d --build "$CONTAINER"); then
+        how="a rebuild of the old code"
+    fi
+    backup=$(cat "$STATE_DIR/last-backup" 2>/dev/null || true)
+    if [ -n "$how" ] && [ -n "$old" ] && [ -n "$backup" ] && [ -f "$backup" ]; then
+        restore_settings "$backup" || warn "could not restore the settings from $backup"
+    fi
+    BEHIND=$(g rev-list --count "HEAD..${UPSTREAM:-HEAD}" 2>/dev/null || echo 0)
+    if [ -n "$how" ] && [ "$code_back" -eq 1 ] && healthy; then
+        write_status failed "The update failed ($reason). GPU Shepherd went back to the version that was running before ($(g log -1 --format=%h HEAD)) and is working. Nothing was lost; see the log for what went wrong."
+        say "Recovered: GPU Shepherd is running $(g log -1 --format='%h from %cs' HEAD) again, from $how."
+        echo "    The update is still available; try again later, or report the error above."
+        exit 1
+    fi
+    write_status failed "The update failed ($reason), and going back automatically did not work either. On the server run: sudo $HERE/update.sh --rollback (see Recovery in the README)."
+    err "going back automatically did not work either. Try, in this order:
+         sudo $HERE/update.sh --rollback             # previous version, from the saved image
+         sudo $HERE/update.sh --restore-settings     # settings from just before the update
+         sudo docker compose -f $HERE/compose.yaml logs $CONTAINER
+       Your data folder ($DATA_DIR) is never deleted by updates."
+    exit 1
+}
+
 rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait for its web UI
     local old=$1 new
     new=$(g rev-parse HEAD)
@@ -288,18 +391,10 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
          git -C $HERE diff ${old:0:12} ${new:0:12} -- compose.example.yaml"
     fi
     say "Rebuilding and restarting GPU Shepherd (your instances keep running)"
-    (cd "$HERE" && docker compose up -d --build "$CONTAINER") \
-        || fail "the rebuild failed (see the output above). To go back: sudo $HERE/update.sh --rollback"
-    if have curl; then
-        info "Waiting for the web UI"
-        for _ in $(seq 1 90); do
-            curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break
-            sleep 1
-        done
-        curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 \
-            || fail "GPU Shepherd did not come back on port $PORT. See: sudo docker compose logs $CONTAINER
-       To go back: sudo $HERE/update.sh --rollback"
-    fi
+    # A failed build leaves the old container running; a new one that doesn't answer is replaced
+    # by the old one again. Either way the clone goes back to the old code too.
+    (cd "$HERE" && docker compose up -d --build "$CONTAINER") || recover "$old" "the rebuild failed"
+    healthy || recover "$old" "GPU Shepherd did not start on port $PORT"
     write_status "done" "GPU Shepherd is running $(g log -1 --format='%h (%cs)' HEAD)."
     say "GPU Shepherd is running $(g log -1 --format='%h from %cs: %s' HEAD)"
     if [ -n "$old" ] && [ "$old" != "$new" ]; then
@@ -333,8 +428,33 @@ if [ "$ROLLBACK" -eq 1 ]; then
     UPSTREAM=$(g rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
     BEHIND=$(g rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0); AHEAD=0
     LATEST=$(g rev-parse "$UPSTREAM" 2>/dev/null || true)
-    rebuild "$cur"
+    saved_commit=$(cut -d' ' -f2 "$SAVED_IMAGE_FILE" 2>/dev/null || true)
+    if [ "$saved_commit" = "$prev" ] && start_saved_image && healthy; then
+        # the image kept from before the update: no rebuild, works offline and with a broken build
+        write_status "done" "Went back to $(g log -1 --format='%h (%cs)' HEAD)."
+        say "GPU Shepherd is running $(g log -1 --format='%h from %cs: %s' HEAD) again (the saved image)"
+    else
+        rebuild ""
+    fi
+    echo "    Settings from before the update, if you need them: sudo $HERE/update.sh --restore-settings"
     echo "    The next  sudo ./update.sh  updates to the latest version again."
+    exit 0
+fi
+
+# --------------------------------------------------------------------------- restore settings
+
+if [ "$RESTORE" -eq 1 ]; then
+    backup=$(cat "$STATE_DIR/last-backup" 2>/dev/null || true)
+    [ -n "$RESTORE_FILE" ] && backup=$RESTORE_FILE
+    [ -n "$backup" ] && [ -f "$backup" ] || { err "no settings backup found in $BACKUPS (one is made before every update)"; exit 1; }
+    say "Settings backups (newest first):"
+    find "$BACKUPS" -name 'settings-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2- | sed 's/^/    /'
+    say "Restoring $backup: settings.yaml, instances/ and catalogs/ as they were then"
+    echo "    Your current files are kept next to them as *.before-restore. Instances you added since"
+    echo "    stay; restart the instances whose settings changed."
+    ask_yes "Restore?" || { echo "Nothing was changed."; exit 2; }
+    restore_settings "$backup"
+    say "Restored. The dashboard shows the restored settings at once."
     exit 0
 fi
 
@@ -364,6 +484,7 @@ if [ "$BEHIND" -eq 0 ]; then
         [ "$REBUILD" -eq 0 ] && [ "$CHECK" -eq 0 ] && echo "    (sudo ./update.sh --rebuild rebuilds it anyway)"
         exit 0
     fi
+    save_recovery
     rebuild ""
     exit 0
 fi
@@ -404,6 +525,7 @@ if [ -n "$LOCAL_CHANGES" ]; then
 fi
 
 OLD=$(g rev-parse HEAD)
+save_recovery
 write_status updating "Downloading the new version"
 if ! g merge --ff-only --quiet "$UPSTREAM"; then
     [ "$stashed" -eq 0 ] || g stash pop --quiet || true

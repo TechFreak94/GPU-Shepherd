@@ -7,7 +7,9 @@
   {% if u.repo %}<dt>Installed from</dt><dd class="mono">{{ u.repo }}</dd>{% endif %}
   {% endif %}
 </dl>
-{% if u.state == "failed" %}<div class="notice error"><div>{{ u.message }}{% if u.dashboard_updates %} <button class="link small" hx-get="/ui/update/log" hx-target="#modal-body">Show the log</button>{% endif %}</div></div>{% endif %}
+{% if u.state == "failed" %}<div class="notice error"><div>{{ u.message }}{% if u.dashboard_updates %} <button class="link small" hx-get="/ui/update/log" hx-target="#modal-body">Show the log</button>{% endif %}
+  <div class="small" style="margin-top:4px">If something still looks wrong, on the server: <span class="mono">{{ u.command }} --rollback</span> goes back to the version before the last update, and
+  <span class="mono">{{ u.command }} --restore-settings</span> puts back the settings backed up just before it.</div></div></div>{% endif %}
 {% if u.local_changes %}
 <div class="notice busy"><div>Files in the clone were changed by hand, so updating from here is blocked to keep them safe:
   <span class="mono">{{ u.local_changes|join(", ") }}</span>. Run <span class="mono">{{ u.command }} --stash</span> on the server to keep them and update.</div></div>

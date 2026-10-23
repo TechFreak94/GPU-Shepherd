@@ -250,3 +250,57 @@ def test_update_sh_check_update_and_rollback(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert head(clone) == first and not (clone / "NEW").exists()
     assert run("--check").returncode == 10
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_update_sh_recovers_from_a_broken_update(tmp_path):
+    """The new version doesn't start: update.sh puts back the old code, image and settings."""
+    bin_dir, data = tmp_path / "bin", tmp_path / "data"
+    bin_dir.mkdir(); data.mkdir()
+    (data / "settings.yaml").write_text("network: before\n")
+    # docker: reports a running image; the new build "breaks" the settings and doesn't answer;
+    # starting the saved image (--no-build) fixes it. curl fails while it is broken.
+    (bin_dir / "docker").write_text(f"""#!/bin/sh
+echo "docker $*" >> {tmp_path}/calls
+case "$*" in
+  *"{{{{.Image}}}}"*) echo sha256:old ;;
+  *"{{{{.Config.Image}}}}"*) echo gpu-shepherd:local ;;
+  "image inspect"*) exit 0 ;;
+  *--no-build*) rm -f {tmp_path}/broken ;;
+  *--build*) touch {tmp_path}/broken; echo "network: mangled" > {data}/settings.yaml ;;
+esac
+""")
+    (bin_dir / "curl").write_text(f"#!/bin/sh\n[ ! -e {tmp_path}/broken ]\n")
+    (bin_dir / "sleep").write_text("#!/bin/sh\n")          # don't wait 90 s for a web UI that never comes
+    for f in bin_dir.iterdir():
+        f.chmod(0o755)
+    seed, remote, clone = tmp_path / "seed", tmp_path / "remote.git", tmp_path / "clone"
+    seed.mkdir()
+    shutil.copy(ROOT / "update.sh", seed / "update.sh")
+    (seed / ".gitignore").write_text("compose.yaml\n")
+    git("init", "-q", "-b", "main", cwd=seed)
+    git("add", "-A", cwd=seed)
+    git("commit", "-qm", "first", cwd=seed)
+    git("clone", "-q", "--bare", str(seed), str(remote), cwd=tmp_path)
+    git("clone", "-q", str(remote), str(clone), cwd=tmp_path)
+    (clone / "compose.yaml").write_text(f"    environment:\n      SHEPHERD_DATA_DIR: {data}\n")
+    (seed / "NEW").write_text("x")
+    git("add", "NEW", cwd=seed)
+    git("commit", "-qm", "Broken release", cwd=seed)
+    git("push", "-q", str(remote), "main", cwd=seed)
+    first = head(clone)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+    r = subprocess.run([str(clone / "update.sh"), "--yes"], env=env, capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    assert r.returncode == 1, out
+    assert "Recovered" in out
+    assert head(clone) == first and not (clone / "NEW").exists()
+    assert (data / "settings.yaml").read_text() == "network: before\n"
+    assert (data / "settings.yaml.before-restore").read_text() == "network: mangled\n"
+    calls = (tmp_path / "calls").read_text()
+    assert "docker tag sha256:old gpu-shepherd:previous" in calls
+    assert "docker tag gpu-shepherd:previous gpu-shepherd:local" in calls
+    st = json.loads((data / "update" / "status.json").read_text())
+    assert st["state"] == "failed" and "went back" in st["message"] and st["behind"] == 1
+    assert list((data / "update" / "backups").glob("settings-*.tar.gz"))
