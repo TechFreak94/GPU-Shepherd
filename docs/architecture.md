@@ -9,6 +9,7 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
                       │     ├─ gpu.py         nvidia-smi
                       │     ├─ backend.py     DockerBackend (docker SDK) / FakeBackend
                       │     └─ connectors/llamaswap.py   render config, talk to llama-swap
+                      ├─ instance_templates.py   built-in templates for guided setup (pure)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ auth.py       scrypt password hashing, first-run password
                       └─ updates.py    update status and requests, shared with update.sh on the host

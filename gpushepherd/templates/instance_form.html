@@ -4,8 +4,8 @@
 <div id="editor">
 <div class="pagehead">
   <div><h1>{{ "Edit " ~ f.name if editing else ("Add model server" if f.kind == "llama-swap" else "Add instance") }}</h1>
-  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.</div></div>
-  <a class="btn" href="/">Back</a>
+  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.{% if not editing %} Prefer a few questions instead? <a href="/instances/new">Start from a template</a>.{% endif %}</div></div>
+  <a class="btn" href="{{ '/' if editing else '/instances/new' }}">Back</a>
 </div>
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
 <form hx-post="/instances/save" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">

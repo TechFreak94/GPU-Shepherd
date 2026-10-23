@@ -18,10 +18,10 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth, buildinfo, host as host_mod, updates
+from . import __version__, auth, buildinfo, host as host_mod, instance_templates as tpl, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule,
-                     Store, format_command, format_env, format_ports, format_volumes, friendly_errors,
+                     Store, VolumeMap, format_command, format_env, format_ports, format_volumes, friendly_errors,
                      parse_command, parse_env, parse_ports, parse_volumes)
 from .connectors import llamaswap
 from .engine import Engine
@@ -323,9 +323,115 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
+    # ------------------------------------------------------------------ guided setup (templates)
+    def machine() -> tpl.Machine:
+        instances, _ = store.instances()
+        servers = {}
+        for inst in instances.values():
+            if inst.kind != "llama-swap":
+                continue
+            cat = store.catalog(inst.id)
+            chat = next((m.id for m in cat.models if "chat" in m.aliases), "")
+            servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
+                                "default_model": "chat" if chat else (cat.models[0].id if cat.models else "")}
+        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in engine.snapshot().gpus],
+                           instances=instances, servers=servers, model_sizes={})
+
+    def default_models_dir(instances: dict[str, Instance]) -> str:
+        """Where this machine keeps models: the folder another model server already uses, a common
+        place that exists, or a folder inside the data folder."""
+        for inst in instances.values():
+            for v in inst.volumes:
+                if inst.kind == "llama-swap" and v.container == tpl.MODELS_IN_CONTAINER:
+                    return v.host
+                if v.container.endswith("ComfyUI/models") and v.host.endswith("/comfyui"):
+                    return v.host.removesuffix("/comfyui")
+        for d in ("/srv/models", "/opt/models", "/data/models"):
+            if Path(d).is_dir():
+                return d
+        return str(engine.host_data_dir / "models")
+
+    def model_files(models_dir: str) -> tuple[list[dict], list[str]]:
+        probe = Instance(id="probe", name="probe", image="probe",
+                         volumes=[VolumeMap(host=models_dir, container=tpl.MODELS_IN_CONTAINER)])
+        return llamaswap.local_model_files(probe)
+
+    def guided(request: Request, t: tpl.Template, f: dict, m: tpl.Machine, error: str = "", status: int = 200):
+        files, notes = model_files(f["models_dir"]) if t.first_model and f.get("models_dir") else ([], [])
+        gpus = engine.snapshot().gpus
+        choices = [(k, v) for k, v in tpl.GPU_CHOICES.items()]
+        choices[-1:-1] = [(f"pin:{g.index}", f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)")
+                          for g in gpus] if len(gpus) > 1 else []
+        comfy = [(i.id, i.name) for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"]
+        return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
+                    file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
+                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus)
+
     @app.get("/instances/new", response_class=HTMLResponse)
-    def new_instance(request: Request, kind: str = "container"):
+    def new_instance(request: Request, kind: str = ""):
+        if kind:                              # old links went straight to the full form
+            return RedirectResponse(f"/instances/new/custom?kind={kind}", status_code=303)
+        return page(request, "instance_new.html", groups=tpl.groups(), gpu_choices=tpl.GPU_CHOICES)
+
+    @app.get("/instances/new/custom", response_class=HTMLResponse)
+    def new_custom(request: Request, kind: str = "container"):
         return editor(request, blank_instance(kind), editing=False)
+
+    @app.get("/instances/new/{key}", response_class=HTMLResponse)
+    def new_from_template(request: Request, key: str):
+        try:
+            t = tpl.get(key)
+        except ConfigError as err:
+            return RedirectResponse(f"/instances/new?msg={err}", status_code=303)
+        m = machine()
+        f = tpl.defaults(t, m, default_models_dir(m.instances), str(engine.host_data_dir / "appdata"))
+        return guided(request, t, f, m)
+
+    @app.post("/instances/guided")
+    async def save_guided(request: Request):
+        raw = await request.form()
+        try:
+            t = tpl.get(str(raw.get("template", "")))
+        except ConfigError as err:
+            return toast(Response(status_code=204), str(err), "error")
+        f = {k: str(raw.get(k, "")) for k in ("name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
+                                               "comfyui", "file", "ctx_size", "offload")}
+        f["autostart"] = raw.get("autostart") == "on"
+        m = machine()
+        if t.first_model and f["models_dir"]:
+            m.model_sizes = {x["container_path"]: x["size_gb"] for x in model_files(f["models_dir"])[0]}
+        try:
+            inst, model = tpl.build(t, f, m)
+            if raw.get("action") == "advanced":
+                form = form_from_instance(inst)
+                resp = editor(request, form, editing=False)
+                resp.headers["HX-Retarget"] = "#editor"
+                resp.headers["HX-Reselect"] = "#editor"
+                return resp
+            store.save_instance(inst)
+            for v in inst.volumes:            # make the app's own folders, so they are not owned by root
+                if not v.read_only and Path(v.host).is_relative_to(store.root):
+                    try:
+                        Path(v.host).mkdir(parents=True, exist_ok=True)
+                    except OSError:
+                        pass
+            if inst.kind == "llama-swap":
+                cat = store.catalog(inst.id)
+                if model:
+                    cat.models.append(model)
+                    store.save_catalog(Catalog.model_validate(cat.model_dump()))
+        except (ConfigError, ValueError) as err:
+            msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
+            resp = guided(request, t, f, m, error=msg)
+            resp.headers["HX-Retarget"] = "#editor"
+            resp.headers["HX-Reselect"] = "#editor"
+            return resp
+        if inst.kind == "llama-swap":
+            what = f"with {model.id}" if model else "- add a model below"
+            return Response(status_code=204, headers={
+                "HX-Redirect": f"/instances/{inst.id}/models?msg=Created {inst.name} {what}. Press Start on the dashboard to run it."})
+        return Response(status_code=204, headers={
+            "HX-Redirect": f"/?msg=Created {inst.name}. Press Start to run it.#inst-{inst.id}"})
 
     @app.get("/instances/{iid}/edit", response_class=HTMLResponse)
     def edit_instance(request: Request, iid: str):

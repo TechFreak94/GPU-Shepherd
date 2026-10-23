@@ -19,6 +19,14 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
+- **Guided setup**: *Add instance* starts from a template - a chat or coding model server
+  (llama-swap), ComfyUI or Open WebUI - and asks only what it can't work out: name, port, GPUs,
+  folders and, for model servers, a first .gguf file. It picks a free ID and port, mounts the
+  right folders, connects Open WebUI to your model server (API key included) and decides from the
+  file size whether a model needs system RAM. *Customize every field* opens the full form with the
+  answers filled in, and *Any Docker image* skips the questions altogether.
+
+  ![Templates](docs/screenshots/templates.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
   forms. One card per instance with Start / Stop / Restart / Open / Logs, showing its state and
   uptime, GPUs, VRAM, CPU and RAM use, web addresses, image and (for model servers) the loaded
