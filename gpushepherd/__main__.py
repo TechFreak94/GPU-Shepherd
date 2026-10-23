@@ -24,11 +24,21 @@ def main() -> None:
                     help="no Docker needed: fake GPUs and containers, seeded with a preset")
     ap.add_argument("--demo-preset", default="starter", metavar="NAME",
                     help="preset the demo starts with (a folder in gpushepherd/presets; default: starter)")
+    ap.add_argument("--reset-password", action="store_true",
+                    help="give the admin a new password, print it and exit (the running web UI uses it at once)")
     ap.add_argument("--version", action="version", version=f"gpu-shepherd {__version__}")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     data_dir = args.data_dir
+    if args.reset_password:
+        from . import auth
+        from .config import Store
+        store = Store(data_dir)
+        user, password = auth.reset_admin(store)
+        print(f"New login for GPU Shepherd\n  user: {user}\n  password: {password}\n"
+              f"Also saved in {auth.initial_password_file(store)}. Change it under Settings.")
+        return
     if args.demo:
         os.environ["SHEPHERD_DEMO"] = "1"
         os.environ.setdefault("SHEPHERD_FAKE_GPUS", "2x8192:NVIDIA GeForce RTX 3070")

@@ -271,3 +271,37 @@ def test_images_pulled_first_and_failures_do_not_strand_others(tmp_path, monkeyp
     assert backend.running["shepherd-llm"] is True
     job = app.state.jobs.history[0]
     assert job.status == "failed" and "ComfyUI: image is broken" in job.error
+
+
+def test_generated_password_logs_in(tmp_path, monkeypatch):
+    """No SHEPHERD_ADMIN_PASSWORD: the password in INITIAL_PASSWORD.txt is the one that works."""
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
+    monkeypatch.delenv("SHEPHERD_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    client = TestClient(create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False))
+    text = (tmp_path / "INITIAL_PASSWORD.txt").read_text()
+    password = text.split("password: ", 1)[1].splitlines()[0]
+    assert not set(password) & set("0O1lI-_")
+    r = client.post("/login", data={"user": "admin", "password": f" {password}\n"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_reset_password(stack, monkeypatch):
+    app, client, _, data = stack
+    from gpushepherd import auth
+    user, password = auth.reset_admin(app.state.store)
+    assert password in (data / "INITIAL_PASSWORD.txt").read_text()
+    assert client.post("/login", data={"user": "admin", "password": "correct-horse"}).status_code == 401
+    r = client.post("/login", data={"user": user, "password": password}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_login_without_cookie_explains(stack):
+    app, client, _, data = stack
+    r = client.post("/login", data={"user": "admin", "password": "correct-horse"}, follow_redirects=False)
+    assert r.headers["location"] == "/?login=1"
+    client.cookies.clear()                       # a browser that drops the session cookie
+    r = client.get("/?login=1", follow_redirects=False)
+    assert r.headers["location"] == "/login?nocookie=1"
+    assert "did not keep the login cookie" in client.get("/login?nocookie=1").text

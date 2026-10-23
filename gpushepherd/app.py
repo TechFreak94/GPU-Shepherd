@@ -85,6 +85,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             path = request.url.path
             if not path.startswith(PUBLIC):
                 if not request.session.get("user"):
+                    if path == "/" and request.query_params.get("login"):
+                        # just logged in, yet the session cookie did not come back
+                        return RedirectResponse("/login?nocookie=1", status_code=303)
                     if request.headers.get("HX-Request"):
                         return Response(status_code=401, headers={"HX-Redirect": "/login"})
                     return RedirectResponse("/login", status_code=303)
@@ -179,17 +182,26 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     @app.get("/login", response_class=HTMLResponse)
     def login_form(request: Request):
-        return page(request, "login.html", error="", first_run=auth.initial_password_file(store).exists())
+        error = ("The password was right, but your browser did not keep the login cookie. Allow cookies for this "
+                 "address (or try a private window) and log in again.") if request.query_params.get("nocookie") else ""
+        return page(request, "login.html", error=error, cookie_problem=bool(error), first_run=auth.initial_password_file(store).exists())
 
     @app.post("/login")
     async def login(request: Request):
         form = await request.form()
         s = store.settings()
         user, password = str(form.get("user", "")), str(form.get("password", ""))
-        if secrets.compare_digest(user, s.admin_user) and auth.verify_password(password, s.password_hash):
+        # Copying the password out of a terminal easily picks up a space or line break at either end.
+        ok = auth.verify_password(password, s.password_hash) or (
+            password != password.strip() and auth.verify_password(password.strip(), s.password_hash))
+        client = request.client.host if request.client else "?"
+        if secrets.compare_digest(user.strip(), s.admin_user) and ok:
+            log.info("login: '%s' logged in from %s", s.admin_user, client)
             request.session.clear()
-            request.session["user"] = user
-            return RedirectResponse("/", status_code=303)
+            request.session["user"] = s.admin_user
+            return RedirectResponse("/?login=1", status_code=303)
+        log.warning("login: rejected from %s (%s)", client,
+                    "wrong password" if secrets.compare_digest(user.strip(), s.admin_user) else f"unknown user {user!r}")
         return page(request, "login.html", status=401, error="Wrong user name or password.",
                     first_run=auth.initial_password_file(store).exists())
 

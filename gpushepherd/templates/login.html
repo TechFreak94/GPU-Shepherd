@@ -5,6 +5,7 @@
   <form method="post" action="/login" class="section">
     <h1>Log in</h1>
     {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+    {% if error and not cookie_problem %}<p class="small muted">Lost the password? On the server, run <span class="mono">sudo docker exec gpu-shepherd gpu-shepherd --reset-password</span> for a new one.</p>{% endif %}
     {% if first_run %}<p class="small muted">First start: the password is in <span class="mono">INITIAL_PASSWORD.txt</span> in the data folder, and in the container log.</p>{% endif %}
     <p><label for="user">User</label><input type="text" id="user" name="user" value="admin" autocomplete="username" required></p>
     <p><label for="password">Password</label><input type="password" id="password" name="password" autocomplete="current-password" required autofocus></p>

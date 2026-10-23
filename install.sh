@@ -649,6 +649,7 @@ if [ -f "$DATA_DIR/INITIAL_PASSWORD.txt" ]; then
     echo "    First login (also saved in $DATA_DIR/INITIAL_PASSWORD.txt):"
     sed -n 's/^\(user\|password\): /    \1: /p' "$DATA_DIR/INITIAL_PASSWORD.txt"
     echo "    Change the password under Settings; that file is deleted when you do."
+    echo "    Lost it? sudo docker exec gpu-shepherd gpu-shepherd --reset-password"
 fi
 echo "    Keep it on a trusted network: it controls Docker, which is root-equivalent."
 if [ -n "$DOCKER_USER" ]; then
