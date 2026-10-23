@@ -1,2 +1,2 @@
 Open WebUI: http://HOST:3000   ComfyUI: http://HOST:8188   LLM server: http://HOST:8080/ui
-In ComfyUI: Workflow > Browse Templates > "Z-Image-Turbo: Text to Image" (8 steps, CFG 1).
+In ComfyUI: the default workflow, with sd_xl_base_1.0.safetensors in Load Checkpoint, at 1024x1024.

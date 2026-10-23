@@ -7,8 +7,8 @@ folder and asks which one to use (or none); `--preset NAME` picks one up front, 
 
 | Preset | For | What it creates |
 |---|---|---|
-| [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3 8B), ComfyUI, Open WebUI |
-| [`zimage-2x8gb`](zimage-2x8gb) | 2x 8 GB GPUs, 64+ GB RAM | a ComfyUI per GPU with Z-Image Turbo, coloring-book LoRA and KDP helper; LLM server with chat and coding models; Hermes; Open WebUI |
+| [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3 8B), ComfyUI (SDXL), Open WebUI |
+| [`zimage-2x8gb`](zimage-2x8gb) | 2x 8 GB GPUs, 64+ GB RAM | a ComfyUI per GPU for Z-Image Turbo and a coloring-book LoRA; LLM server with chat and coding models; Hermes; Open WebUI. [`install-zimage.sh`](../../install-zimage.sh) installs it with the Z-Image models |
 
 Nothing in a preset starts by itself: the installer turns autostart off until you have tried it.
 
@@ -21,7 +21,7 @@ my-preset/
   preset.yaml       name, description, needs, download_gb - one "key: value" per line, shown by the installer
   instances/*.yaml  one file per instance, the same format GPU Shepherd saves (Instances page > Edit)
   catalogs/*.yaml   model lists for llama-swap instances (Models page)
-  appdata/...       starting files for the instances' folders: configs, scripts, notes
+  appdata/...       starting files for the instances' folders, such as config files
   downloads.txt     model files to download (see below)
   NOTES.txt         printed at the end of the install; HOST becomes this machine's address
 ```

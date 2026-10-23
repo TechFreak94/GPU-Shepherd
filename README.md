@@ -60,8 +60,8 @@ Toolkit, RAM). Then it asks a few questions, each with a default you can accept 
 your .gguf model files are, which port to use, and where to keep settings. If the NVIDIA driver is
 missing it offers to install it (that needs a reboot; run the installer again afterwards). On the
 first run it offers a [preset](gpushepherd/presets): a ready-made set of instances to start from,
-such as `starter` (an LLM server, ComfyUI and Open WebUI for any 8+ GB GPU), a preset of your own,
-or none. The preset is filled in with your folders and fresh API keys and passwords, and nothing in
+such as `starter` (an LLM server, ComfyUI with SDXL and Open WebUI for any 8+ GB GPU), a preset of
+your own, or none. The preset is filled in with your folders and fresh API keys and passwords, and nothing in
 it starts until you press Start. It also offers to download the preset's models (resumable) once
 everything else is done. Finally it shows the plan, and
 nothing is installed or changed until you confirm. Then it installs what is missing, checks that a
@@ -75,6 +75,10 @@ For scripted or advanced installs, every question has a flag, and `--yes` skips 
 ```bash
 sudo ./install.sh --yes --models-dir /srv/models --port 8090 --data-dir /opt/gpu-shepherd
 ```
+
+For Z-Image Turbo (one ComfyUI per GPU, the coloring-book LoRA, an upscaler), run
+`./install-zimage.sh` instead: it installs with the `zimage-2x8gb` preset and downloads the Z-Image
+files. `./install-zimage.sh --help` lists its settings.
 
 `./install.sh --help` lists them all (`--preset`, `--list-presets`, `--download-models`, `--install-driver`, `--skip-deps`, `--no-start`, ...).
 

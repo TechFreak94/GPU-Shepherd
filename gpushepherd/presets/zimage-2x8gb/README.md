@@ -3,6 +3,11 @@
 Zach's setup, which GPU Shepherd grew out of: two 8 GB GPUs (RTX 3070) and 64-128 GB of RAM, used
 for Z-Image Turbo coloring-book pages, local chat and coding models, and a home-lab assistant.
 
+[`install-zimage.sh`](../../install-zimage.sh) at the top of the repository installs GPU Shepherd
+with this preset and downloads the Z-Image files, like the original `setup_comfyui_zimage.sh`
+did for a bare-metal ComfyUI (`ZIMAGE_VARIANT=fp8|bf16|both`, `INSTALL_LORAS`, `INSTALL_UPSCALER`,
+`INSTALL_LLMS`, `HF_TOKEN`).
+
 | Instance | GPUs | What for |
 |---|---|---|
 | ComfyUI | GPU 0, always (priority 80) | Z-Image Turbo, coloring-book LoRA, upscaler |
@@ -21,10 +26,9 @@ zimage-2x8gb` shows it with fake GPUs.
 the VAE), `lora` (coloring book, trigger words `Coloring Book, ColoringBookAF`) and `upscaler`
 (RealESRGAN x4plus anime 6B). `zimage-bf16` (the official full-precision files) is optional.
 
-## Coloring books
+## Z-Image in ComfyUI
 
-- `appdata/comfyui/COLORING_BOOK_SETTINGS.md`: the Z-Image template, the two fp8 dropdowns, canvas
-  size (1024x1328), the LoRA, a prompt skeleton and complexity dials.
-- `appdata/comfyui/tools/kdp-book.sh <folder of pages> book.pdf [--blank-backs]`: turns pages into a
-  print-ready 8.5x11 in, 300 DPI PDF for KDP. It runs `kdp_compile.py` in a throwaway Python
-  container, so nothing has to be installed on the machine.
+Workflow > Browse Templates > "Z-Image-Turbo: Text to Image". With the fp8 build, pick
+`z-image-turbo_fp8_scaled_e4m3fn_KJ` (Load Diffusion Model) and `qwen_3_4b_fp8_mixed` (Load CLIP).
+Keep 8 steps and CFG 1; 1024x1328 is about 8.5:11. For the LoRA, add LoraLoaderModelOnly after
+Load Diffusion Model with `zimage/ColoringBook_Redmond_ZImage.safetensors`.

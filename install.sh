@@ -17,7 +17,8 @@
 #
 # Nothing is installed or changed until you confirm the plan. A flag answers its question in
 # advance, so the guided mode only asks what the flags left open. Run it again at any time: it
-# only does what is still missing. To stop GPU Shepherd later:
+# only does what is still missing. Exit status: 0 done, 2 you declined the plan (nothing changed),
+# 3 the NVIDIA driver was installed and the machine must reboot first, 1 an error. To stop it later:
 #   sudo docker compose down        (in this folder; your data folder is kept)
 set -euo pipefail
 
@@ -280,7 +281,7 @@ if [ "$SKIP_DEPS" -eq 0 ] && [ "$HAS_DRIVER" -eq 0 ]; then
     if [ "$INTERACTIVE" -eq 1 ] && confirm "Reboot now?" N; then
         reboot
     fi
-    exit 0
+    exit 3
 fi
 
 # --------------------------------------------------------------------------- settings
@@ -479,7 +480,7 @@ say "The plan:"
 for step in "${plan[@]}"; do item "$NO" "$step"; done
 echo
 if [ "$INTERACTIVE" -eq 1 ]; then
-    confirm "Go ahead?" Y || { echo "Nothing was changed."; exit 0; }
+    confirm "Go ahead?" Y || { echo "Nothing was changed."; exit 2; }
     echo
 fi
 
