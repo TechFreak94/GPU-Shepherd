@@ -222,9 +222,12 @@ def test_dashboard_details_and_machine_panels(stack):
     card = dash[dash.index('id="inst-hermes"'):]
     card = card[:card.index("</article>")]
     assert "nousresearch/hermes-agent:stable" in card and "shepherd-hermes" in card
-    assert 'href="http://testserver:9119/"' in card and '>testserver:9119</a>' in card and "· limit 4g" in card and "Up " in card
+    assert 'href="http://testserver:9119/"' in card and '>testserver:9119</a>' in card and "limit 4g" in card and "Up " in card
     assert "HERMES_UID" in card and "change-me-please" not in card     # setting names, never their values
-    assert "% of the machine" in card
+    assert "% of the whole machine" in card
+    # the long explanations live in tooltips that hover, focus and tap can all reach
+    assert 'aria-describedby="tip-hermes-about"' in card and 'role="tooltip" id="tip-hermes-about"' in card
+    assert card.index("Home lab") > card.index('id="tip-hermes-about"')     # the description is in the tooltip
     stopped = dash[dash.index('id="inst-webui"'):]
     assert "Never started" in stopped[:stopped.index("</article>")]
     state = client.get("/api/state").json()
