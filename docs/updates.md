@@ -73,9 +73,9 @@ runs [`scripts/release.py`](../scripts/release.py), which:
 
    | Label | Example | Use it for |
    |---|---|---|
-   | `major` | 0.8.0 → 1.0.0 | changes that work differently or need something from you after updating |
-   | *(none)* or `minor` | 0.8.0 → 0.9.0 | new features and improvements (the default) |
-   | `patch` | 0.8.0 → 0.8.1 | fixes and small changes |
+   | `major` | 0.12.1 → 1.0.0 | changes that work differently or need something from you after updating |
+   | `minor` | 0.12.1 → 0.13.0 | a bigger milestone worth marking |
+   | *(none)* or `patch` | 0.12.1 → 0.12.2 | every other change: features, improvements and fixes (the default) |
    | `no release` | | no new version (for example a typo in a comment) |
 
 2. adds a section for it to the top of `CHANGELOG.md`. The entries are the bullet points under a

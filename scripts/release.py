@@ -6,8 +6,8 @@ commit came from (the JSON GitHub's "list pull requests for a commit" API return
 library only. How big the step is comes from the pull request's labels:
 
   major       1.2.3 -> 2.0.0   something that works differently or needs action after updating
-  minor       1.2.3 -> 1.3.0   (the default) new features and improvements
-  patch       1.2.3 -> 1.2.4   fixes and small changes
+  minor       1.2.3 -> 1.3.0   a bigger milestone worth marking
+  patch       1.2.3 -> 1.2.4   (the default) every other change: features, improvements, fixes
   no release  no new version and no entry (e.g. a typo in a comment)
 
 The entry is the bullet list under a "Changelog" heading in the pull request's description when
@@ -50,14 +50,14 @@ def bump(version: str, level: str) -> str:
 
 
 def level_for(labels: list[str]) -> str | None:
-    """The bump the labels ask for (the biggest wins), "minor" without any, None to skip."""
+    """The bump the labels ask for (the biggest wins), "patch" without any, None to skip."""
     names = {n.strip().lower() for n in labels}
     if names & SKIP_LABELS:
         return None
     for level in LEVELS:
         if level in names or f"release:{level}" in names:
             return level
-    return "minor"
+    return "patch"
 
 
 def entries(title: str, body: str | None, number: int | None) -> list[str]:

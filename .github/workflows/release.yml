@@ -1,6 +1,6 @@
 # Gives every pull request merged into main its own version: bumps gpushepherd/__init__.py, adds
 # its entry to CHANGELOG.md, commits that to main as "Release X.Y.Z", tags it vX.Y.Z and publishes
-# a GitHub release. Labels on the pull request pick the step: major, minor (default), patch, or
+# a GitHub release. Labels on the pull request pick the step: major, minor, patch (default), or
 # "no release". See docs/updates.md#versions-and-releases.
 name: Release
 

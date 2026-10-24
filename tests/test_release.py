@@ -26,8 +26,8 @@ def test_bump_and_levels():
     assert release.bump("0.7.3", "major") == "1.0.0"
     assert release.bump("0.7.3", "minor") == "0.8.0"
     assert release.bump("0.7.3", "patch") == "0.7.4"
-    assert release.level_for([]) == "minor"
-    assert release.level_for(["bug", "Patch"]) == "patch"
+    assert release.level_for([]) == "patch"
+    assert release.level_for(["bug", "Minor"]) == "minor"
     assert release.level_for(["patch", "major"]) == "major"
     assert release.level_for(["release:patch"]) == "patch"
     assert release.level_for(["No Release"]) is None
@@ -82,7 +82,7 @@ def run(repo, capsys, prs, *extra):
 
 
 def test_main_releases_a_merged_pr(repo, capsys):
-    pr = {"number": 13, "merged_at": "x", "title": "Show versions", "body": "", "labels": [{"name": "patch"}]}
+    pr = {"number": 13, "merged_at": "x", "title": "Show versions", "body": "", "labels": []}
     out = run(repo, capsys, [pr])
     assert out == {"skip": "false", "version": "0.7.1", "tag": "v0.7.1", "previous": "0.7.0", "level": "patch"}
     assert '__version__ = "0.7.1"' in (repo / "v.py").read_text()
