@@ -153,3 +153,21 @@ form.guided{counter-reset:step}
 background:var(--accent);color:var(--accent-fg);font-size:12px;margin-right:6px;letter-spacing:0}
 fieldset.choices{border:0;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:6px}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* version, update progress and changelog */
+.brand+.version{font-size:12px;color:var(--muted);margin-left:-4px}
+.brand+.version:hover{color:var(--accent)}
+.progress-steps{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.progress-steps li{display:flex;align-items:center;gap:9px}
+.progress-steps li::before{content:"";flex:none;width:16px;height:16px;border-radius:50%;border:2px solid var(--btn-line);box-sizing:border-box;
+background:var(--card);font:700 10px/12px sans-serif;text-align:center;color:#fff}
+.progress-steps li.todo{color:var(--muted)}
+.progress-steps li.done::before{content:"✓";background:var(--ok,var(--accent));border-color:var(--ok,var(--accent))}
+.progress-steps li.failed::before{content:"!";background:var(--bad);border-color:var(--bad)}
+.progress-steps li.active{font-weight:600}
+.progress-steps li.active::before{border-color:var(--accent);border-right-color:transparent;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.progress-steps li.active::before{animation:none;background:var(--accent)}}
+pre.log-tail{max-height:220px;margin:8px 0 0}
+.release{margin:0 0 14px}.release h4{margin:0 0 4px;font-size:14px}
+.release ul{margin:0;padding-left:18px;font-size:13px}.release li{margin:3px 0}
+.changes .release{margin-bottom:10px}

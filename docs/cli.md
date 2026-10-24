@@ -62,6 +62,8 @@ read from `compose.yaml`.
 | `--rebuild` | Rebuild and restart even if nothing new was downloaded. |
 | `--rollback` | Go back to the version that ran before the last update. Uses the image saved then, so it needs no rebuild or network. |
 | `--restore-settings [FILE]` | Put back the settings, instances and model lists from just before the last update (or from a backup `FILE`). The current ones are kept as `*.before-restore`. |
+| `--set-token USER` | Save a GitHub user name and access token for updating from a private repository. Asks for the token without showing it (or reads it from standard input), then checks for updates. See [Private repository](updates.md#private-repository). |
+| `--clear-token` | Forget that token. |
 | `--enable-dashboard-updates` | Install the systemd service behind the dashboard's Update button. |
 | `--disable-dashboard-updates` | Remove it. |
 | `-q`, `--quiet` | Print less. |
@@ -93,8 +95,9 @@ As a last resort, `git -C <clone> log` lists every version, and
 
 GPU Shepherd runs in a container and can't rebuild itself, so the dashboard's Update button is
 handled by a small systemd service on the host (`--enable-dashboard-updates`). It checks once a
-day; the dashboard then shows the changes and an Update button, and Settings > Updates has
-*Check now*. The two sides only exchange files in `<data folder>/update/`, so the container never
+day; the dashboard then shows the changes and an Update button. The version number at the top of
+every page opens the Updates window, with *Check for updates*, each step of a running update and
+the changelog (see [Versions, changelog and updates](updates.md)). The two sides only exchange files in `<data folder>/update/`, so the container never
 needs git, your credentials or more access to the host. Without the service, the dashboard shows
 the command to run instead.
 

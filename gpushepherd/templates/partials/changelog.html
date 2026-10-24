@@ -1,0 +1,9 @@
+{# The changelog dialog. releases = [(changelog.Release, "running" / "new" / "")] #}
+<div class="dlg-head"><strong id="modal-title">Changelog</strong>
+  <span class="btns"><button hx-get="/ui/update" hx-target="#modal-body" title="Version, checking for updates and updating">Updates</button><button data-close-modal>Close</button></span></div>
+<div class="dlg-body changelog">
+  <p class="small muted" style="margin-top:0">You are running GPU Shepherd {{ version }}.{% if newer %} {{ newer }} newer version{{ "s" if newer != 1 }} {{ "are" if newer != 1 else "is" }} available, marked <em>new</em>.{% endif %}</p>
+  {% for r, mark in releases %}{% include "partials/release.html" %}{% else %}
+  <p>The changelog isn't part of this copy of GPU Shepherd. It is in <span class="mono">CHANGELOG.md</span> in the repository.</p>
+  {% endfor %}
+</div>

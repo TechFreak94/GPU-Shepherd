@@ -1,8 +1,8 @@
 {# The update notice at the top of the dashboard. u = updates.UpdateStatus #}
 {% if u.busy %}
-<div class="notice busy"><div>{% if u.pending == "check" %}<strong>Checking for updates…</strong>{% else %}<strong>Updating GPU Shepherd…</strong>
-  <span class="muted small">the dashboard restarts by itself and is back in a minute or two</span>{% endif %}</div>
-  <button class="small" hx-get="/ui/update/log" hx-target="#modal-body" title="Show what the updater is doing">View progress ›</button>
+<div class="notice busy"><div>{% if u.action == "check" %}<strong>Checking for updates…</strong>{% else %}<strong>Updating GPU Shepherd…</strong>
+  <span class="muted small">{{ u.message or "waiting for the update service" }} · the dashboard restarts by itself and is back in a minute or two</span>{% endif %}</div>
+  <button class="small" hx-get="/ui/update" hx-target="#modal-body" title="Show each step and what the updater is doing">View progress ›</button>
 </div>
 {% elif u.pending and u.pending_stale %}
 <div class="notice error"><div><strong>Nothing picked up the update request.</strong>
@@ -13,8 +13,10 @@
   <button class="small" hx-get="/ui/update" hx-target="#modal-body" title="Details and what to do">Details ›</button>
 </div>
 {% elif u.available %}
-<div class="notice update"><div><strong>Update available:</strong> {{ u.behind }} new change{{ "s" if u.behind != 1 }}
-  {%- if u.commits %} <span class="muted small">(newest {{ u.commits[0].date }}: {{ u.commits[0].subject }})</span>{% endif %}</div>
+<div class="notice update"><div>{% if u.new_version %}<strong>GPU Shepherd {{ u.new_version }} is available</strong> <span class="muted small">(you have {{ version }})</span>
+  {%- else %}<strong>Update available:</strong> {{ u.behind }} new change{{ "s" if u.behind != 1 }}{% endif %}
+  {%- if u.releases and u.releases[0].items %} <span class="muted small">· {{ u.releases[0].items[0]|md }}</span>
+  {%- elif u.commits %} <span class="muted small">(newest {{ u.commits[0].date }}: {{ u.commits[0].subject }})</span>{% endif %}</div>
   <span class="btns"><button class="small" hx-get="/ui/update" hx-target="#modal-body" title="See the changes and how to update">What's new ›</button>
   {% if u.dashboard_updates %}<button class="small primary" hx-get="/ui/update?confirm=1" hx-target="#modal-body" title="Update and restart GPU Shepherd">Update…</button>{% endif %}</span>
 </div>

@@ -7,6 +7,7 @@
 #   sudo ./update.sh --check      # only looks: exit 0 up to date, 10 an update is available
 #   sudo ./update.sh --rollback   # goes back to the version before the last update
 #   sudo ./update.sh --restore-settings   # puts back the settings backed up before it
+#   sudo ./update.sh --set-token USER     # a GitHub token for a private repository (asks for it)
 #   sudo ./update.sh --help       # every option
 #
 # Updates are fast-forward only: if you changed files in this folder it stops and tells you
@@ -32,6 +33,8 @@ QUIET=0
 FROM_DASHBOARD=0
 FINISH=""               # internal: the commit we updated from, after re-running the new script
 SERVICE=""              # enable / disable
+TOKEN_ACTION=""         # set / clear: the GitHub login used to download updates
+TOKEN_USER=""
 UNIT=gpu-shepherd-update
 UNIT_DIR=/etc/systemd/system
 CONTAINER=gpu-shepherd
@@ -54,6 +57,11 @@ rebuild GPU Shepherd.
   --restore-settings [FILE]    put back the settings, instances and model lists backed up just
                                before the last update (or from FILE); the current ones are kept
                                as *.before-restore
+  --set-token USER             save a GitHub user name and access token for downloading updates
+                               from a private repository (asks for the token, or reads it from
+                               standard input); it is kept in the clone's .git folder, readable
+                               only by the clone's owner and root, and never printed
+  --clear-token                forget that token again
   --enable-dashboard-updates   install a systemd service so the dashboard can check for updates
                                daily and update when you press its button
   --disable-dashboard-updates  remove that service again
@@ -83,6 +91,8 @@ while [ $# -gt 0 ]; do
         --rollback)     ROLLBACK=1; shift ;;
         --restore-settings) RESTORE=1; shift
                         if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then RESTORE_FILE=$1; shift; fi ;;
+        --set-token)    TOKEN_ACTION=set; TOKEN_USER="${2:?--set-token needs your GitHub user name}"; shift 2 ;;
+        --clear-token)  TOKEN_ACTION=clear; shift ;;
         --enable-dashboard-updates)  SERVICE=enable; shift ;;
         --disable-dashboard-updates) SERVICE=disable; shift ;;
         --from-dashboard) FROM_DASHBOARD=1; ASSUME_YES=1; shift ;;
@@ -129,7 +139,16 @@ if [ "$(id -u)" -eq 0 ] && [ "$OWNER" != root ]; then
     owner_home=$(getent passwd "$OWNER" | cut -d: -f6)
     GIT_AS=(runuser -u "$OWNER" -- env HOME="$owner_home")
 fi
-g() { "${GIT_AS[@]}" git -C "$HERE" "$@"; }
+# A GitHub token saved with --set-token (or from the dashboard) is used for downloads only, through
+# git's own "store" helper reading this file; your git settings are left alone.
+CREDENTIALS="$HERE/.git/gpu-shepherd-credentials"
+g() {
+    if [ -s "$CREDENTIALS" ]; then
+        "${GIT_AS[@]}" git -c credential.helper= -c "credential.helper=store --file=$CREDENTIALS" -C "$HERE" "$@"
+    else
+        "${GIT_AS[@]}" git -C "$HERE" "$@"
+    fi
+}
 if [ "$ASSUME_YES" -eq 1 ] || ! [ -t 0 ]; then export GIT_TERMINAL_PROMPT=0; fi   # never hang on a password prompt
 
 ask_yes() {   # ask_yes "question" - returns 0 for yes; --yes answers yes
@@ -151,13 +170,25 @@ json_str() {   # a JSON string literal
     printf '"%s"' "$s"
 }
 service_enabled() { have systemctl && systemctl is-enabled --quiet "$UNIT.path" 2>/dev/null; }
+version_at() {   # version_at REF: the version number in gpushepherd/__init__.py at that commit
+    { g show "$1:gpushepherd/__init__.py" 2>/dev/null || true; } | sed -n 's/^__version__ = "\(.*\)"$/\1/p' | head -n 1
+}
+STEP=""                 # what is being done now, for the dashboard's progress view
 
-# write_status STATE MESSAGE: what the last check or update found, for the dashboard and for you.
-# STATE is one of: idle, updating, done, failed.
+# write_status STATE MESSAGE [STEP]: what the last check or update found, for the dashboard and
+# for you. STATE is one of: idle, checking, updating, done, failed. STEP is one of: check, backup,
+# download, rebuild, start, recover (the dashboard lists them in this order; see updates.py), and
+# stays the same until the next one is given.
 write_status() {
     [ -d "$DATA_DIR" ] || return 0
     mkdir -p "$STATE_DIR"
+    [ -z "${3:-}" ] || STEP=$3
     local tmp="$STATUS.tmp" commits="" sha date subject first=1 changes="" f
+    if [ -n "${UPSTREAM:-}" ] && [ "$1" = idle ]; then
+        # the newest changelog, so the dashboard can show what an update brings before installing it
+        g show "$UPSTREAM:CHANGELOG.md" >"$STATE_DIR/changelog.md.tmp" 2>/dev/null &&
+            mv -f "$STATE_DIR/changelog.md.tmp" "$STATE_DIR/changelog.md" || rm -f "$STATE_DIR/changelog.md.tmp"
+    fi
     if [ -n "${UPSTREAM:-}" ] && [ "${BEHIND:-0}" -gt 0 ]; then
         while IFS=$'\t' read -r sha date subject; do
             [ "$first" -eq 1 ] || commits+=","
@@ -172,13 +203,16 @@ write_status() {
         first=0; changes+=$(json_str "$f")
     done <<<"${LOCAL_CHANGES:-}"
     {
-        printf '{"checked_at":%s,"state":%s,"message":%s,' "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
-            "$(json_str "$1")" "$(json_str "$2")"
+        printf '{"checked_at":%s,"state":%s,"step":%s,"message":%s,' "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
+            "$(json_str "$1")" "$(json_str "$STEP")" "$(json_str "$2")"
+        printf '"version":%s,"latest_version":%s,' "$(json_str "$(version_at HEAD)")" \
+            "$(json_str "$( [ -z "${UPSTREAM:-}" ] || version_at "$UPSTREAM")")"
         printf '"repo":%s,"branch":%s,"upstream":%s,' "$(json_str "$HERE")" "$(json_str "${BRANCH:-}")" \
             "$(json_str "${UPSTREAM:-}")"
         printf '"current":%s,"latest":%s,"previous":%s,"behind":%s,"ahead":%s,' \
             "$(json_str "$(g rev-parse HEAD 2>/dev/null || true)")" "$(json_str "${LATEST:-}")" \
             "$(json_str "$(cat "$PREVIOUS" 2>/dev/null || true)")" "${BEHIND:-0}" "${AHEAD:-0}"
+        printf '"credentials":%s,' "$(json_str "$(token_user)")"
         printf '"local_changes":[%s],"commits":[%s],"dashboard_updates":%s}\n' "$changes" "$commits" \
             "$(service_enabled && echo true || echo false)"
     } >"$tmp"
@@ -190,6 +224,54 @@ fail() {   # fail "message": report it here and on the dashboard, then stop
     write_status failed "$1" || true
     exit 1
 }
+
+# --------------------------------------------------------------------------- GitHub token
+
+token_user() {   # the user name saved with the token, or nothing
+    [ -s "$CREDENTIALS" ] && sed -n 's|^https://\([^:]*\):.*|\1|p' "$CREDENTIALS" | head -n 1 || true
+}
+
+# save_token USER TOKEN: GitHub user names are letters, digits and hyphens; tokens (ghp_..., github_pat_...)
+# letters, digits and underscores. Checking that keeps the file's URL format safe without escaping.
+save_token() {
+    local user=$1 token=$2 url host
+    [[ "$user" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || { err "that doesn't look like a GitHub user name"; return 1; }
+    [[ "$token" =~ ^[A-Za-z0-9_]{20,255}$ ]] || { err "that doesn't look like a GitHub access token (ghp_... or github_pat_...)"; return 1; }
+    url=$(g config --get "remote.$(g config --get "branch.$(g symbolic-ref --short -q HEAD).remote" || echo origin).url" 2>/dev/null || true)
+    case "$url" in
+        https://*) host=${url#https://}; host=${host%%/*}; host=${host##*@} ;;
+        "")        host=github.com ;;
+        *)         warn "this clone downloads from $url, which doesn't use HTTPS, so a token isn't used for it.
+         Switch it with:  git -C $HERE remote set-url origin https://github.com/<owner>/<repo>.git"
+                   host=github.com ;;
+    esac
+    ( umask 077; printf 'https://%s:%s@%s\n' "$user" "$token" "$host" >"$CREDENTIALS.tmp" )
+    chown "$OWNER" "$CREDENTIALS.tmp" 2>/dev/null || true
+    chmod 600 "$CREDENTIALS.tmp"
+    mv -f "$CREDENTIALS.tmp" "$CREDENTIALS"
+    say "Saved the GitHub token for $user (used for $host; only $OWNER and root can read it)"
+}
+
+clear_token() {
+    rm -f "$CREDENTIALS" "$CREDENTIALS.tmp"
+    say "Forgot the saved GitHub token"
+}
+
+if [ "$TOKEN_ACTION" = set ]; then
+    if [ -t 0 ]; then
+        echo "Create a token at https://github.com/settings/personal-access-tokens/new: a fine-grained token,"
+        echo "only this repository, permission Contents: Read-only. (GitHub doesn't take passwords for git.)"
+        read -r -s -p "GitHub token for $TOKEN_USER (not shown): " token </dev/tty; echo
+    else
+        read -r token || true
+    fi
+    save_token "$TOKEN_USER" "$token" || exit 1
+    unset token
+    CHECK=1                            # check right away, which shows whether the token works
+elif [ "$TOKEN_ACTION" = clear ]; then
+    clear_token
+    CHECK=1
+fi
 
 # --------------------------------------------------------------------------- dashboard service
 
@@ -275,6 +357,20 @@ if [ "$FROM_DASHBOARD" -eq 1 ]; then
     case "$action" in
         check)  CHECK=1 ;;
         update) REBUILD=1 ;;
+        credentials)
+            # the dashboard leaves "user" and "token" lines (or "clear") in a 0600 file; take them
+            # out of the data folder at once, keep them in the clone, then check that they work
+            creds="$STATE_DIR/credentials"
+            if [ "$(head -n 1 "$creds" 2>/dev/null)" = clear ]; then
+                clear_token
+            else
+                { read -r c_user; read -r c_token; } <"$creds" 2>/dev/null || true
+                rm -f "$creds"
+                save_token "${c_user:-}" "${c_token:-}" || { unset c_token; fail "The GitHub token was not saved: it doesn't look like a user name and token."; }
+                unset c_token
+            fi
+            rm -f "$creds"
+            CHECK=1 ;;
         *)      echo "unknown request; nothing done"; exit 0 ;;
     esac
 fi
@@ -303,6 +399,7 @@ healthy() {   # wait up to 90 s for the web UI; true when it answers (or curl is
 # settings, instances and model lists (small YAML files; model files and app data are not copied).
 save_recovery() {
     local img name stamp
+    write_status updating "Keeping the running version and backing up the settings" backup
     mkdir -p "$BACKUPS"
     img=$(docker inspect -f '{{.Image}}' "$CONTAINER" 2>/dev/null || true)
     name=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)
@@ -345,10 +442,10 @@ start_saved_image() {   # put the image saved by save_recovery back in place and
 # recover OLD_COMMIT REASON: the update failed, so put back the version that worked: its code, its
 # image and the settings from just before. Called once; it never starts another update.
 recover() {
-    local old=$1 reason=$2 code_back=1 how="" backup
+    local old=$1 reason=$2 code_back=1 how="" backup failed_step=$STEP
     err "$reason"
     say "Going back to the version that was running before"
-    write_status updating "The update failed; going back to the version that worked"
+    write_status updating "The update failed; going back to the version that worked" recover
     if [ -n "$old" ] && [ "$old" != "$(g rev-parse HEAD)" ]; then
         g reset --keep "$old" || code_back=0
     fi
@@ -362,6 +459,7 @@ recover() {
         restore_settings "$backup" || warn "could not restore the settings from $backup"
     fi
     BEHIND=$(g rev-list --count "HEAD..${UPSTREAM:-HEAD}" 2>/dev/null || echo 0)
+    STEP=$failed_step                  # the dashboard marks the step that failed
     if [ -n "$how" ] && [ "$code_back" -eq 1 ] && healthy; then
         write_status failed "The update failed ($reason). GPU Shepherd went back to the version that was running before ($(g log -1 --format=%h HEAD)) and is working. Nothing was lost; see the log for what went wrong."
         say "Recovered: GPU Shepherd is running $(g log -1 --format='%h from %cs' HEAD) again, from $how."
@@ -385,7 +483,7 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
         warn "there is no compose.yaml here, so GPU Shepherd was not rebuilt. Run: sudo ./install.sh"
         return 0
     fi
-    write_status updating "Rebuilding GPU Shepherd"
+    write_status updating "Rebuilding GPU Shepherd" rebuild
     if [ -n "$old" ] && [ "$old" != "$new" ] && ! g diff --quiet "$old" "$new" -- compose.example.yaml 2>/dev/null; then
         warn "compose.example.yaml changed. Your compose.yaml is kept as it is; compare them with:
          git -C $HERE diff ${old:0:12} ${new:0:12} -- compose.example.yaml"
@@ -394,9 +492,10 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
     # A failed build leaves the old container running; a new one that doesn't answer is replaced
     # by the old one again. Either way the clone goes back to the old code too.
     (cd "$HERE" && docker compose up -d --build "$CONTAINER") || recover "$old" "the rebuild failed"
+    write_status updating "Starting the new version and waiting for the dashboard" start
     healthy || recover "$old" "GPU Shepherd did not start on port $PORT"
-    write_status "done" "GPU Shepherd is running $(g log -1 --format='%h (%cs)' HEAD)."
-    say "GPU Shepherd is running $(g log -1 --format='%h from %cs: %s' HEAD)"
+    write_status "done" "GPU Shepherd $(version_at HEAD) is running ($(g log -1 --format='%h, %cs' HEAD))."
+    say "GPU Shepherd $(version_at HEAD) is running $(g log -1 --format='%h from %cs: %s' HEAD)"
     if [ -n "$old" ] && [ "$old" != "$new" ]; then
         echo "    Something wrong? Go back to the previous version with: sudo $HERE/update.sh --rollback"
     fi
@@ -469,9 +568,21 @@ UPSTREAM=$(g rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || t
        git -C $HERE branch --set-upstream-to=origin/$BRANCH"
 REMOTE=${UPSTREAM%%/*}
 
+# what the dashboard shows while this runs: an update it asked for, or a check
+RUN_STATE=checking
+[ "$FROM_DASHBOARD" -eq 1 ] && [ "$CHECK" -eq 0 ] && RUN_STATE=updating
+BEHIND=$(g rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0)     # as of the last check
+write_status "$RUN_STATE" "Checking for updates" check
 info "Checking for updates ($UPSTREAM)"
-fetch_err=$(g fetch --quiet "$REMOTE" 2>&1) || fail "could not download updates from '$REMOTE': ${fetch_err:-no details}
-       (offline, or a private repository that needs the clone owner's saved credentials?)"
+fetch_err=$(g fetch --quiet "$REMOTE" 2>&1) || {
+    if printf '%s' "$fetch_err" | grep -qiE 'authentication|could not read username|terminal prompts disabled|403|401|not found'; then
+        if [ -s "$CREDENTIALS" ]; then
+            fail "GitHub refused the saved token for $(token_user) ($fetch_err). It may have expired or not cover this repository: save a new one in Settings > Private repository, or with  sudo $HERE/update.sh --set-token <user>"
+        fi
+        fail "could not download updates from '$REMOTE': the repository needs a login ($fetch_err). For a private repository, save a GitHub access token in Settings > Private repository, or with  sudo $HERE/update.sh --set-token <your GitHub user>"
+    fi
+    fail "could not download updates from '$REMOTE': ${fetch_err:-no details} (offline?)"
+}
 LATEST=$(g rev-parse "$UPSTREAM")
 BEHIND=$(g rev-list --count "HEAD..$UPSTREAM")
 AHEAD=$(g rev-list --count "$UPSTREAM..HEAD")
@@ -480,7 +591,7 @@ LOCAL_CHANGES=$(g status --porcelain --untracked-files=no | cut -c4-)
 if [ "$BEHIND" -eq 0 ]; then
     if [ "$CHECK" -eq 1 ] || [ "$REBUILD" -eq 0 ]; then
         write_status idle "Up to date."
-        info "Up to date: $(g log -1 --format='%h from %cs: %s' HEAD)"
+        info "Up to date: $(version_at HEAD) ($(g log -1 --format='%h from %cs: %s' HEAD))"
         [ "$REBUILD" -eq 0 ] && [ "$CHECK" -eq 0 ] && echo "    (sudo ./update.sh --rebuild rebuilds it anyway)"
         exit 0
     fi
@@ -489,12 +600,19 @@ if [ "$BEHIND" -eq 0 ]; then
     exit 0
 fi
 
-say "$BEHIND new change(s) on $UPSTREAM:"
+new_version=$(version_at "$UPSTREAM")
+if [ -n "$new_version" ] && [ "$new_version" != "$(version_at HEAD)" ]; then
+    say "Version $new_version is available (you have $(version_at HEAD)). $BEHIND new change(s) on $UPSTREAM:"
+else
+    say "$BEHIND new change(s) on $UPSTREAM:"
+fi
 g log --format='    %h %cs  %s' -n "$MAX_LISTED" "HEAD..$UPSTREAM"
 [ "$BEHIND" -le "$MAX_LISTED" ] || echo "    ... and $((BEHIND - MAX_LISTED)) more"
+echo "    What changed, version by version:  git -C $HERE show $UPSTREAM:CHANGELOG.md | less"
 
+# the dashboard shows "update available" unless it asked for this update, which carries on below
+[ "$RUN_STATE" = updating ] || write_status idle "An update is available."
 if [ "$CHECK" -eq 1 ]; then
-    write_status idle "An update is available."
     echo "    Update with: sudo $HERE/update.sh"
     exit 10
 fi
@@ -526,7 +644,7 @@ fi
 
 OLD=$(g rev-parse HEAD)
 save_recovery
-write_status updating "Downloading the new version"
+write_status updating "Downloading the new version" download
 if ! g merge --ff-only --quiet "$UPSTREAM"; then
     [ "$stashed" -eq 0 ] || g stash pop --quiet || true
     fail "could not move to $UPSTREAM (see above). Nothing was changed."

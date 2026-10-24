@@ -66,6 +66,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
   (GPU policies, folders, before-stopping checks, GPU/RAM offload, auto names).
 - [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command,
   `download-models.sh` and environment variables.
+- [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
+  the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
 - [Presets](gpushepherd/presets/README.md): ready-made sets of instances, and how to make your own.
 - [Architecture](docs/architecture.md): how the code fits together.
 
@@ -130,6 +132,12 @@ sudo ./update.sh --rollback   # go back to the version before the last update
 Settings, instances and models are kept, and instances keep running while GPU Shepherd restarts.
 If an update fails to build or start, it rolls back by itself. The installer can also set up an
 **Update** button on the dashboard. Details: [CLI and scripts](docs/cli.md#updatesh).
+
+Click the version number at the top of any page to check for updates, follow an update step by
+step, or read the [changelog](CHANGELOG.md): every merged change gets its own version. Installed
+from a private repository? Save a GitHub access token in Settings > Private repository, or with
+`sudo ./update.sh --set-token <your GitHub user>`. Details:
+[Versions, changelog and updates](docs/updates.md).
 
 ### Try it without Docker or GPUs
 

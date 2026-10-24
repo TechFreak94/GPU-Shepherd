@@ -15,6 +15,7 @@ COPY pyproject.toml README.md LICENSE ./
 COPY gpushepherd ./gpushepherd
 RUN pip install --no-cache-dir . && rm -rf /src
 COPY --from=buildinfo /build.json /usr/share/gpu-shepherd/build.json
+COPY CHANGELOG.md /usr/share/gpu-shepherd/CHANGELOG.md
 
 ENV SHEPHERD_DATA_DIR=/opt/gpu-shepherd \
     PYTHONUNBUFFERED=1

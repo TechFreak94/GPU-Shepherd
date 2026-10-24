@@ -1,3 +1,5 @@
 """GPU Shepherd: run self-hosted AI containers and share the GPUs between them automatically."""
 
-__version__ = "0.1.0"
+# Bumped automatically for every pull request merged into main (.github/workflows/release.yml);
+# CHANGELOG.md says what each version changed. Keep this line's format: update.sh reads it too.
+__version__ = "0.10.0"

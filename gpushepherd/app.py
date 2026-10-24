@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth, buildinfo, drain, host as host_mod, instance_templates as tpl, updates
+from . import __version__, auth, buildinfo, changelog, drain, host as host_mod, instance_templates as tpl, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance,
                      OffloadRule,
@@ -96,6 +96,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     templates.env.globals.update(version=__version__, asset_version=build.get("commit", __version__)[:12],
                                  gpu_text=gpu_text, demo=demo, level=meter_level)
     templates.env.filters["gib"] = gib
+    templates.env.filters["md"] = changelog.inline
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     # ------------------------------------------------------------------ security
@@ -731,9 +732,25 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg=Auto names saved."})
 
     # ------------------------------------------------------------------ updates (done by update.sh on the host)
+    def update_page(request: Request, confirm: bool = False) -> Response:
+        u = updates.status(store.root)
+        return page(request, "partials/update.html", u=u, confirm=confirm,
+                    log_tail=updates.live_log(store.root) if u.busy else "")
+
     @app.get("/ui/update", response_class=HTMLResponse)
     def update_dialog(request: Request, confirm: str = ""):
-        return page(request, "partials/update.html", u=updates.status(store.root), confirm=confirm == "1")
+        return update_page(request, confirm == "1")
+
+    @app.get("/ui/changelog", response_class=HTMLResponse)
+    def changelog_dialog(request: Request):
+        ours = changelog.read(changelog.find())
+        # the newest changelog (saved by the last check) also lists versions not installed yet
+        latest = changelog.read(updates.folder(store.root) / "changelog.md")
+        shown = latest if latest and (not ours or changelog.key(latest[0].version) >= changelog.key(ours[0].version)) else ours
+        mark = lambda v: "running" if v == __version__ else ("new" if changelog.key(v) > changelog.key(__version__) else "")  # noqa: E731
+        releases = [(r, mark(r.version)) for r in shown]
+        return page(request, "partials/changelog.html", releases=releases,
+                    newer=sum(1 for _, m in releases if m == "new"))
 
     @app.get("/ui/update/card", response_class=HTMLResponse)
     def update_card(request: Request):
@@ -745,8 +762,26 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "partials/logs.html", title="Update log", refresh="/ui/update/log" if u.busy else "",
                     text=updates.log_text(store.root) or "Nothing yet: the updater writes here once it starts.")
 
+    @app.post("/ui/update/credentials")
+    async def update_credentials(request: Request):
+        raw = await request.form()
+        u = updates.status(store.root)
+        if not u.dashboard_updates:
+            return toast(Response(status_code=204), f"Saving a token needs the update service. On the server run: {u.command} --set-token <user>", "warn")
+        if u.busy:
+            return toast(Response(status_code=204), "An update or check is running; try again when it is done.", "warn")
+        try:
+            updates.request_credentials(store.root, str(raw.get("user", "")).strip(), str(raw.get("token", "")).strip(),
+                                        clear=raw.get("clear") == "1")
+        except ValueError as err:
+            return toast(Response(status_code=204), str(err), "error")
+        log.info("update: GitHub token %s from the dashboard", "removal requested" if raw.get("clear") == "1" else "handed to the host")
+        resp = update_page(request)          # shows the check that follows, which proves the token works
+        resp.headers["HX-Trigger"] = json.dumps({"refresh": True, "credentials-sent": True})
+        return resp
+
     @app.post("/ui/update/{action}")
-    def update_request(action: str):
+    def update_request(request: Request, action: str):
         if action not in updates.ACTIONS:
             return PlainTextResponse("unknown action", status_code=400)
         u = updates.status(store.root)
@@ -760,11 +795,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), f"Files in the clone were changed by hand. Run {u.command} --stash on the server.", "error")
         updates.request(store.root, action)
         log.info("update: %s requested from the dashboard", action)
-        resp = Response(status_code=204)
-        resp.headers["HX-Trigger"] = json.dumps({
-            "toast": {"msg": "Checking for updates…" if action == "check" else
-                      "Updating: GPU Shepherd restarts in a moment and this page reconnects by itself.", "kind": "info"},
-            "close-modal": True, "refresh": True})
+        resp = update_page(request)          # the dialog, now showing the progress
+        resp.headers["HX-Trigger"] = json.dumps({"refresh": True})
         return resp
 
     # ------------------------------------------------------------------ settings

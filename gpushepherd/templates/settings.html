@@ -29,10 +29,31 @@
 <div class="card" id="updates" hx-get="/ui/update/card" hx-trigger="every 10s, refresh from:body">
   {% include "partials/update_card.html" %}
 </div>
+<div class="card" id="credentials">
+  <strong>Private repository</strong>
+  <p class="small" style="margin-top:4px">{% if u.credentials %}Updates download as <strong>{{ u.credentials }}</strong>, with a saved GitHub token.
+    {% else %}Only needed when the GPU Shepherd repository you installed from is private.{% endif %}
+    GitHub doesn't accept passwords for git, so use an access token:
+    <a class="ext" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">create a fine-grained token</a>
+    for just this repository with <em>Contents: Read-only</em>. It is stored on the server in the clone's
+    <span class="mono">.git</span> folder, readable only by its owner and root, and never shown or logged.</p>
+  {% if u.dashboard_updates %}
+  <form hx-post="/ui/update/credentials" hx-target="#modal-body" autocomplete="off">
+    <div class="fields"><div><label for="gh_user">GitHub user name</label><input type="text" id="gh_user" name="user" value="{{ u.credentials }}" autocomplete="off" spellcheck="false"></div>
+    <div><label for="gh_token">Access token</label><input type="password" id="gh_token" name="token" placeholder="github_pat_…" autocomplete="new-password" spellcheck="false"></div></div>
+    <div class="actions"><button class="primary" type="submit">{% if u.credentials %}Replace token{% else %}Save token{% endif %}</button>
+      {% if u.credentials %}<button type="button" hx-post="/ui/update/credentials" hx-vals='{"clear": "1"}' hx-target="#modal-body" hx-confirm="Forget the saved GitHub token? Updates from a private repository stop working until you save a new one.">Remove token</button>{% endif %}</div>
+  </form>
+  {% else %}
+  <p class="small">On the server: <span class="mono">{{ u.command }} --set-token &lt;your GitHub user&gt;</span> (it asks for the token),
+    and <span class="mono">--clear-token</span> to remove it.</p>
+  {% endif %}
+</div>
 
 <h3>About</h3>
 <div class="card small">
-  <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }}</p>
+  <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }} ·
+    <button class="link" hx-get="/ui/changelog" hx-target="#modal-body">Changelog</button></p>
   <p>Data folder: <span class="mono">{{ data_dir }}</span>{% if host_data_dir != data_dir %} (on the host: <span class="mono">{{ host_data_dir }}</span>){% endif %}</p>
   <p class="muted" style="margin-bottom:0">Everything you change here is stored as YAML in that folder - back it up, or keep it in git.
     GPU Shepherd controls Docker, which is root-equivalent on this machine: keep it on a trusted network.</p>
