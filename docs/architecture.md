@@ -11,6 +11,7 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
                       │     └─ connectors/llamaswap.py   render config, talk to llama-swap
                       ├─ instance_templates.py   built-in templates for guided setup (pure)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
+                      ├─ drain.py      wait for running work (chats, queued images) before a stop
                       ├─ auth.py       scrypt password hashing, first-run password
                       └─ updates.py    update status and requests, shared with update.sh on the host
 ```
@@ -42,6 +43,21 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
    also reads host CPU and memory from `/proc` (`host.py`; not namespaced, so it sees the whole
    machine from inside the app's container) and one-shot Docker stats for running containers.
    CPU figures are the change since the previous poll.
+
+## Waiting for running work (`drain.py`)
+
+`engine.execute()` pulls images, then calls `drain.wait_until_idle()` for every running instance it
+is about to stop or restart, then stops them. Each instance's `drain` policy (`DrainPolicy` in
+`config.py`) names a check: `llama-swap` (the in-flight snapshot llama-swap sends first on
+`/api/events`, falling back to `/upstream/<model>/slots` of each loaded model), `llama-server`
+(`/slots`), `comfyui` (`/queue`), `http` (a JSON field), or `none`; `auto` picks one from the kind
+and image. The wait polls every 2 s until the instance reports no work, its timeout passes
+(`on_timeout`: `stop` anyway or `cancel`), or the job's `skip` / `cancel` events are set by the
+dashboard's *Stop now* / *Cancel change* buttons (`POST /ui/jobs/<id>/skip|cancel`). A check that
+can't get an answer doesn't block. While it waits, `Job.waiting` holds what each instance is still
+doing; the dashboard and `/api/state` (`waiting_for`) show it. Cancelling raises `jobs.Cancelled`
+before anything was stopped, and the job ends as `cancelled`. The policy is left out of the
+config fingerprint, so changing it never asks for a restart.
 
 ## Updates
 
