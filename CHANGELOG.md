@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.0 - 2026-10-24
+
+- Remove the duplicate description line on instance cards (#14)
+
 ## 0.11.0 - 2026-10-24
 
 - Click the version number at the top of any page to check for updates, see what's new and read the changelog. (#13)
