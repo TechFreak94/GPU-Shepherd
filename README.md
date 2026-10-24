@@ -41,6 +41,12 @@ each instance says what it needs, and starting or stopping anything re-plans who
   exactly what will happen first.
 
   ![Confirmation](docs/screenshots/confirm.png)
+- **Nothing cut off half way**: before a swap, restart or Stop takes a container down, GPU Shepherd
+  waits for the work it is doing to finish - chat answers on llama-swap or llama.cpp, queued
+  ComfyUI prompts, or anything with an HTTP status you point it at. The dashboard shows what it is
+  waiting for, with *Stop now* and *Cancel change* buttons and a timeout per instance.
+
+  ![Waiting for running work](docs/screenshots/waiting.png)
 - **Model servers** ([llama-swap](https://github.com/mostlygeek/llama-swap)): a model catalogue
   editor (pick .gguf files from disk, context, sampling, KV cache, vision projector), load and
   unload buttons, and **auto names** - a model name like `auto` that points at different models
@@ -194,6 +200,30 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 
 | Stop ComfyUI | stopped | restarted on GPUs 0,1 |
 
 With a single GPU the same settings make them take turns.
+
+### Letting running work finish
+
+Before anything is stopped, GPU Shepherd asks each container that is about to stop whether it is
+busy, and waits until it is idle. While it waits, nothing has been stopped, so *Cancel change*
+leaves the machine as it was; *Stop now* goes ahead at once. Set it per instance under **Edit →
+Before stopping**:
+
+| Wait for | How busy is measured |
+|---|---|
+| Automatic (default) | picked from the instance: llama-swap, ComfyUI or llama.cpp server images; others don't wait |
+| llama-swap requests | requests llama-swap is answering (its `/api/events`; older versions: each loaded model's `/slots`) |
+| llama.cpp server slots | `/slots` entries that are processing |
+| ComfyUI queue | running plus queued prompts from `/queue` |
+| Custom HTTP | a number, list or true/false at a JSON field of any URL in the container |
+
+The wait is limited (10 minutes by default); after that it either stops the instance anyway or
+calls the change off, as you choose. GPU Shepherd isn't in the path of the requests, so it can't
+turn new work away while it waits: a chat message or prompt that arrives meanwhile is waited for too.
+
+llama-swap's own model swaps (a request for a model that isn't loaded) already wait: llama-swap
+queues the request until the model it would replace has finished its requests. The **Unload**
+button on the Models page now refuses while a model is still answering, since llama-swap's unload
+cuts requests off.
 
 A second ComfyUI *fixed GPU 1, priority 40* would give two image jobs at once: starting it stops the
 LLM server (you are asked first), and starting the LLM again stops it, since the LLM has the higher

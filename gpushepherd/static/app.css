@@ -26,6 +26,7 @@ h3{font-size:14px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;
 .notice{padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);margin-bottom:12px;font-size:14px;
 display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .notice:has(ul){display:block}
+.notice.waiting{display:flex}.notice.waiting ul{margin:4px 0 4px}
 .notice.busy{border-left:3px solid var(--warn)}.notice.update{border-left:3px solid var(--accent)}.notice.error{border-left:3px solid var(--bad)}
 .notice ul{margin:6px 0 0;padding-left:18px}
 .pagehead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}

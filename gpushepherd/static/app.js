@@ -57,15 +57,18 @@
     if (del) { e.preventDefault(); del.closest(".autorow").remove(); }
   });
 
-  // show only the GPU fields that fit the chosen mode
-  function syncGpu() {
-    const sel = document.querySelector("[name=gpu_mode]");
-    if (!sel) return;
-    document.querySelectorAll("[data-gpu-mode]").forEach((el) => {
-      el.hidden = !el.dataset.gpuMode.split(" ").includes(sel.value);
+  // show only the fields that fit the chosen GPU mode and busy check
+  const toggles = { gpu_mode: "gpuMode", drain_check: "drainCheck" };
+  function sync() {
+    Object.entries(toggles).forEach(([name, key]) => {
+      const sel = document.querySelector("[name=" + name + "]");
+      if (!sel) return;
+      document.querySelectorAll("[data-" + key.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase()) + "]").forEach((el) => {
+        el.hidden = !el.dataset[key].split(" ").includes(sel.value);
+      });
     });
   }
-  document.addEventListener("change", (e) => { if (e.target.name === "gpu_mode") syncGpu(); });
-  document.addEventListener("DOMContentLoaded", syncGpu);
-  document.addEventListener("htmx:afterSettle", syncGpu);
+  document.addEventListener("change", (e) => { if (e.target.name in toggles) sync(); });
+  document.addEventListener("DOMContentLoaded", sync);
+  document.addEventListener("htmx:afterSettle", sync);
 })();

@@ -10,14 +10,15 @@ the server currently has - e.g. "auto" = a dense model with 2 GPUs, a MoE model 
 from __future__ import annotations
 
 import json
-import os
 import shlex
+import time
 from pathlib import Path
 
 import httpx
 import yaml
 
 from ..config import Catalog, Instance
+from . import instance_url
 
 CONTAINER_PORT = 8080
 CONFIG_PATHS = ("/app/config.yaml", "/etc/llama-swap/config/config.yaml")   # older and newer images
@@ -136,6 +137,49 @@ class LlamaSwapClient:
         walk(data)
         return found
 
+    def in_flight(self, known: set[str], wait: float = 3.0) -> tuple[int, dict[str, int]] | None:
+        """Requests llama-swap is still answering: (total, per model), or None if it can't say.
+
+        Newer llama-swap sends a snapshot of its in-flight requests as soon as /api/events is
+        opened. Older ones don't, so then ask llama-server's /slots of each loaded model."""
+        found = self._events_in_flight(wait)
+        if found is None:
+            found = self._slots_in_flight(known)
+        if found is None:
+            return None
+        return sum(found.values()), found
+
+    def _events_in_flight(self, wait: float) -> dict[str, int] | None:
+        deadline = time.monotonic() + wait
+        try:
+            with httpx.stream("GET", self.base + "/api/events", headers=self.headers,
+                              timeout=httpx.Timeout(wait, connect=self.timeout)) as r:
+                if r.status_code >= 400:
+                    return None
+                for line in r.iter_lines():
+                    if line.startswith("data:"):
+                        msg = json.loads(line[5:])
+                        if isinstance(msg, dict) and msg.get("type") == "inflight":
+                            return _count_in_flight(json.loads(msg.get("data") or "{}"))
+                    if time.monotonic() > deadline:
+                        break
+        except (httpx.HTTPError, ValueError):
+            pass
+        return None
+
+    def _slots_in_flight(self, known: set[str]) -> dict[str, int] | None:
+        found = {}
+        for mid, state in self.running(known).items():
+            if state != "ready":
+                continue
+            try:
+                busy = busy_slots(self._get(f"/upstream/{mid}/slots"))
+            except (httpx.HTTPError, ValueError, TypeError):
+                return None
+            if busy:
+                found[mid] = busy
+        return found
+
     def load(self, model: str, timeout: float = 1800) -> None:
         """llama-swap has no documented 'load' call; a 1-token request loads the model."""
         r = httpx.post(self.base + "/v1/chat/completions", headers=self.headers, timeout=timeout,
@@ -159,18 +203,27 @@ class LlamaSwapClient:
         raise RuntimeError(f"unload failed ({last})")
 
 
+def _count_in_flight(data) -> dict[str, int]:
+    """Per-model counts from llama-swap's in-flight snapshot ({"requests": [{"model": ...}]})."""
+    found: dict[str, int] = {}
+    if isinstance(data, dict) and isinstance(data.get("requests"), list):
+        for req in data["requests"]:
+            mid = str(req.get("model") or "?") if isinstance(req, dict) else "?"
+            found[mid] = found.get(mid, 0) + 1
+    elif isinstance(data, dict) and isinstance(data.get("total"), int) and data["total"] > 0:
+        found["?"] = data["total"]
+    return found
+
+
+def busy_slots(slots) -> int:
+    """How many llama-server slots are working (is_processing in new builds, state 1 in old ones)."""
+    if not isinstance(slots, list):
+        raise TypeError("unexpected /slots answer")
+    return sum(1 for s in slots if isinstance(s, dict) and (s.get("is_processing") or s.get("state", 0) != 0))
+
+
 def client_for(inst: Instance, catalog: Catalog) -> LlamaSwapClient:
-    """Inside a container on the shared network: talk to the instance by its alias.
-    Otherwise (running GPU Shepherd directly on the host): use its published port."""
-    mode = os.environ.get("SHEPHERD_CONNECT", "auto")
-    if mode == "auto":
-        mode = "network" if os.path.exists("/.dockerenv") else "host"
-    if mode == "network":
-        base = f"http://{inst.id}:{CONTAINER_PORT}"
-    else:
-        port = next((p.host for p in inst.ports if p.container == CONTAINER_PORT), None)
-        base = f"http://127.0.0.1:{port or CONTAINER_PORT}"
-    return LlamaSwapClient(base, catalog.api_key)
+    return LlamaSwapClient(instance_url(inst, CONTAINER_PORT), catalog.api_key)
 
 
 def pretty(catalog_text: str) -> str:

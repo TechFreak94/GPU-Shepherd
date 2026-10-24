@@ -80,6 +80,34 @@ class GpuPolicy(BaseModel):
         return self
 
 
+class DrainPolicy(BaseModel):
+    """Finish running work before the container is stopped (by a GPU swap, a restart or Stop).
+
+    check    how GPU Shepherd tells whether the instance is busy:
+             auto          picked from the instance (llama-swap, ComfyUI or llama.cpp server images)
+             llama-swap    requests llama-swap is still answering
+             llama-server  llama.cpp server slots that are processing (/slots)
+             comfyui       running and queued prompts (/queue)
+             http          GET `path`; the number, list or true/false at JSON `key` is the work left
+             none          never wait
+    timeout  seconds to wait at most (0 = do not wait); then `on_timeout` decides:
+             stop = stop it anyway, cancel = leave everything as it was
+    """
+    check: Literal["auto", "none", "llama-swap", "llama-server", "comfyui", "http"] = "auto"
+    port: int | None = Field(default=None, ge=1, le=65535)   # container port to ask (default: by check)
+    path: str = ""
+    key: str = ""
+    timeout: int = Field(default=600, ge=0, le=86400)
+    on_timeout: Literal["stop", "cancel"] = "stop"
+
+    @model_validator(mode="after")
+    def _check(self) -> "DrainPolicy":
+        self.path, self.key = self.path.strip(), self.key.strip()
+        if self.check == "http" and not self.path.startswith("/"):
+            raise ValueError("the busy check needs a path that starts with /, e.g. /queue")
+        return self
+
+
 class Instance(BaseModel):
     id: str
     name: str
@@ -97,6 +125,7 @@ class Instance(BaseModel):
     shm_size: str | None = None       # e.g. "1g"
     user: str | None = None           # e.g. "1000:1000"
     memory_limit: str | None = None   # e.g. "4g"
+    drain: DrainPolicy = DrainPolicy()  # wait for running work before stopping
 
     @field_validator("id")
     @classmethod
