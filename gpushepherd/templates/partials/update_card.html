@@ -1,9 +1,9 @@
 {# Settings > Updates, refreshed in place. u = updates.UpdateStatus #}
 {% include "partials/update_status.html" %}
-{% if u.dashboard_updates %}
 <div class="actions">
-  <button hx-post="/ui/update/check" hx-swap="none" {% if u.busy %}disabled{% endif %}>Check now</button>
-  <button hx-get="/ui/update/log" hx-target="#modal-body">Last update log</button>
-  {% if u.available or u.rebuild_needed %}<button class="primary" hx-get="/ui/update?confirm=1" hx-target="#modal-body" {% if u.busy %}disabled{% endif %}>Update…</button>{% endif %}
+  <button hx-post="/ui/update/check" hx-target="#modal-body" {% if u.busy %}disabled{% endif %} title="Ask the server whether a newer version is out">Check for updates</button>
+  {% if u.busy %}<button hx-get="/ui/update" hx-target="#modal-body">View progress</button>{% endif %}
+  {% if u.available or u.rebuild_needed %}{% if u.dashboard_updates %}<button class="primary" hx-get="/ui/update?confirm=1" hx-target="#modal-body" {% if u.busy %}disabled{% endif %}>{% if u.new_version %}Update to {{ u.new_version }}…{% else %}Update…{% endif %}</button>{% endif %}{% endif %}
+  <button hx-get="/ui/changelog" hx-target="#modal-body" title="Every version and what changed in it">Changelog</button>
+  {% if u.dashboard_updates %}<button hx-get="/ui/update/log" hx-target="#modal-body">Last update log</button>{% endif %}
 </div>
-{% endif %}

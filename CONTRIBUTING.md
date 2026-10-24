@@ -28,4 +28,10 @@ gpu-shepherd --demo --port 8090     # no Docker or GPU needed; log in as admin /
 Run `pytest` and try your change in demo mode. Describe what you changed and how you tested it;
 screenshots help for UI changes.
 
+Don't edit the version or `CHANGELOG.md`: merging gives the pull request its own version and
+changelog entry automatically. Put the entry under a `## Changelog` heading in the description
+(one bullet per change users will notice; the title is used otherwise), and label the pull request
+`patch`, `major` or `no release` when it isn't a normal `minor` step. Details:
+[docs/updates.md](docs/updates.md#versions-and-releases).
+
 By contributing you agree that your contributions are licensed under the Apache License 2.0.

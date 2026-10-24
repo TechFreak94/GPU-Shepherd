@@ -32,7 +32,8 @@
 
 <h3>About</h3>
 <div class="card small">
-  <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }}</p>
+  <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }} ·
+    <button class="link" hx-get="/ui/changelog" hx-target="#modal-body">Changelog</button></p>
   <p>Data folder: <span class="mono">{{ data_dir }}</span>{% if host_data_dir != data_dir %} (on the host: <span class="mono">{{ host_data_dir }}</span>){% endif %}</p>
   <p class="muted" style="margin-bottom:0">Everything you change here is stored as YAML in that folder - back it up, or keep it in git.
     GPU Shepherd controls Docker, which is root-equivalent on this machine: keep it on a trusted network.</p>

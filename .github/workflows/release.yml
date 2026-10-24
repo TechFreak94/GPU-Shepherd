@@ -1,0 +1,67 @@
+# Gives every pull request merged into main its own version: bumps gpushepherd/__init__.py, adds
+# its entry to CHANGELOG.md, commits that to main as "Release X.Y.Z", tags it vX.Y.Z and publishes
+# a GitHub release. Labels on the pull request pick the step: major, minor (default), patch, or
+# "no release". See docs/updates.md#versions-and-releases.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write          # push the release commit and tag, create the release
+  pull-requests: read      # find the pull request a commit came from
+
+concurrency:
+  group: release           # one at a time, in merge order
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # the release commit itself is pushed with GITHUB_TOKEN, which never starts another run;
+    # this also skips it if someone pushes one by hand
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main        # the newest main, including releases made since this push
+          fetch-depth: 0
+
+      - name: Find the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" > "$RUNNER_TEMP/pr.json"
+
+      - name: Bump the version and update the changelog
+        id: bump
+        env:
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          python3 scripts/release.py --pr-json "$RUNNER_TEMP/pr.json" --sha "${{ github.sha }}" \
+            --subject "${SUBJECT%%$'\n'*}" --notes "$RUNNER_TEMP/notes.md" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Commit, tag and push
+        if: steps.bump.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release $VERSION"
+          # someone may have merged meanwhile: put the release commit on top and try again
+          for try in 1 2 3; do
+            git push origin HEAD:main && break
+            [ "$try" -lt 3 ] || exit 1
+            git pull --rebase origin main
+          done
+          git tag -a "v$VERSION" -m "GPU Shepherd $VERSION"
+          git push origin "v$VERSION"
+
+      - name: Publish the GitHub release
+        if: steps.bump.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: gh release create "$TAG" --title "GPU Shepherd $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

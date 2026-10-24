@@ -2,6 +2,11 @@
 (function () {
   "use strict";
   const modal = () => document.getElementById("modal");
+  // the update progress keeps asking while GPU Shepherd restarts: don't report each failed try
+  // (registered before the toast below, so it can stop it)
+  document.addEventListener("htmx:sendError", (e) => {
+    if (e.detail.elt && e.detail.elt.closest("[data-quiet-offline]")) e.stopImmediatePropagation();
+  });
 
   function toast(msg, kind) {
     const box = document.getElementById("toasts");

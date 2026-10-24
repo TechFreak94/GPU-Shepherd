@@ -1,0 +1,6 @@
+{# One changelog version. r = changelog.Release; mark = "running" / "new" / "" (optional) #}
+<section class="release">
+  <h4>{{ r.version }}{% if r.date %} <span class="muted small">{{ r.date }}</span>{% endif %}
+    {%- if mark == "running" %} <span class="tag">running</span>{% elif mark == "new" %} <span class="tag accent">new</span>{% endif %}</h4>
+  <ul>{% for item in r.items %}<li>{{ item|md }}</li>{% endfor %}</ul>
+</section>

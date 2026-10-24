@@ -151,13 +151,25 @@ json_str() {   # a JSON string literal
     printf '"%s"' "$s"
 }
 service_enabled() { have systemctl && systemctl is-enabled --quiet "$UNIT.path" 2>/dev/null; }
+version_at() {   # version_at REF: the version number in gpushepherd/__init__.py at that commit
+    { g show "$1:gpushepherd/__init__.py" 2>/dev/null || true; } | sed -n 's/^__version__ = "\(.*\)"$/\1/p' | head -n 1
+}
+STEP=""                 # what is being done now, for the dashboard's progress view
 
-# write_status STATE MESSAGE: what the last check or update found, for the dashboard and for you.
-# STATE is one of: idle, updating, done, failed.
+# write_status STATE MESSAGE [STEP]: what the last check or update found, for the dashboard and
+# for you. STATE is one of: idle, checking, updating, done, failed. STEP is one of: check, backup,
+# download, rebuild, start, recover (the dashboard lists them in this order; see updates.py), and
+# stays the same until the next one is given.
 write_status() {
     [ -d "$DATA_DIR" ] || return 0
     mkdir -p "$STATE_DIR"
+    [ -z "${3:-}" ] || STEP=$3
     local tmp="$STATUS.tmp" commits="" sha date subject first=1 changes="" f
+    if [ -n "${UPSTREAM:-}" ] && [ "$1" = idle ]; then
+        # the newest changelog, so the dashboard can show what an update brings before installing it
+        g show "$UPSTREAM:CHANGELOG.md" >"$STATE_DIR/changelog.md.tmp" 2>/dev/null &&
+            mv -f "$STATE_DIR/changelog.md.tmp" "$STATE_DIR/changelog.md" || rm -f "$STATE_DIR/changelog.md.tmp"
+    fi
     if [ -n "${UPSTREAM:-}" ] && [ "${BEHIND:-0}" -gt 0 ]; then
         while IFS=$'\t' read -r sha date subject; do
             [ "$first" -eq 1 ] || commits+=","
@@ -172,8 +184,10 @@ write_status() {
         first=0; changes+=$(json_str "$f")
     done <<<"${LOCAL_CHANGES:-}"
     {
-        printf '{"checked_at":%s,"state":%s,"message":%s,' "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
-            "$(json_str "$1")" "$(json_str "$2")"
+        printf '{"checked_at":%s,"state":%s,"step":%s,"message":%s,' "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
+            "$(json_str "$1")" "$(json_str "$STEP")" "$(json_str "$2")"
+        printf '"version":%s,"latest_version":%s,' "$(json_str "$(version_at HEAD)")" \
+            "$(json_str "$( [ -z "${UPSTREAM:-}" ] || version_at "$UPSTREAM")")"
         printf '"repo":%s,"branch":%s,"upstream":%s,' "$(json_str "$HERE")" "$(json_str "${BRANCH:-}")" \
             "$(json_str "${UPSTREAM:-}")"
         printf '"current":%s,"latest":%s,"previous":%s,"behind":%s,"ahead":%s,' \
@@ -303,6 +317,7 @@ healthy() {   # wait up to 90 s for the web UI; true when it answers (or curl is
 # settings, instances and model lists (small YAML files; model files and app data are not copied).
 save_recovery() {
     local img name stamp
+    write_status updating "Keeping the running version and backing up the settings" backup
     mkdir -p "$BACKUPS"
     img=$(docker inspect -f '{{.Image}}' "$CONTAINER" 2>/dev/null || true)
     name=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)
@@ -345,10 +360,10 @@ start_saved_image() {   # put the image saved by save_recovery back in place and
 # recover OLD_COMMIT REASON: the update failed, so put back the version that worked: its code, its
 # image and the settings from just before. Called once; it never starts another update.
 recover() {
-    local old=$1 reason=$2 code_back=1 how="" backup
+    local old=$1 reason=$2 code_back=1 how="" backup failed_step=$STEP
     err "$reason"
     say "Going back to the version that was running before"
-    write_status updating "The update failed; going back to the version that worked"
+    write_status updating "The update failed; going back to the version that worked" recover
     if [ -n "$old" ] && [ "$old" != "$(g rev-parse HEAD)" ]; then
         g reset --keep "$old" || code_back=0
     fi
@@ -362,6 +377,7 @@ recover() {
         restore_settings "$backup" || warn "could not restore the settings from $backup"
     fi
     BEHIND=$(g rev-list --count "HEAD..${UPSTREAM:-HEAD}" 2>/dev/null || echo 0)
+    STEP=$failed_step                  # the dashboard marks the step that failed
     if [ -n "$how" ] && [ "$code_back" -eq 1 ] && healthy; then
         write_status failed "The update failed ($reason). GPU Shepherd went back to the version that was running before ($(g log -1 --format=%h HEAD)) and is working. Nothing was lost; see the log for what went wrong."
         say "Recovered: GPU Shepherd is running $(g log -1 --format='%h from %cs' HEAD) again, from $how."
@@ -385,7 +401,7 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
         warn "there is no compose.yaml here, so GPU Shepherd was not rebuilt. Run: sudo ./install.sh"
         return 0
     fi
-    write_status updating "Rebuilding GPU Shepherd"
+    write_status updating "Rebuilding GPU Shepherd" rebuild
     if [ -n "$old" ] && [ "$old" != "$new" ] && ! g diff --quiet "$old" "$new" -- compose.example.yaml 2>/dev/null; then
         warn "compose.example.yaml changed. Your compose.yaml is kept as it is; compare them with:
          git -C $HERE diff ${old:0:12} ${new:0:12} -- compose.example.yaml"
@@ -394,9 +410,10 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
     # A failed build leaves the old container running; a new one that doesn't answer is replaced
     # by the old one again. Either way the clone goes back to the old code too.
     (cd "$HERE" && docker compose up -d --build "$CONTAINER") || recover "$old" "the rebuild failed"
+    write_status updating "Starting the new version and waiting for the dashboard" start
     healthy || recover "$old" "GPU Shepherd did not start on port $PORT"
-    write_status "done" "GPU Shepherd is running $(g log -1 --format='%h (%cs)' HEAD)."
-    say "GPU Shepherd is running $(g log -1 --format='%h from %cs: %s' HEAD)"
+    write_status "done" "GPU Shepherd $(version_at HEAD) is running ($(g log -1 --format='%h, %cs' HEAD))."
+    say "GPU Shepherd $(version_at HEAD) is running $(g log -1 --format='%h from %cs: %s' HEAD)"
     if [ -n "$old" ] && [ "$old" != "$new" ]; then
         echo "    Something wrong? Go back to the previous version with: sudo $HERE/update.sh --rollback"
     fi
@@ -469,6 +486,11 @@ UPSTREAM=$(g rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || t
        git -C $HERE branch --set-upstream-to=origin/$BRANCH"
 REMOTE=${UPSTREAM%%/*}
 
+# what the dashboard shows while this runs: an update it asked for, or a check
+RUN_STATE=checking
+[ "$FROM_DASHBOARD" -eq 1 ] && [ "$CHECK" -eq 0 ] && RUN_STATE=updating
+BEHIND=$(g rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0)     # as of the last check
+write_status "$RUN_STATE" "Checking for updates" check
 info "Checking for updates ($UPSTREAM)"
 fetch_err=$(g fetch --quiet "$REMOTE" 2>&1) || fail "could not download updates from '$REMOTE': ${fetch_err:-no details}
        (offline, or a private repository that needs the clone owner's saved credentials?)"
@@ -480,7 +502,7 @@ LOCAL_CHANGES=$(g status --porcelain --untracked-files=no | cut -c4-)
 if [ "$BEHIND" -eq 0 ]; then
     if [ "$CHECK" -eq 1 ] || [ "$REBUILD" -eq 0 ]; then
         write_status idle "Up to date."
-        info "Up to date: $(g log -1 --format='%h from %cs: %s' HEAD)"
+        info "Up to date: $(version_at HEAD) ($(g log -1 --format='%h from %cs: %s' HEAD))"
         [ "$REBUILD" -eq 0 ] && [ "$CHECK" -eq 0 ] && echo "    (sudo ./update.sh --rebuild rebuilds it anyway)"
         exit 0
     fi
@@ -489,12 +511,19 @@ if [ "$BEHIND" -eq 0 ]; then
     exit 0
 fi
 
-say "$BEHIND new change(s) on $UPSTREAM:"
+new_version=$(version_at "$UPSTREAM")
+if [ -n "$new_version" ] && [ "$new_version" != "$(version_at HEAD)" ]; then
+    say "Version $new_version is available (you have $(version_at HEAD)). $BEHIND new change(s) on $UPSTREAM:"
+else
+    say "$BEHIND new change(s) on $UPSTREAM:"
+fi
 g log --format='    %h %cs  %s' -n "$MAX_LISTED" "HEAD..$UPSTREAM"
 [ "$BEHIND" -le "$MAX_LISTED" ] || echo "    ... and $((BEHIND - MAX_LISTED)) more"
+echo "    What changed, version by version:  git -C $HERE show $UPSTREAM:CHANGELOG.md | less"
 
+# the dashboard shows "update available" unless it asked for this update, which carries on below
+[ "$RUN_STATE" = updating ] || write_status idle "An update is available."
 if [ "$CHECK" -eq 1 ]; then
-    write_status idle "An update is available."
     echo "    Update with: sudo $HERE/update.sh"
     exit 10
 fi
@@ -526,7 +555,7 @@ fi
 
 OLD=$(g rev-parse HEAD)
 save_recovery
-write_status updating "Downloading the new version"
+write_status updating "Downloading the new version" download
 if ! g merge --ff-only --quiet "$UPSTREAM"; then
     [ "$stashed" -eq 0 ] || g stash pop --quiet || true
     fail "could not move to $UPSTREAM (see above). Nothing was changed."

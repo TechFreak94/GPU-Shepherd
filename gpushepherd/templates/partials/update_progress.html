@@ -1,0 +1,21 @@
+{# Each step of the check or update that is running (or just ran), and the end of its log.
+   u = updates.UpdateStatus, log_tail = the last lines of the updater's output (or "") #}
+{% if u.pending_stale %}
+<div class="notice error"><div><strong>Nothing picked up the request.</strong> The update service on the host isn't running.
+  Run <span class="mono">{{ u.command }}</span> on the server, or turn the service on again with
+  <span class="mono">{{ u.command }} --enable-dashboard-updates</span>.</div></div>
+{% else %}
+<ol class="progress-steps">
+  {% for label, mark in u.progress %}<li class="{{ mark }}">{{ label }}<span class="sr-only"> ({{ {"done": "done", "active": "in progress", "failed": "failed", "todo": "not started"}[mark] }})</span></li>{% endfor %}
+</ol>
+{% if u.busy %}
+<p class="small">{% if u.pending and u.state not in ("checking", "updating") %}Waiting for the update service on the host to start…{% else %}{{ u.message }}…{% endif %}
+  {% if u.action == "update" %}<br><span class="muted">Your instances keep running. The dashboard goes away for a moment while GPU Shepherd restarts; this window waits and carries on by itself.</span>{% endif %}</p>
+{% if log_tail %}<pre class="log-tail" aria-label="The last lines of the updater's output">{{ log_tail }}</pre>{% endif %}
+{% elif u.stuck %}
+<div class="notice error"><div>The updater stopped reporting while it was at this step. See the log, or run <span class="mono">{{ u.command }}</span> on the server.</div></div>
+{% elif u.just_updated %}
+<div class="notice update"><div><strong>Update finished.</strong> {{ u.message }} Reload the page so it uses the new version's screens.</div>
+  <a class="btn small primary" href="/">Reload</a></div>
+{% endif %}
+{% endif %}

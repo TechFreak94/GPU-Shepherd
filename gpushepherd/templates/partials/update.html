@@ -1,19 +1,26 @@
-{# Update details, in the dialog. u = updates.UpdateStatus #}
-<div class="dlg-head"><strong id="modal-title">{% if confirm %}Update GPU Shepherd?{% else %}Updates{% endif %}</strong>
-  <span class="btns"><button hx-get="/ui/update" hx-target="#modal-body">Refresh</button><button data-close-modal>Close</button></span></div>
+{# The Updates dialog: version, check now, live progress, what's new. u = updates.UpdateStatus.
+   While a check or update runs it reloads itself every 2 s, and keeps trying quietly while
+   GPU Shepherd restarts. #}
+<div id="update-dlg"{% if u.busy %} hx-get="/ui/update{% if confirm %}?confirm=1{% endif %}" hx-trigger="every 2s" hx-swap="outerHTML" hx-disinherit="*" data-quiet-offline{% endif %}>
+<div class="dlg-head"><strong id="modal-title">{% if u.busy %}{% if u.action == "check" %}Checking for updates…{% else %}Updating GPU Shepherd…{% endif %}{% elif confirm %}Update GPU Shepherd?{% else %}GPU Shepherd {{ version }}{% endif %}</strong>
+  <span class="btns"><button hx-get="/ui/changelog" hx-target="#modal-body" title="Every version and what changed in it">Changelog</button><button data-close-modal>Close</button></span></div>
 <div class="dlg-body">
+  {% if u.busy or u.just_updated or u.pending_stale or (u.state == "failed" and u.step) %}{% include "partials/update_progress.html" %}{% endif %}
+  {% if not u.busy %}
   {% include "partials/update_status.html" %}
   {% set can_update = u.dashboard_updates and (u.available or u.rebuild_needed or confirm) %}
-  {% if can_update and not u.busy %}
+  {% if can_update %}
   <p>GPU Shepherd will download the new version into <span class="mono">{{ u.repo }}</span>, rebuild itself and restart.
-    Your instances keep running, and your settings, instances and models are kept. The dashboard is unreachable for a minute or two.</p>
+    Your instances keep running, and your settings, instances and models are kept. The dashboard is unreachable for a minute or two;
+    this window shows each step and carries on by itself.</p>
   {% endif %}
   <div class="actions">
-    {% if u.dashboard_updates %}
-    <button hx-post="/ui/update/check" hx-swap="none" {% if u.busy %}disabled{% endif %}>Check now</button>
+    <button hx-post="/ui/update/check" hx-target="#modal-body" title="Ask the server whether a newer version is out">Check for updates</button>
     {% if can_update %}
-    <button class="primary" hx-post="/ui/update/update" hx-swap="none" {% if u.busy or u.local_changes %}disabled{% endif %}>{% if u.available %}Update now{% else %}Rebuild now{% endif %}</button>
+    <button class="primary" hx-post="/ui/update/update" hx-target="#modal-body" {% if u.local_changes %}disabled{% endif %}>{% if u.new_version %}Update to {{ u.new_version }}{% elif u.available %}Update now{% else %}Rebuild now{% endif %}</button>
     {% endif %}
-    {% endif %}
+    {% if u.dashboard_updates %}<button hx-get="/ui/update/log" hx-target="#modal-body">Last update log</button>{% endif %}
   </div>
+  {% endif %}
+</div>
 </div>

@@ -2,8 +2,9 @@
 <dl class="facts">
   <dt>Running</dt><dd>{{ version }}{% if u.running.commit %} · <span class="mono">{{ u.running.commit[:7] }}</span>{% if u.running.branch %} on {{ u.running.branch }}{% endif %}{% if u.running.built %} · built {{ u.running.built[:10] }}{% endif %}{% else %} <span class="muted">(build details unknown: built before updates existed, or not from a git clone)</span>{% endif %}</dd>
   {% if u.checked %}
+  {% if u.latest_version %}<dt>Latest</dt><dd>{% if u.new_version %}<strong>{{ u.new_version }}</strong> is available{% elif u.available %}{{ u.latest_version }}, with newer changes that don't have a version yet{% else %}{{ u.latest_version }}{% endif %}</dd>{% endif %}
   <dt>Last check</dt><dd>{{ u.checked_ago or u.checked_at }}{% if u.upstream %} against <span class="mono">{{ u.upstream }}</span>{% endif %} ·
-    {% if u.available %}<strong>{{ u.behind }} new change{{ "s" if u.behind != 1 }}</strong>{% elif u.state == "failed" %}<span class="bad">failed</span>{% else %}up to date{% endif %}</dd>
+    {% if u.available %}<strong>{{ u.behind }} new change{{ "s" if u.behind != 1 }}</strong>{% elif u.state == "failed" %}<span class="bad">failed</span>{% elif u.state == "checking" %}checking now{% else %}up to date{% endif %}</dd>
   {% if u.repo %}<dt>Installed from</dt><dd class="mono">{{ u.repo }}</dd>{% endif %}
   {% endif %}
 </dl>
@@ -14,7 +15,10 @@
 <div class="notice busy"><div>Files in the clone were changed by hand, so updating from here is blocked to keep them safe:
   <span class="mono">{{ u.local_changes|join(", ") }}</span>. Run <span class="mono">{{ u.command }} --stash</span> on the server to keep them and update.</div></div>
 {% endif %}
-{% if u.commits %}
+{% if u.releases %}
+<p class="small muted" style="margin-bottom:4px">What's new since {{ version }}:</p>
+<div class="changes">{% for r in u.releases %}{% include "partials/release.html" %}{% endfor %}</div>
+{% elif u.commits %}
 <p class="small muted" style="margin-bottom:4px">What's new{% if u.behind > u.commits|length %} (newest {{ u.commits|length }} of {{ u.behind }}){% endif %}:</p>
 <ul class="changes">{% for c in u.commits %}<li><span class="mono muted">{{ c.date }}</span> {{ c.subject }}</li>{% endfor %}</ul>
 {% endif %}

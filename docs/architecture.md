@@ -12,7 +12,8 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
                       ├─ instance_templates.py   built-in templates for guided setup (pure)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ auth.py       scrypt password hashing, first-run password
-                      └─ updates.py    update status and requests, shared with update.sh on the host
+                      ├─ updates.py    update status, steps and requests, shared with update.sh on the host
+                      └─ changelog.py  reads CHANGELOG.md, compares versions
 ```
 
 ## Principles
@@ -52,8 +53,10 @@ the commit it was built from (`buildinfo.py`, run in a Dockerfile build stage, r
 without needing git) so the dashboard knows exactly what is running.
 
 The app and `update.sh` share only files in `<data dir>/update/`: `status.json` (written by every
-check or update: commits behind, their subjects, local edits, state), `request` (written by the
-app: `check` or `update`) and `log.txt`. The optional systemd units from
+check or update and at each step of one: commits behind, their subjects, local edits, state, step,
+the clone's and the remote's version), `request` (written by the app: `check` or `update`),
+`log.txt` and `changelog.md` (the remote's newest `CHANGELOG.md`). The dashboard's Updates dialog
+polls while a check or update runs, so it shows each step and carries on across the restart. The optional systemd units from
 `update.sh --enable-dashboard-updates` are a daily `--check` timer and a path unit that runs
 `update.sh --from-dashboard` when `request` appears. A request no one picks up within two minutes
 is reported on the dashboard as "the update service isn't running".
@@ -77,5 +80,7 @@ mounts/environment, and a client with `models()`, `running()`, `load()`, `unload
   fake GPUs (`SHEPHERD_FAKE_GPUS=2x8192:Name`).
 - `tests/test_updates.py` - build info, the update status and routes, and `update.sh` itself
   against a scratch git remote with a stand-in `docker`.
+- `tests/test_release.py` - `scripts/release.py` (version bump and changelog entry for each merge)
+  and that `CHANGELOG.md` matches the version.
 - `tests/test_docker_backend.py` - the exact Docker API payloads, built by the real docker-py
   client with network calls intercepted (no daemon needed).

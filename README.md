@@ -134,12 +134,16 @@ the same as `./update.sh`.
 this is done by a small systemd service on the host, which the guided installer offers (or turn it
 on any time with `sudo ./update.sh --enable-dashboard-updates`; `--disable-dashboard-updates`
 removes it). It checks for updates once a day; the dashboard then shows **Update available** with
-the list of changes and an **Update** button, and Settings > Updates has **Check now**. The two
+what is new and an **Update** button. Click the version number at the top of any page to check
+now, follow an update step by step, or read the changelog. The two
 sides only talk through files in `<data folder>/update/`, so the container never needs git, your
 GitHub credentials or more access to the host than it already has. Without the service, the
 dashboard still shows what is running and tells you which command to run.
 
 Installed before `update.sh` existed? Run `git pull && sudo ./update.sh --rebuild` once.
+
+**Versions and changelog.** Every merged change gets a new version number and an entry in
+[CHANGELOG.md](CHANGELOG.md), automatically. See [Versions, changelog and updates](docs/updates.md).
 
 **If an update goes wrong.** Before every update, `update.sh` keeps the image that is running
 (as `gpu-shepherd:previous`) and backs up `settings.yaml`, `instances/` and `catalogs/` to
