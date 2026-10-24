@@ -104,7 +104,6 @@
       {% elif c.state %}<span class="pill off" title="{{ c.state.status_text }}">{{ "stopped" if c.status in ("exited", "created") else c.status }}</span>
       {% else %}<span class="pill off" title="No container has been created for this instance yet">not created</span>{% endif %}
     </div>
-    {% if i.description %}<p class="sub">{{ i.description }}</p>{% endif %}
     {% if c.waiting %}<p class="meta"><span class="tag warn" title="Waiting for this to finish before it is stopped">Finishing: {{ c.waiting.detail }}</span></p>{% endif %}
     {% if c.pending %}<p class="meta"><span class="tag warn">Saved changes not applied - restart to apply</span></p>{% endif %}
 
