@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gpu as gpu_mod
+from . import drain, gpu as gpu_mod
 from .backend import Backend, ContainerSpec, ContainerState
 from .config import Catalog, ConfigError, Instance, Store
 from .connectors import llamaswap
@@ -28,9 +28,12 @@ class Snapshot:
 
 
 class Engine:
-    def __init__(self, store: Store, backend: Backend, host_data_dir: str | None = None):
+    def __init__(self, store: Store, backend: Backend, host_data_dir: str | None = None, activity=None):
         self.store = store
         self.backend = backend
+        # how busy a running instance is (drain.probe); tests and demo mode pass their own
+        self.activity = activity or self._probe
+        self.drain_interval = 2.0          # seconds between "are you done?" checks
         # Where the data dir lives on the HOST (Docker needs host paths for bind mounts).
         # Default: same path inside and outside the container, like Dockge's stacks dir.
         self.host_data_dir = Path(host_data_dir or os.environ.get("SHEPHERD_HOST_DATA_DIR") or store.root)
@@ -47,7 +50,8 @@ class Engine:
         return self.store.settings().container_prefix + iid
 
     def config_hash(self, inst: Instance) -> str:
-        data = inst.model_dump(mode="json")
+        # the drain policy only matters to GPU Shepherd, so changing it needs no restart
+        data = inst.model_dump(mode="json", exclude={"drain"})
         if inst.kind == "llama-swap":
             data["_catalog"] = self.store.catalog(inst.id).model_dump(mode="json")
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:12]
@@ -63,7 +67,12 @@ class Engine:
         return self.plan("rebalance", None, {i for i, inst in instances.items() if inst.autostart})
 
     # ------------------------------------------------------------------ execution
-    def execute(self, p: Plan, log) -> None:
+    def _probe(self, inst: Instance) -> drain.Activity:
+        return drain.probe(inst, self.store.catalog(inst.id) if inst.kind == "llama-swap" else None)
+
+    def execute(self, p: Plan, log, job=None) -> None:
+        """Carry out a plan. `job` (jobs.Job) lets the dashboard follow and steer the wait for
+        running work before containers stop."""
         if p.error:
             raise ConfigError(p.error)
         instances, _ = self.store.instances()
@@ -82,8 +91,16 @@ class Engine:
         for iid in starts:
             self.backend.ensure_image(instances[iid].image, log)
 
+        # let running work (a chat answer, a queued image) finish before its container stops;
+        # this can raise jobs.Cancelled, and then nothing has been changed
+        stopping = p.to_stop + p.to_restart
+        states = self.backend.states()
+        busy_candidates = [i for i in stopping if i in instances and states.get(i) and states[i].running]
+        drain.wait_until_idle(instances, busy_candidates, log, job, ask=self.activity,
+                             interval=self.drain_interval)
+
         # stop first so GPUs are free before anything starts
-        for iid in p.to_stop + p.to_restart:
+        for iid in stopping:
             log(f"Stopping {names.get(iid, iid)}")
             self.backend.stop(self.container_name(iid))
 

@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -18,9 +19,10 @@ from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth, buildinfo, host as host_mod, instance_templates as tpl, updates
+from . import __version__, auth, buildinfo, drain, host as host_mod, instance_templates as tpl, updates
 from .backend import Backend, DockerBackend, FakeBackend
-from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule,
+from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance,
+                     OffloadRule,
                      Store, VolumeMap, format_command, format_env, format_ports, format_volumes, friendly_errors,
                      parse_command, parse_env, parse_ports, parse_volumes)
 from .connectors import llamaswap
@@ -72,7 +74,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     store = Store(data_dir or os.environ.get("SHEPHERD_DATA_DIR", "/opt/gpu-shepherd"))
     if backend is None:
         backend = FakeBackend(slow=0.5) if demo else DockerBackend()
-    engine = Engine(store, backend)
+    # demo mode has no real servers to ask, so everything counts as idle
+    engine = Engine(store, backend, activity=(lambda _inst: drain.Activity(0)) if demo else None)
     jobs = JobRunner()
     try:
         backend.ensure_network(store.settings().network)
@@ -172,7 +175,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     "open_url": base_url(request, inst.open_url_port, inst.open_path) if inst.open_url_port else "",
                     "pending": bool(st and st.running and st.config_hash and st.config_hash != engine.config_hash(inst)),
                     "loaded": [], "models_error": "", "model_count": 0, "aliases": {}, "offload": {},
-                    "loading": sorted(app.state.loading.get(inst.id, set()))}
+                    "loading": sorted(app.state.loading.get(inst.id, set())),
+                    "waiting": (jobs.current.waiting.get(inst.id) if jobs.current else None)}
             if inst.kind == "llama-swap":
                 cat = store.catalog(inst.id)
                 card["model_count"] = len(cat.models)
@@ -201,7 +205,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
                 "running_count": len(running), "instance_count": len(snap.instances),
                 "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None),
-                "u": updates.status(store.root)}
+                "now": time.time(), "u": updates.status(store.root)}
 
     def run_plan(request: Request, action: str, iid: str, confirm: bool, back: str = "") -> Response:
         names = {i.id: i.name for i in store.instances()[0].values()}
@@ -221,7 +225,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return resp
         verb = {"start": "Starting", "stop": "Stopping", "restart": "Restarting"}[action]
         try:
-            jobs.submit(f"{verb} {names.get(iid, iid)}", lambda logf: engine.execute(p, logf))
+            jobs.submit(f"{verb} {names.get(iid, iid)}", lambda job: engine.execute(p, job, job))
         except Busy as err:
             return toast(Response(status_code=204), str(err), "warn")
         if back:
@@ -300,13 +304,35 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "partials/logs.html", title=f"{job.title} ({job.status})", text="\n".join(job.lines),
                     refresh=f"/ui/jobs/{jid}" if job.status == "running" else "")
 
+    @app.post("/ui/jobs/{jid}/{op}")
+    def job_control(jid: int, op: str):
+        """The buttons shown while a change waits for running work: stop now, or call it off."""
+        job = jobs.current
+        if op not in ("skip", "cancel"):
+            return PlainTextResponse("unknown operation", status_code=400)
+        if not job or job.id != jid:
+            return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}),
+                         "That change has already finished.")
+        if op == "cancel":
+            job.call_off()
+            msg = "Calling the change off: nothing is stopped."
+        else:
+            job.skip.set()
+            msg = "Stopping without waiting any longer."
+        log.info("job %s: %s pressed", jid, op)
+        resp = Response(status_code=204)
+        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": "info"}, "refresh": True})
+        return resp
+
     # ------------------------------------------------------------------ instance editor
     def blank_instance(kind: str) -> dict:
         if kind == "llama-swap":
             return {"kind": "llama-swap", "image": "ghcr.io/mostlygeek/llama-swap:cuda", "ports": "8080:8080",
                     "gpu_mode": "elastic", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/ui",
-                    "volumes": "/srv/models:/models:ro", "name": "LLM server", "id": "llm"}
-        return {"kind": "container", "gpu_mode": "none", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/"}
+                    "volumes": "/srv/models:/models:ro", "name": "LLM server", "id": "llm",
+                    "drain_check": "auto", "drain_timeout": 600, "drain_on_timeout": "stop"}
+        return {"kind": "container", "gpu_mode": "none", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/",
+                "drain_check": "auto", "drain_timeout": 600, "drain_on_timeout": "stop"}
 
     def form_from_instance(inst: Instance) -> dict:
         return {"id": inst.id, "name": inst.name, "description": inst.description, "kind": inst.kind,
@@ -315,7 +341,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "gpu_mode": inst.gpu.mode, "gpu_list": inst.gpu.gpus, "min_gpus": inst.gpu.min_gpus,
                 "max_gpus": inst.gpu.max_gpus, "priority": inst.gpu.priority, "autostart": inst.autostart,
                 "open_port": inst.open_port or "", "open_path": inst.open_path, "shm_size": inst.shm_size or "",
-                "user_spec": inst.user or "", "memory_limit": inst.memory_limit or ""}
+                "user_spec": inst.user or "", "memory_limit": inst.memory_limit or "",
+                "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
+                "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
+                "drain_path": inst.drain.path, "drain_key": inst.drain.key}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
         gpus, _ = engine.snapshot().gpus, None
@@ -445,7 +474,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         raw = await request.form()
         f = {k: raw.get(k, "") for k in ("id", "name", "description", "kind", "image", "command", "env", "ports",
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
-                                          "open_path", "shm_size", "user_spec", "memory_limit", "editing")}
+                                          "open_path", "shm_size", "user_spec", "memory_limit", "editing",
+                                          "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
+                                          "drain_path", "drain_key")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
         editing = f["editing"] == "1"
@@ -463,7 +494,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                               priority=int(f["priority"] or 50)),
                 autostart=f["autostart"], open_port=int(f["open_port"]) if str(f["open_port"]).strip() else None,
                 open_path=f["open_path"] or "/", shm_size=f["shm_size"] or None, user=f["user_spec"] or None,
-                memory_limit=f["memory_limit"] or None)
+                memory_limit=f["memory_limit"] or None,
+                drain=DrainPolicy(check=f["drain_check"] or "auto",
+                                  timeout=int(f["drain_timeout"]) if str(f["drain_timeout"]).strip() else 600,
+                                  on_timeout=f["drain_on_timeout"] or "stop",
+                                  port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
+                                  path=f["drain_path"], key=f["drain_key"]))
             store.save_instance(inst)
             if inst.kind == "llama-swap":
                 store.catalog(inst.id)        # create an empty catalogue with an API key
@@ -624,6 +660,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), f"unknown model {mid}", "error")
         client = llama_client(iid)
         if op == "unload":
+            # llama-swap cuts off the requests a model is answering when it is unloaded
+            act = engine.activity(store.instance(iid))
+            if act.busy:
+                return toast(Response(status_code=204),
+                             f"Still answering {act.detail}. Unloading now would cut that off: try again when it "
+                             "finishes, or use Stop on the dashboard, which waits for it.", "warn")
             try:
                 client.unload(None if mid == "_all" else mid)
             except Exception as err:  # noqa: BLE001
@@ -780,6 +822,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                      "mem_total": machine.mem_total, "mem_used": machine.mem_used,
                      "mem_available": machine.mem_available},
             "job": jobs.current.title if jobs.current else None,
+            "waiting_for": dict(jobs.current.waiting) if jobs.current else {},
         })
 
     # ------------------------------------------------------------------ autostart
@@ -787,7 +830,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         try:
             p = engine.autostart_plan()
             if not p.error and not p.is_noop:
-                jobs.submit("Autostart", lambda logf: engine.execute(p, logf))
+                jobs.submit("Autostart", lambda job: engine.execute(p, job, job))
         except Exception as err:  # noqa: BLE001
             log.warning("autostart skipped: %s", err)
 

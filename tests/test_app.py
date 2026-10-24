@@ -376,3 +376,81 @@ def test_guided_setup(stack, tmp_path_factory):
     assert r.status_code == 200 and 'action="/instances/save"' not in r.text
     assert 'hx-post="/instances/save"' in r.text and "8189:8188" in r.text and "yanwk/comfyui-boot" in r.text
     assert not (data / "instances" / "comfyui-2.yaml").exists()
+
+
+def test_swap_waits_for_running_work(stack):
+    """Starting ComfyUI moves the LLM; while the LLM is answering, nothing stops until it is done."""
+    from gpushepherd import drain
+    app, client, backend, _ = stack
+    login(client)
+    act(client, app, "llm", "start")
+    engine = app.state.engine
+    engine.drain_interval = 0.02
+    busy = {"llm": 1}
+    engine.activity = lambda inst: drain.Activity(busy.get(inst.id, 0), f"{busy.get(inst.id, 0)} request (coder)")
+
+    # Cancel change: everything stays as it was
+    client.post("/ui/instances/comfyui/start", headers=HX, data={"confirm": "1"})
+    job = app.state.jobs.current
+    for _ in range(200):
+        if job.waiting:
+            break
+        time.sleep(0.01)
+    dash = client.get("/ui/dashboard", headers=HX).text
+    assert "waiting for running work to finish" in dash and "1 request (coder)" in dash
+    assert "Finishing: 1 request (coder)" in dash and f"/ui/jobs/{job.id}/skip" in dash
+    assert client.get("/api/state").json()["waiting_for"]["llm"]["detail"] == "1 request (coder)"
+    assert client.post(f"/ui/jobs/{job.id}/cancel", headers=HX).status_code == 204
+    wait(app)
+    assert job.status == "cancelled" and gpus_of(backend, "llm") == [0, 1]
+    assert "shepherd-comfyui" not in backend.containers
+    assert "was called off" in client.get("/ui/dashboard", headers=HX).text
+
+    # the work finishes by itself: then the swap goes ahead
+    client.post("/ui/instances/comfyui/start", headers=HX, data={"confirm": "1"})
+    time.sleep(0.1)
+    assert backend.running["shepherd-llm"] is True and app.state.jobs.busy
+    busy["llm"] = 0
+    wait(app)
+    assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == [1]
+    assert any("LLM server finished its work" in ln for ln in app.state.jobs.history[0].lines)
+
+    # Stop now: stops without waiting any longer
+    busy["llm"] = 2
+    client.post("/ui/instances/llm/stop", headers=HX)
+    job = app.state.jobs.current
+    time.sleep(0.1)
+    client.post(f"/ui/jobs/{job.id}/skip", headers=HX)
+    wait(app)
+    assert job.status == "done" and backend.running["shepherd-llm"] is False
+
+
+def test_unload_refuses_while_answering(stack):
+    from gpushepherd import drain
+    app, client, _, _ = stack
+    login(client)
+    act(client, app, "llm", "start")
+    app.state.engine.activity = lambda inst: drain.Activity(1, "1 request (coder)")
+    r = client.post("/instances/llm/models/_all/unload", headers=HX)
+    assert "Still answering 1 request (coder)" in r.headers["HX-Trigger"]
+    app.state.engine.activity = lambda inst: drain.Activity(0)
+    assert "Model unloaded." in client.post("/instances/llm/models/_all/unload", headers=HX).headers["HX-Trigger"]
+
+
+def test_drain_settings_in_the_editor(stack):
+    app, client, _, data = stack
+    login(client)
+    form = client.get("/instances/comfyui/edit").text
+    assert 'name="drain_check"' in form and 'value="600"' in form
+    inst = app.state.store.instance("comfyui")
+    fields = {"editing": "1", "id": "comfyui", "name": inst.name, "kind": "container", "image": inst.image,
+              "ports": "8188:8188", "gpu_mode": "fixed", "gpu_list": "0", "priority": "80",
+              "drain_check": "http", "drain_timeout": "1800", "drain_on_timeout": "cancel",
+              "drain_path": "/queue", "drain_key": "queue_running"}
+    r = client.post("/instances/save", headers=HX, data=fields)
+    assert r.status_code == 204, r.text
+    saved = yaml.safe_load((data / "instances" / "comfyui.yaml").read_text())
+    assert saved["drain"] == {"check": "http", "port": None, "path": "/queue", "key": "queue_running",
+                              "timeout": 1800, "on_timeout": "cancel"}
+    r = client.post("/instances/save", headers=HX, data={**fields, "drain_path": ""})
+    assert "needs a path" in r.text

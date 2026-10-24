@@ -4,10 +4,25 @@
   <ul>{% for p in problems %}<li class="mono">{{ p }}</li>{% endfor %}</ul>
 </div>
 {% endif %}
-{% if job %}
+{% if job and job.waiting %}
+<div class="notice busy waiting" role="status"><div><strong>{{ job.title }}: waiting for running work to finish</strong>
+  <ul class="small">{% for iid, w in job.waiting.items() %}<li><a href="#inst-{{ iid }}">{{ w.name }}</a>: {{ w.detail }}
+    <span class="muted">· {{ "stops anyway" if w.then == "stop" else "calls the change off" }} in {{ w.left }}</span></li>{% endfor %}</ul>
+  <div class="small muted">Nothing has been stopped yet. New work that arrives meanwhile is waited for too.</div></div>
+  <div class="btns">
+    <button class="small danger" hx-post="/ui/jobs/{{ job.id }}/skip" hx-confirm="Stop now? Work that is still running is cut off." title="Stop without waiting; running work is cut off">Stop now</button>
+    <button class="small" hx-post="/ui/jobs/{{ job.id }}/cancel" title="Leave everything running as it is">Cancel change</button>
+    <button class="small" hx-get="/ui/jobs/{{ job.id }}" hx-target="#modal-body" title="Show every step of this change">View progress ›</button>
+  </div>
+</div>
+{% elif job %}
 <div class="notice busy"><div><strong>{{ job.title }}…</strong>
   <span class="muted small">{{ job.lines[-1][10:] if job.lines else "" }}</span></div>
   <button class="small" hx-get="/ui/jobs/{{ job.id }}" hx-target="#modal-body" title="Show every step of this change">View progress ›</button>
+</div>
+{% elif last_job and last_job.status == "cancelled" and last_job.finished and last_job.finished > now - 120 %}
+<div class="notice"><div><strong>{{ last_job.title }} was called off:</strong> {{ last_job.error }}</div>
+  <button class="small" hx-get="/ui/jobs/{{ last_job.id }}" hx-target="#modal-body" title="Show every step of this change">View log ›</button>
 </div>
 {% elif last_job and last_job.status == "failed" %}
 <div class="notice error"><div><strong>{{ last_job.title }} failed:</strong> {{ last_job.error }}</div>
@@ -89,6 +104,8 @@
       {% elif c.state %}<span class="pill off" title="{{ c.state.status_text }}">{{ "stopped" if c.status in ("exited", "created") else c.status }}</span>
       {% else %}<span class="pill off" title="No container has been created for this instance yet">not created</span>{% endif %}
     </div>
+    {% if i.description %}<p class="sub">{{ i.description }}</p>{% endif %}
+    {% if c.waiting %}<p class="meta"><span class="tag warn" title="Waiting for this to finish before it is stopped">Finishing: {{ c.waiting.detail }}</span></p>{% endif %}
     {% if c.pending %}<p class="meta"><span class="tag warn">Saved changes not applied - restart to apply</span></p>{% endif %}
 
     <dl class="facts">

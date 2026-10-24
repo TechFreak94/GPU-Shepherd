@@ -88,6 +88,34 @@
     </details>
   </div>
 
+  <div class="section">
+    <h3 style="margin-top:0">Before stopping</h3>
+    <p class="small muted" style="margin-top:0">When a GPU swap, a restart or Stop would stop this instance, GPU Shepherd first waits for the work it is doing (a chat answer, queued images) to finish, so nothing is cut off half way.</p>
+    <div class="fields">
+      <div><label for="drain_check">Wait for running work</label>
+        <select id="drain_check" name="drain_check">
+          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "llama-swap requests"), ("llama-server", "llama.cpp server slots (/slots)"), ("comfyui", "ComfyUI queue (/queue)"), ("http", "Custom - ask an HTTP address"), ("none", "Don't wait")] %}
+          <option value="{{ v }}" {{ "selected" if (f.drain_check or "auto") == v }}>{{ label }}</option>{% endfor %}
+        </select>
+        <div class="hint">Automatic knows llama-swap, ComfyUI and llama.cpp server images; anything else is not waited for.</div></div>
+      <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_timeout">Wait at most (seconds)</label>
+        <input type="number" id="drain_timeout" name="drain_timeout" min="0" max="86400" value="{{ f.drain_timeout if f.drain_timeout is not none and f.drain_timeout != '' else 600 }}">
+        <div class="hint">0 = don't wait. Long video or batch jobs may need more.</div></div>
+      <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_on_timeout">If it is still busy then</label>
+        <select id="drain_on_timeout" name="drain_on_timeout">
+          <option value="stop" {{ "selected" if f.drain_on_timeout != "cancel" }}>Stop it anyway</option>
+          <option value="cancel" {{ "selected" if f.drain_on_timeout == "cancel" }}>Call the change off</option>
+        </select></div>
+    </div>
+    <div class="fields" data-drain-check="http llama-server comfyui" style="margin-top:12px">
+      <div><label for="drain_port">Container port to ask</label><input type="number" id="drain_port" name="drain_port" min="1" max="65535" value="{{ f.drain_port or '' }}" placeholder="default">
+        <div class="hint">Default: 8188 for ComfyUI, 8080 for llama.cpp, else the first port.</div></div>
+      <div data-drain-check="http"><label for="drain_path">Path</label><input type="text" id="drain_path" name="drain_path" value="{{ f.drain_path or '' }}" placeholder="/status"></div>
+      <div data-drain-check="http"><label for="drain_key">JSON field with the work left</label><input type="text" id="drain_key" name="drain_key" value="{{ f.drain_key or '' }}" placeholder="queue.running">
+        <div class="hint">A number, list or true/false; dots go deeper. Empty = the whole answer.</div></div>
+    </div>
+  </div>
+
   <div class="actions">
     {% if editing %}<button type="button" class="danger" hx-post="/instances/{{ f.id }}/delete"
       hx-confirm="Delete {{ f.name }}? Its container is removed; folders on disk are kept.">Delete</button>{% endif %}
