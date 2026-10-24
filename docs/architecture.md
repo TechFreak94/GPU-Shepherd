@@ -95,3 +95,7 @@ mounts/environment, and a client with `models()`, `running()`, `load()`, `unload
   against a scratch git remote with a stand-in `docker`.
 - `tests/test_docker_backend.py` - the exact Docker API payloads, built by the real docker-py
   client with network calls intercepted (no daemon needed).
+- `tests/test_drain.py` - each busy check against a small fake HTTP server, plus timeout, Stop now
+  and cancel.
+- `tests/test_instance_templates.py` - guided-setup templates and automatic offload.
+- `tests/test_host.py` - host CPU and memory from a fake `/proc`.
