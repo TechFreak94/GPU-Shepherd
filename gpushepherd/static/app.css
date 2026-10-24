@@ -78,8 +78,28 @@ a.ext::after{content:" ↗";font-size:.85em;text-decoration:none;display:inline-
 .facts{display:grid;grid-template-columns:max-content 1fr;gap:5px 14px;margin:6px 0 10px;font-size:13px}
 .facts dt{color:var(--muted)}
 .facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
-.more{margin:0 0 12px;border-top:1px solid var(--line);padding-top:8px}
-.more .facts{margin-bottom:0}
+/* compact cards: each row's longer explanation is a tooltip, shown on hover, keyboard focus or tap */
+.inst .head{position:relative;align-items:flex-start}
+.inst .title{display:flex;align-items:center;gap:6px;min-width:0}
+.facts>.fact{display:grid;grid-column:1/-1;grid-template-columns:subgrid;position:relative}
+.has-tip>.tip,.has-tip .tip{display:none}
+@media (hover:hover){.has-tip:hover .tip{display:block}}
+.has-tip:has(.tip-btn:focus-visible) .tip,.has-tip.open .tip{display:block}
+.has-tip.hush .tip{display:none !important}
+.tip{position:absolute;z-index:6;left:0;right:0;top:calc(100% + 4px);background:var(--card);color:var(--fg);
+border:1px solid var(--btn-line);border-radius:8px;padding:9px 11px;font-size:13px;font-weight:400;line-height:1.45;
+box-shadow:0 6px 20px rgba(0,0,0,.16);cursor:auto;text-align:left}
+.tip::before{content:"";position:absolute;left:0;right:0;top:-6px;height:6px}  /* keeps hover alive across the gap */
+.tip p{margin:0 0 4px}.tip p:last-child{margin-bottom:0}
+.tip .facts{margin:6px 0 0;gap:3px 12px}
+.tip .facts.stack{display:block}.tip .stack dt{font-size:12px;margin-top:5px}.tip .mono{font-size:12px}
+.tip-btn{font:inherit;font-size:inherit;font-weight:inherit;color:inherit;background:none;border:0;padding:0;box-shadow:none;
+cursor:help;border-radius:3px;text-decoration:underline dotted;text-decoration-color:var(--btn-line);text-underline-offset:3px}
+.tip-btn:hover{background:none;text-decoration-color:var(--muted)}
+.tip-btn:active{transform:none}
+.tip-btn.info{width:18px;height:18px;border-radius:50%;border:1px solid var(--btn-line);color:var(--muted);text-decoration:none;
+font:italic 600 11px/16px Georgia,serif;text-align:center;flex:none}
+.tip-btn.info:hover,.has-tip.open>.tip-btn.info{color:var(--accent);border-color:var(--accent)}
 .htmx-request button,.htmx-request.btn{opacity:.6}
 .empty{text-align:center;padding:36px 16px}
 /* forms */

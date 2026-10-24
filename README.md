@@ -25,6 +25,19 @@ each instance says what it needs, and starting or stopping anything re-plans who
   *Any Docker image* opens the full form instead.
 
   ![Templates](docs/screenshots/templates.png)
+- **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
+  forms. One compact card per instance with Start / Stop / Restart / Open / Logs, showing its
+  state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
+  Hover, tab to or tap a label (or the ⓘ next to the name) for the details behind it: the GPU rule
+  and priority, ports, image, folders, and how much of a model sits in system RAM.
+- **Machine overview**: CPU, RAM and every GPU at a glance, with how much each instance uses.
+- **GPU policies** per instance:
+  - *Fixed* - always these GPUs (e.g. ComfyUI on GPU 0).
+  - *Elastic* - at least N GPUs, grows into every free GPU, shrinks when something else needs one
+    (e.g. a llama.cpp server that splits a model across GPUs).
+  - *Priority* - who keeps their GPUs when there are not enough to go around.
+- **Plans you confirm**: if starting something means moving or stopping something else, you see
+  exactly what will happen first.
 - **Any container**: ports, folders, environment, command and autostart, edited in forms. The
   dashboard shows each instance's state, GPUs, VRAM, CPU and RAM, and the machine's CPU, RAM and
   GPUs.

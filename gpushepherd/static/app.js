@@ -21,17 +21,47 @@
   document.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target.id === "modal-body") openModal(); });
   document.addEventListener("htmx:responseError", (e) => toast("Request failed (HTTP " + e.detail.xhr.status + ")", "error"));
   document.addEventListener("htmx:sendError", () => toast("GPU Shepherd is not reachable", "error"));
-  // the dashboard re-renders every few seconds: keep the "More details" boxes the user opened open
-  const openDetails = new Set();
-  document.addEventListener("toggle", (e) => {
-    const d = e.target;
-    if (d.tagName !== "DETAILS" || !d.closest("#dash")) return;
-    const card = d.closest("[id]");
-    if (card) (d.open ? openDetails.add(card.id) : openDetails.delete(card.id));
-  }, true);
+  // tooltips: hover and keyboard focus are pure CSS; a click or tap pins one open until you click elsewhere or press Esc
+  const tipOf = (el) => el && el.closest(".has-tip");
+  let pinned = null, focusedTip = null;
+  function closeTips(except) {
+    document.querySelectorAll(".has-tip.open").forEach((t) => {
+      if (t === except) return;
+      t.classList.remove("open");
+      const b = t.querySelector(".tip-btn"); if (b) b.setAttribute("aria-expanded", "false");
+    });
+    if (!except) pinned = null;
+  }
+  function pin(t) {
+    closeTips(t);
+    t.classList.add("open");
+    t.classList.remove("hush");
+    const b = t.querySelector(".tip-btn"); if (b) b.setAttribute("aria-expanded", "true");
+    pinned = t.dataset.tip;
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tip-btn");
+    if (btn) { const t = tipOf(btn); t.classList.contains("open") ? closeTips() : pin(t); return; }
+    if (!e.target.closest(".has-tip.open .tip")) closeTips();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const t = tipOf(document.activeElement);
+    if (document.querySelector(".has-tip.open") || t) { closeTips(); if (t) t.classList.add("hush"); }
+  });
+  document.addEventListener("focusout", (e) => { const t = tipOf(e.target); if (t) t.classList.remove("hush"); });
+  document.addEventListener("mouseleave", (e) => { if (e.target.classList && e.target.classList.contains("has-tip")) e.target.classList.remove("hush"); }, true);
+  // the dashboard refresh replaces the cards: bring back a pinned tooltip and the keyboard focus
+  document.addEventListener("htmx:beforeSwap", (e) => {
+    if (e.detail.target.id !== "dash") return;
+    const t = tipOf(document.activeElement);
+    focusedTip = t && e.detail.target.contains(t) ? t.dataset.tip : null;
+  });
   document.addEventListener("htmx:afterSwap", (e) => {
     if (e.detail.target.id !== "dash") return;
-    openDetails.forEach((id) => { const d = document.querySelector("#" + CSS.escape(id) + " details"); if (d) d.open = true; });
+    const find = (key) => key && document.querySelector('.has-tip[data-tip="' + CSS.escape(key) + '"]');
+    const p = find(pinned); if (p) pin(p); else pinned = null;
+    const f = find(focusedTip); if (f) { const b = f.querySelector(".tip-btn"); if (b) b.focus({ preventScroll: true }); }
   });
   document.addEventListener("refresh", () => { const d = document.getElementById("dash"); if (d && window.htmx) htmx.trigger(d, "refresh"); });
 
