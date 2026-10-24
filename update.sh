@@ -122,7 +122,7 @@ SAVED_IMAGE=gpu-shepherd:previous   # the image that ran before the last update
 SAVED_IMAGE_FILE="$STATE_DIR/previous-image"
 
 # Docker is root-equivalent, so this needs root unless you can already use docker.
-if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE$TOKEN_ACTION" ] || ! docker info >/dev/null 2>&1; }; then
+if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1; }; then
     have sudo || { err "run this as root"; exit 1; }
     exec sudo -- "$HERE/$(basename "$0")" "${ARGS[@]}"
 fi
