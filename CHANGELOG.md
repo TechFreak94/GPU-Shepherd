@@ -4,6 +4,25 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.10.0 - 2026-10-24
+
+- Instance cards are compact: state, GPUs, VRAM, CPU and RAM at a glance. Hover, tab to or tap a
+  label (or the ⓘ next to the name) for the details behind it: GPU rule and priority, ports, image,
+  folders, and how much of a model sits in system RAM. (#12)
+
+## 0.9.0 - 2026-10-24
+
+- A shorter README, plus guides for every option in the instance and model editors
+  (`docs/advanced.md`) and for the command-line tools (`docs/cli.md`). (#11)
+
+## 0.8.0 - 2026-10-24
+
+- Before a GPU swap, restart or Stop stops a running instance, GPU Shepherd waits for its work to
+  finish (a chat answer, the ComfyUI queue), so nothing is cut off half way. The dashboard shows what
+  it is waiting for, with **Stop now** and **Cancel**. (#10)
+- Per instance: how to tell it is busy, how long to wait at most, and whether to stop anyway or call
+  the change off after that. (#10)
+
 ## 0.7.0 - 2026-10-23
 
 - **Add instance** starts with templates for common apps: a chat or coding model server, ComfyUI and

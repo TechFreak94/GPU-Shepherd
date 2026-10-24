@@ -19,18 +19,17 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
-- **Guided setup**: *Add instance* starts from a template - a chat or coding model server
-  (llama-swap), ComfyUI or Open WebUI - and asks only what it can't work out: name, port, GPUs,
-  folders and, for model servers, a first .gguf file. It picks a free ID and port, mounts the
-  right folders, connects Open WebUI to your model server (API key included) and decides from the
-  file size whether a model needs system RAM. *Customize every field* opens the full form with the
-  answers filled in, and *Any Docker image* skips the questions altogether.
+- **Guided setup**: *Add instance* starts from a template (chat or coding model server, ComfyUI,
+  Open WebUI) and asks only what it can't work out. It picks a free ID and port, mounts the right
+  folders, connects Open WebUI to your model server and decides whether a model needs system RAM.
+  *Any Docker image* opens the full form instead.
 
   ![Templates](docs/screenshots/templates.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
-  forms. One card per instance with Start / Stop / Restart / Open / Logs, showing its state and
-  uptime, GPUs, VRAM, CPU and RAM use, web addresses, image and (for model servers) the loaded
-  model and how much of it sits in system RAM.
+  forms. One compact card per instance with Start / Stop / Restart / Open / Logs, showing its
+  state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
+  Hover, tab to or tap a label (or the ⓘ next to the name) for the details behind it: the GPU rule
+  and priority, ports, image, folders, and how much of a model sits in system RAM.
 - **Machine overview**: CPU, RAM and every GPU at a glance, with how much each instance uses.
 - **GPU policies** per instance:
   - *Fixed* - always these GPUs (e.g. ComfyUI on GPU 0).
@@ -39,21 +38,38 @@ each instance says what it needs, and starting or stopping anything re-plans who
   - *Priority* - who keeps their GPUs when there are not enough to go around.
 - **Plans you confirm**: if starting something means moving or stopping something else, you see
   exactly what will happen first.
+- **Any container**: ports, folders, environment, command and autostart, edited in forms. The
+  dashboard shows each instance's state, GPUs, VRAM, CPU and RAM, and the machine's CPU, RAM and
+  GPUs.
+- **GPU policies** per instance: *fixed* (always these GPUs), *elastic* (at least N, grows into
+  free GPUs, makes room when needed) and a *priority* for when there aren't enough.
+- **Plans you confirm**: if starting something moves or stops something else, you see exactly what
+  will happen first.
 
   ![Confirmation](docs/screenshots/confirm.png)
-- **Model servers** ([llama-swap](https://github.com/mostlygeek/llama-swap)): a model catalogue
-  editor (pick .gguf files from disk, context, sampling, KV cache, vision projector), load and
-  unload buttons, and **auto names** - a model name like `auto` that points at different models
-  depending on how many GPUs the server currently has. Point an agent at `auto` and it always gets
-  the model that fits.
-- **GPU + system RAM**: per model, keep part of it in system RAM (MoE expert layers or whole
-  layers) so models larger than your GPUs still run. Set it per GPU count: e.g. 30 expert layers
-  in RAM when the server has one GPU, 14 when it has two.
+- **Nothing cut off half way**: before a container is stopped, GPU Shepherd waits for the chat
+  answer or image it is working on, with *Stop now* and *Cancel change* buttons and a timeout.
+- **Model servers** ([llama-swap](https://github.com/mostlygeek/llama-swap)): a model list editor
+  that picks .gguf files from disk, load and unload buttons, and **auto names**: one model name,
+  like `coder`, that points at the model that fits the GPUs the server has right now.
+- **GPU + system RAM**: keep part of a model (MoE expert layers or whole layers) in system RAM so
+  models larger than your GPUs still run, set per GPU count.
 
   ![Models](docs/screenshots/models.png)
-- **Plain files**: everything you change is saved as readable YAML - easy to back up, diff, or
-  keep in git.
+- **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
+- **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
+
+## Documentation
+
+- [Instance and model options](docs/advanced.md): every field in the editors and what it does
+  (GPU policies, folders, before-stopping checks, GPU/RAM offload, auto names).
+- [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command,
+  `download-models.sh` and environment variables.
+- [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
+  the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
+- [Presets](gpushepherd/presets/README.md): ready-made sets of instances, and how to make your own.
+- [Architecture](docs/architecture.md): how the code fits together.
 
 ## Quick start
 
@@ -62,110 +78,66 @@ each instance says what it needs, and starting or stopping anything re-plans who
 On Ubuntu 26.04 (24.04 works too) with an NVIDIA GPU:
 
 ```bash
-git clone <this repo> gpu-shepherd && cd gpu-shepherd
+git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
 sudo ./install.sh
 ```
 
-The installer first shows what the machine already has (driver, GPUs, Docker, NVIDIA Container
-Toolkit, RAM). Then it asks a few questions, each with a default you can accept with Enter: where
-your .gguf model files are, which port to use, and where to keep settings. If the NVIDIA driver is
-missing it offers to install it (that needs a reboot; run the installer again afterwards). On the
-first run it offers a [preset](gpushepherd/presets): a ready-made set of instances to start from,
-such as `starter` (an LLM server, ComfyUI with SDXL and Open WebUI for any 8+ GB GPU), a preset of
-your own, or none. The preset is filled in with your folders and fresh API keys and passwords, and nothing in
-it starts until you press Start. It also offers to download the preset's models (resumable) once
-everything else is done. Finally it shows the plan, and
-nothing is installed or changed until you confirm. Then it installs what is missing, checks that a
-container can see the GPUs, adds you to the `docker` group (so `docker` works without sudo from your
-next login; `--no-docker-group` skips this), starts GPU Shepherd and prints the address, the first
-login, and the preset's addresses. It is safe to re-run: it only does what is still missing, and keeps an existing
-`compose.yaml`.
+The installer shows what the machine already has (driver, GPUs, Docker, NVIDIA Container Toolkit,
+RAM), asks a few questions with defaults (models folder, port, settings folder), and changes
+nothing until you confirm the plan. On the first run it offers a [preset](gpushepherd/presets),
+such as `starter` (an LLM server, ComfyUI and Open WebUI for any 8+ GB GPU), and to download its
+models. Nothing in a preset starts until you press Start. At the end it prints the address and the
+first login.
 
-For scripted or advanced installs, every question has a flag, and `--yes` skips the rest:
+It is safe to re-run. For scripted installs every question has an option, and `--yes` skips the
+rest; see [CLI and scripts](docs/cli.md#installsh).
 
-```bash
-sudo ./install.sh --yes --models-dir /srv/models --port 8090 --data-dir /opt/gpu-shepherd
-```
-
-`./install.sh --help` lists them all (`--preset`, `--list-presets`, `--download-models`, `--install-driver`, `--skip-deps`, `--no-start`, ...).
-
-RAM: with less than 32 GB installed, models have to fit in GPU memory, because keeping part of a
-model in system RAM needs room for it plus the OS and your other containers. 64 GB is recommended
-for the largest models (Qwen3 Coder Next is ~49 GB at Q4).
+RAM: with less than 32 GB, plan on models that fit in GPU memory. 64 GB is recommended for the
+largest models (Qwen3 Coder Next is ~49 GB at Q4).
 
 ### By hand
 
-Requirements: Linux, Docker with the Compose plugin, NVIDIA driver and the
+Requirements: Linux, Docker with the Compose plugin, the NVIDIA driver and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 
 ```bash
-git clone <this repo> gpu-shepherd && cd gpu-shepherd
+git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
 sudo mkdir -p /opt/gpu-shepherd
 cp compose.example.yaml compose.yaml      # read the comments; adjust paths if you like
 docker compose up -d --build
 docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
 ```
 
-Open `http://<server>:8090`, log in as `admin`, then **Add instance** or **Add model server**.
-Lost the password? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one
-(also saved in `INITIAL_PASSWORD.txt` in the data folder); it works at once, no restart needed.
-
 The data folder must be mounted at the **same path** inside and outside the container (like
 Dockge's stacks folder), because GPU Shepherd hands paths in it to Docker for the containers it
 creates. To pick model files in the UI, mount your model folders the same way (read-only is fine).
 
+### First login
+
+Open `http://<server>:8090` and log in as `admin` with the password the installer printed (also in
+`INITIAL_PASSWORD.txt` in the data folder). Then **Add instance**.
+
+Lost the password? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one.
+It works at once, no restart needed.
+
 ### Updating
 
-No need to clone again. In the folder you installed from:
+In the folder you installed from:
 
 ```bash
-sudo ./update.sh            # shows what's new, asks, downloads it, rebuilds and restarts GPU Shepherd
-sudo ./update.sh --check    # only look (exit status 10 means an update is available)
-sudo ./update.sh --rollback # something wrong? go back to the version before the last update
+sudo ./update.sh              # show what's new, ask, update and restart GPU Shepherd
+sudo ./update.sh --rollback   # go back to the version before the last update
 ```
 
-Your settings, instances, model lists and password live in the data folder and are kept, and so
-is your `compose.yaml`. Instances keep running while GPU Shepherd restarts. Updates only move
-forward along the branch you cloned: if you edited files in the clone, the update stops and lists
-them, and `--stash` sets them aside and puts them back afterwards. `./install.sh --update` does
-the same as `./update.sh`.
+Settings, instances and models are kept, and instances keep running while GPU Shepherd restarts.
+If an update fails to build or start, it rolls back by itself. The installer can also set up an
+**Update** button on the dashboard. Details: [CLI and scripts](docs/cli.md#updatesh).
 
-**Updating from the dashboard.** GPU Shepherd runs in a container and can't rebuild itself, so
-this is done by a small systemd service on the host, which the guided installer offers (or turn it
-on any time with `sudo ./update.sh --enable-dashboard-updates`; `--disable-dashboard-updates`
-removes it). It checks for updates once a day; the dashboard then shows **Update available** with
-what is new and an **Update** button. Click the version number at the top of any page to check
-now, follow an update step by step, or read the changelog. The two
-sides only talk through files in `<data folder>/update/`, so the container never needs git, your
-GitHub credentials or more access to the host than it already has. Without the service, the
-dashboard still shows what is running and tells you which command to run.
-
-Installed before `update.sh` existed? Run `git pull && sudo ./update.sh --rebuild` once.
-
-Installed from a private repository? Save a GitHub access token in Settings > Private repository,
-or with `sudo ./update.sh --set-token <your GitHub user>`. See
-[Private repository](docs/updates.md#private-repository).
-
-**Versions and changelog.** Every merged change gets a new version number and an entry in
-[CHANGELOG.md](CHANGELOG.md), automatically. See [Versions, changelog and updates](docs/updates.md).
-
-**If an update goes wrong.** Before every update, `update.sh` keeps the image that is running
-(as `gpu-shepherd:previous`) and backs up `settings.yaml`, `instances/` and `catalogs/` to
-`<data folder>/update/backups/` (the newest 10 are kept). If the new version fails to build, or
-builds but doesn't answer within 90 seconds, it goes back by itself: the clone returns to the old
-commit, the saved image is started again (no rebuild or network needed) and the settings from just
-before are restored. The dashboard then says the update failed and that it went back, with the log.
-Everything runs on the host, so this works even when the dashboard is down. By hand:
-
-```bash
-sudo ./update.sh --rollback          # back to the version before the last update (saved image)
-sudo ./update.sh --restore-settings  # settings from just before it (current ones -> *.before-restore)
-sudo docker compose logs gpu-shepherd   # why it failed
-```
-
-Updates never touch your models or app data, and never delete the data folder. As a last resort,
-`git -C <clone> log` lists every version; `git -C <clone> reset --keep <commit>` and
-`sudo ./update.sh --rebuild` run any of them.
+Click the version number at the top of any page to check for updates, follow an update step by
+step, or read the [changelog](CHANGELOG.md): every merged change gets its own version. Installed
+from a private repository? Save a GitHub access token in Settings > Private repository, or with
+`sudo ./update.sh --set-token <your GitHub user>`. Details:
+[Versions, changelog and updates](docs/updates.md).
 
 ### Try it without Docker or GPUs
 
@@ -173,9 +145,6 @@ Updates never touch your models or app data, and never delete the data folder. A
 pip install .
 gpu-shepherd --demo --port 8090      # fake GPUs and containers, log in as admin / demo-password
 ```
-
-The demo starts with the [`starter` preset](gpushepherd/presets/starter); `--demo-preset NAME` picks
-another one from `gpushepherd/presets`.
 
 ## How GPU sharing works
 
@@ -187,11 +156,11 @@ When you start, stop or restart an instance, GPU Shepherd plans the whole machin
 3. Leftover GPUs go to elastic instances, highest priority first, up to their maximum.
 4. Running instances keep the GPUs they already have when possible, to avoid needless restarts.
 5. Anything whose GPUs change is restarted with the new ones; anything that no longer fits is
-   stopped. You confirm before either happens.
+   stopped. You confirm before either happens, and running work is allowed to finish first.
 
 Containers only ever see the GPUs they were given (Docker device requests), so applications need
-no `CUDA_VISIBLE_DEVICES` tricks. Moving an instance means re-creating its container; its data
-lives in the folders you mounted, so nothing is lost.
+no `CUDA_VISIBLE_DEVICES` tricks. Moving an instance re-creates its container; its data lives in
+the folders you mounted, so nothing is lost.
 
 Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 1+, priority 50*:
 
@@ -201,25 +170,36 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 
 | Start ComfyUI | GPU 0 | restarted on GPU 1 |
 | Stop ComfyUI | stopped | restarted on GPUs 0,1 |
 
-With a single GPU the same settings make them take turns.
+With a single GPU the same settings make them take turns. A second ComfyUI *fixed GPU 1,
+priority 40* would stop the LLM server when started (you are asked first), and starting the LLM
+again stops it, since the LLM has the higher priority.
 
-A second ComfyUI *fixed GPU 1, priority 40* would give two image jobs at once: starting it stops the
-LLM server (you are asked first), and starting the LLM again stops it, since the LLM has the higher
-priority.
+### Letting running work finish
+
+Before a container is stopped, GPU Shepherd asks it whether it is busy and waits until it is idle:
+chat answers on llama-swap or llama.cpp, running and queued ComfyUI prompts, or any app with an
+HTTP status endpoint. Nothing has been stopped while it waits, so *Cancel change* leaves the
+machine as it was and *Stop now* goes ahead at once. After a timeout (10 minutes by default) it
+stops the instance anyway or calls the change off, as you choose. GPU Shepherd isn't in the path of
+the requests, so work that arrives meanwhile is waited for too.
+
+![Waiting for running work](docs/screenshots/waiting.png)
+
+llama-swap's own model swaps already wait for the model being replaced to finish its requests.
+The **Unload** button refuses while a model is still answering. See
+[Before stopping](docs/advanced.md#before-stopping) for the settings.
 
 ## Coding agents
 
 Coding tools (OpenCode, Aider, Continue, OpenHands, ...) don't need a GPU of their own: point them at
 the model server's OpenAI-compatible endpoint and let GPU Shepherd decide what runs there. An auto
-name on the Models page, say `coder`, picks the model by how many GPUs the server has. For example,
-on two 8 GB GPUs with 64 GB of RAM:
+name such as `coder` picks the model by how many GPUs the server has. For example, on two 8 GB
+GPUs with 64 GB of RAM:
 
 | Model server has | `coder` is | Memory |
 |---|---|---|
 | 1 GPU (ComfyUI has the other) | Qwen3.6 35B-A3B, 30 expert layers in RAM | ~22 GB file, mostly RAM |
 | 2 GPUs | Qwen3 Coder Next 80B-A3B, 38 expert layers in RAM | ~49 GB file, ~40 GB of it in RAM |
-
-So 64 GB of system RAM is enough for the larger one. For example with OpenCode or Aider:
 
 ```bash
 export OPENAI_API_BASE=http://<server>:8080/v1
@@ -227,8 +207,9 @@ export OPENAI_API_KEY=<the model server's API key, shown on its Models page>
 aider --model openai/coder
 ```
 
-The expert-layer numbers are starting points for 8 GB cards: if a model fails to load, raise them on
-its edit page (GPU and system RAM); if there is GPU memory left over, lower them for more speed.
+The expert-layer numbers are starting points for 8 GB cards: if a model fails to load, raise them;
+if GPU memory is left over, lower them for speed. See
+[GPU and system RAM](docs/advanced.md#gpu-and-system-ram).
 
 ## Configuration files
 
@@ -236,13 +217,15 @@ its edit page (GPU and system RAM); if there is GPU memory left over, lower them
 /opt/gpu-shepherd/
   settings.yaml          login, Docker network, publish address      (mode 600)
   instances/<id>.yaml    one per instance
-  catalogs/<id>.yaml     model catalogue + API key per model server  (mode 600)
+  catalogs/<id>.yaml     model list + API key per model server        (mode 600)
   generated/<id>/        files rendered for containers - do not edit
+  update/                update status, log and settings backups
 ```
 
 You can edit the YAML by hand; GPU Shepherd re-reads it on every page load and shows a warning
 for files it cannot parse. Saving from the UI rewrites the file (comments are not kept) and leaves
-the previous version next to it as `<file>.prev`.
+the previous version next to it as `<file>.prev`. Every key is described in
+[Instance and model options](docs/advanced.md).
 
 ## Security
 
@@ -256,7 +239,7 @@ internet. The apps it starts (ComfyUI, for one) may have no login of their own.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # planner, config, llama-swap rendering, UI flows, Docker payloads
+pytest
 gpu-shepherd --demo                      # fake GPUs/containers, admin / demo-password
 ```
 

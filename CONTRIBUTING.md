@@ -14,7 +14,8 @@ gpu-shepherd --demo --port 8090     # no Docker or GPU needed; log in as admin /
 
 - Keep the scheduler pure: no I/O in `scheduler.py`. New GPU behaviour comes with tests.
 - New settings get a form in the UI, a pydantic field with validation, and sensible defaults so
-  existing YAML files keep loading.
+  existing YAML files keep loading. Add them to [docs/advanced.md](docs/advanced.md); new script or
+  command options go in [docs/cli.md](docs/cli.md).
 - No JavaScript build step. Prefer htmx attributes and server-rendered templates; keep
   `static/app.js` small and free of inline scripts (the CSP forbids them).
 - Guided-setup templates (`instance_templates.py`) are generic starting points for widely used
