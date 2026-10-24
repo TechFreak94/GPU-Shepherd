@@ -9,10 +9,14 @@ path inside and outside the container:
                `update.sh --enable-dashboard-updates` runs update.sh when it appears
   log.txt      the output of the last run started from the dashboard
   changelog.md CHANGELOG.md of the newest version on the remote, saved at every check
+  credentials  written here (0600) with a GitHub user name and token, or "clear"; update.sh moves
+               it into the clone's .git folder at once and never writes the token anywhere else
 """
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,7 +24,9 @@ from pathlib import Path
 
 from . import __version__, buildinfo, changelog
 
-ACTIONS = ("check", "update")
+ACTIONS = ("check", "update")             # what the dashboard's buttons can ask for
+GITHUB_USER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
+GITHUB_TOKEN = re.compile(r"^[A-Za-z0-9_]{20,255}$")     # ghp_..., github_pat_..., same check as update.sh
 STALE_REQUEST = 120         # seconds: a request nobody picked up means the service isn't running
 STUCK = 1800                # seconds: a check or update that reported nothing for this long has died
 # What update.sh does, in order, by the "step" it writes to status.json. "recover" only happens
@@ -52,6 +58,7 @@ class UpdateStatus:
     latest_version: str = ""                        # version of the newest code on the remote
     releases: list = field(default_factory=list)    # changelog entries newer than what is running
     dashboard_updates: bool = False                 # the host service is installed
+    credentials: str = ""                           # GitHub user whose token update.sh has saved
     pending: str = ""                               # a request waiting for the host ("check"/"update")
     pending_stale: bool = False
     stuck: bool = False                             # "checking"/"updating" but silent for STUCK seconds
@@ -86,7 +93,7 @@ class UpdateStatus:
     def action(self) -> str:
         """What is running or waiting: "check" or "update"."""
         if self.pending:
-            return self.pending
+            return "update" if self.pending == "update" else "check"   # saving a token checks next
         return "update" if self.state in ("updating", "done") or self.step not in ("", "check") else "check"
 
     @property
@@ -161,7 +168,7 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
     if isinstance(raw, dict):
         st.checked = True
         for key in ("checked_at", "state", "step", "message", "repo", "upstream", "current", "previous",
-                    "version", "latest_version"):
+                    "version", "latest_version", "credentials"):
             setattr(st, key, str(raw.get(key) or ""))
         st.behind = int(raw.get("behind") or 0)
         st.commits = [c for c in raw.get("commits") or [] if isinstance(c, dict)]
@@ -182,13 +189,33 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
 
 def request(root: Path, action: str) -> None:
     """Ask the host to check or update; update.sh deletes the file when it starts."""
-    if action not in ACTIONS:
+    if action not in ACTIONS + ("credentials",):
         raise ValueError(f"unknown update action {action!r}")
     d = folder(root)
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "request.tmp"
     tmp.write_text(action + "\n")
     tmp.replace(d / "request")
+
+
+def request_credentials(root: Path, user: str = "", token: str = "", clear: bool = False) -> None:
+    """Hand a GitHub user name and token (or "forget it") to update.sh, which stores it on the host.
+
+    The file is readable only by its owner and lives in the data folder for the few seconds until
+    the update service picks it up; it is never logged or kept in the settings."""
+    if not clear:
+        if not GITHUB_USER.match(user):
+            raise ValueError("That doesn't look like a GitHub user name.")
+        if not GITHUB_TOKEN.match(token):
+            raise ValueError("That doesn't look like a GitHub access token (it starts with github_pat_ or ghp_).")
+    d = folder(root)
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "credentials.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("clear\n" if clear else f"{user}\n{token}\n")
+    tmp.replace(d / "credentials")
+    request(root, "credentials")
 
 
 def live_log(root: Path, lines: int = 15, now: float | None = None) -> str:

@@ -433,3 +433,89 @@ def test_update_progress_dialog_shows_steps_and_log(ui):
                  checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     html = client.get("/ui/update").text
     assert "Update finished." in html and "Reload" in html and "every 2s" not in html
+
+
+# ---------------------------------------------------------------------- GitHub token for a private repository
+
+TOKEN = "github_pat_" + "A1b2" * 10
+
+
+def test_request_credentials_file(tmp_path):
+    updates.request_credentials(tmp_path, "TechFan-1", TOKEN)
+    f = tmp_path / "update" / "credentials"
+    assert f.read_text() == f"TechFan-1\n{TOKEN}\n" and (f.stat().st_mode & 0o777) == 0o600
+    assert (tmp_path / "update" / "request").read_text() == "credentials\n"
+    assert updates.status(tmp_path).action == "check"           # the host checks right after saving it
+    updates.request_credentials(tmp_path, clear=True)
+    assert f.read_text() == "clear\n"
+    for user, token in (("bad user", TOKEN), ("ok", "short"), ("ok", TOKEN + "\nx"), ("-x", TOKEN)):
+        with pytest.raises(ValueError):
+            updates.request_credentials(tmp_path, user, token)
+
+
+def test_credentials_in_settings(ui):
+    client, root = ui
+    write_status(root, dashboard_updates=False)
+    html = client.get("/settings").text
+    assert "Private repository" in html and "--set-token" in html and 'name="token"' not in html
+    r = client.post("/ui/update/credentials", data={"user": "zach", "token": TOKEN}, headers=HX)
+    assert "--set-token" in r.headers["HX-Trigger"] and not (root / "update" / "credentials").exists()
+    write_status(root)
+    assert 'name="token"' in client.get("/settings").text
+    r = client.post("/ui/update/credentials", data={"user": "zach", "token": "nope"}, headers=HX)
+    assert "access token" in r.headers["HX-Trigger"] and not (root / "update" / "credentials").exists()
+    r = client.post("/ui/update/credentials", data={"user": "zach", "token": TOKEN}, headers=HX)
+    assert r.status_code == 200 and "Checking for updates…" in r.text and TOKEN not in r.text
+    assert "credentials-sent" in r.headers["HX-Trigger"]
+    assert (root / "update" / "credentials").exists()
+    (root / "update" / "request").unlink()
+    write_status(root, credentials="zach")
+    html = client.get("/settings").text
+    assert "Updates download as <strong>zach</strong>" in html and "Remove token" in html and TOKEN not in html
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_update_sh_saves_and_clears_a_token(tmp_path):
+    bin_dir, data = tmp_path / "bin", tmp_path / "data"
+    bin_dir.mkdir(); data.mkdir()
+    for tool in ("docker", "curl", "systemctl"):
+        (bin_dir / tool).write_text("#!/bin/sh\nexit 1\n" if tool == "systemctl" else "#!/bin/sh\n")
+        (bin_dir / tool).chmod(0o755)
+    seed, remote, clone = tmp_path / "seed", tmp_path / "remote.git", tmp_path / "clone"
+    seed.mkdir()
+    shutil.copy(ROOT / "update.sh", seed / "update.sh")
+    (seed / ".gitignore").write_text("compose.yaml\n")
+    git("init", "-q", "-b", "main", cwd=seed)
+    git("add", "-A", cwd=seed)
+    git("commit", "-qm", "first", cwd=seed)
+    git("clone", "-q", "--bare", str(seed), str(remote), cwd=tmp_path)
+    git("clone", "-q", str(remote), str(clone), cwd=tmp_path)
+    (clone / "compose.yaml").write_text(f"    environment:\n      SHEPHERD_DATA_DIR: {data}\n")
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    creds = clone / ".git" / "gpu-shepherd-credentials"
+
+    r = subprocess.run([str(clone / "update.sh"), "--set-token", "zach"], input=TOKEN + "\n", env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert creds.read_text() == f"https://zach:{TOKEN}@github.com\n" and (creds.stat().st_mode & 0o777) == 0o600
+    status = (data / "update" / "status.json").read_text()
+    assert json.loads(status)["credentials"] == "zach"
+    assert TOKEN not in r.stdout + r.stderr + status
+    assert "doesn't use HTTPS" in r.stderr                # a local remote: the token isn't used for it
+
+    r = subprocess.run([str(clone / "update.sh"), "--set-token", "zach"], input="not a token\n", env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and creds.exists()             # a bad token keeps the old one
+
+    # from the dashboard: the file in the data folder is taken out at once and never logged
+    (data / "update" / "credentials").write_text(f"other\n{TOKEN}\n")
+    (data / "update" / "request").write_text("credentials\n")
+    r = subprocess.run([str(clone / "update.sh"), "--from-dashboard"], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, (data / "update" / "log.txt").read_text()
+    assert not (data / "update" / "credentials").exists() and creds.read_text().startswith("https://other:")
+    log = (data / "update" / "log.txt").read_text()
+    assert "Saved the GitHub token for other" in log and TOKEN not in log
+
+    r = subprocess.run([str(clone / "update.sh"), "--clear-token"], env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and not creds.exists()
+    assert json.loads((data / "update" / "status.json").read_text())["credentials"] == ""

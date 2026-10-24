@@ -142,6 +142,10 @@ dashboard still shows what is running and tells you which command to run.
 
 Installed before `update.sh` existed? Run `git pull && sudo ./update.sh --rebuild` once.
 
+Installed from a private repository? Save a GitHub access token in Settings > Private repository,
+or with `sudo ./update.sh --set-token <your GitHub user>`. See
+[Private repository](docs/updates.md#private-repository).
+
 **Versions and changelog.** Every merged change gets a new version number and an entry in
 [CHANGELOG.md](CHANGELOG.md), automatically. See [Versions, changelog and updates](docs/updates.md).
 

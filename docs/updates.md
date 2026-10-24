@@ -36,6 +36,31 @@ in a container and can't update itself from inside it. Without the service, the 
 shows your version and the changelog, and tells you which command to run. From a terminal,
 `sudo ./update.sh` shows the same version and changes, and `--check` only looks.
 
+## Private repository
+
+If the repository you installed from is private, downloading updates needs a GitHub login. GitHub
+doesn't accept account passwords for git, so use an access token instead:
+
+1. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new): under
+   *Repository access* pick only the GPU Shepherd repository, under *Permissions* give
+   *Contents* read-only access, and pick an expiry date.
+2. Save it in **Settings > Private repository** (your GitHub user name and the token), or on the
+   server with `sudo ./update.sh --set-token <your GitHub user>`, which asks for the token without
+   showing it (or reads it from standard input).
+
+GPU Shepherd then checks for updates right away, so you see at once whether the token works. To
+replace it, save a new one the same way; to remove it, use **Remove token** or
+`sudo ./update.sh --clear-token`. When a token expires or is wrong, the check fails with a message
+that says so.
+
+Where it is kept: on the server, in `.git/gpu-shepherd-credentials` inside the clone, readable
+only by the clone's owner and root (mode 0600), in git's own credential format. `update.sh` hands
+it to git only for its own downloads (your other git settings are left alone) and never prints or
+logs it. From the dashboard, the token passes through a 0600 file in `<data folder>/update/` that
+the update service moves into the clone within seconds; it is never stored in the settings, shown
+again, or written to a log. This only works for clones that download over HTTPS
+(`https://github.com/...`); a clone set up with SSH uses your SSH key instead.
+
 ## Versions and releases
 
 Versions look like `MAJOR.MINOR.PATCH`. The number lives in `gpushepherd/__init__.py`, and the
@@ -77,6 +102,7 @@ updates, it writes `<data folder>/update/status.json` with, among other things:
 | `version` | the version of the code in the clone |
 | `latest_version` | the version of the newest code on the remote |
 | `behind`, `commits` | how many commits are new, and their subjects |
+| `credentials` | the GitHub user whose token is saved, or empty (never the token) |
 
 It also saves the newest `CHANGELOG.md` from the remote as `<data folder>/update/changelog.md`,
 which is how the dashboard can list what a version brings before it is installed. The changelog of

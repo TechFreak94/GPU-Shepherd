@@ -7,6 +7,7 @@
 #   sudo ./update.sh --check      # only looks: exit 0 up to date, 10 an update is available
 #   sudo ./update.sh --rollback   # goes back to the version before the last update
 #   sudo ./update.sh --restore-settings   # puts back the settings backed up before it
+#   sudo ./update.sh --set-token USER     # a GitHub token for a private repository (asks for it)
 #   sudo ./update.sh --help       # every option
 #
 # Updates are fast-forward only: if you changed files in this folder it stops and tells you
@@ -32,6 +33,8 @@ QUIET=0
 FROM_DASHBOARD=0
 FINISH=""               # internal: the commit we updated from, after re-running the new script
 SERVICE=""              # enable / disable
+TOKEN_ACTION=""         # set / clear: the GitHub login used to download updates
+TOKEN_USER=""
 UNIT=gpu-shepherd-update
 UNIT_DIR=/etc/systemd/system
 CONTAINER=gpu-shepherd
@@ -54,6 +57,11 @@ rebuild GPU Shepherd.
   --restore-settings [FILE]    put back the settings, instances and model lists backed up just
                                before the last update (or from FILE); the current ones are kept
                                as *.before-restore
+  --set-token USER             save a GitHub user name and access token for downloading updates
+                               from a private repository (asks for the token, or reads it from
+                               standard input); it is kept in the clone's .git folder, readable
+                               only by the clone's owner and root, and never printed
+  --clear-token                forget that token again
   --enable-dashboard-updates   install a systemd service so the dashboard can check for updates
                                daily and update when you press its button
   --disable-dashboard-updates  remove that service again
@@ -83,6 +91,8 @@ while [ $# -gt 0 ]; do
         --rollback)     ROLLBACK=1; shift ;;
         --restore-settings) RESTORE=1; shift
                         if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then RESTORE_FILE=$1; shift; fi ;;
+        --set-token)    TOKEN_ACTION=set; TOKEN_USER="${2:?--set-token needs your GitHub user name}"; shift 2 ;;
+        --clear-token)  TOKEN_ACTION=clear; shift ;;
         --enable-dashboard-updates)  SERVICE=enable; shift ;;
         --disable-dashboard-updates) SERVICE=disable; shift ;;
         --from-dashboard) FROM_DASHBOARD=1; ASSUME_YES=1; shift ;;
@@ -112,7 +122,7 @@ SAVED_IMAGE=gpu-shepherd:previous   # the image that ran before the last update
 SAVED_IMAGE_FILE="$STATE_DIR/previous-image"
 
 # Docker is root-equivalent, so this needs root unless you can already use docker.
-if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1; }; then
+if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE$TOKEN_ACTION" ] || ! docker info >/dev/null 2>&1; }; then
     have sudo || { err "run this as root"; exit 1; }
     exec sudo -- "$HERE/$(basename "$0")" "${ARGS[@]}"
 fi
@@ -129,7 +139,16 @@ if [ "$(id -u)" -eq 0 ] && [ "$OWNER" != root ]; then
     owner_home=$(getent passwd "$OWNER" | cut -d: -f6)
     GIT_AS=(runuser -u "$OWNER" -- env HOME="$owner_home")
 fi
-g() { "${GIT_AS[@]}" git -C "$HERE" "$@"; }
+# A GitHub token saved with --set-token (or from the dashboard) is used for downloads only, through
+# git's own "store" helper reading this file; your git settings are left alone.
+CREDENTIALS="$HERE/.git/gpu-shepherd-credentials"
+g() {
+    if [ -s "$CREDENTIALS" ]; then
+        "${GIT_AS[@]}" git -c credential.helper= -c "credential.helper=store --file=$CREDENTIALS" -C "$HERE" "$@"
+    else
+        "${GIT_AS[@]}" git -C "$HERE" "$@"
+    fi
+}
 if [ "$ASSUME_YES" -eq 1 ] || ! [ -t 0 ]; then export GIT_TERMINAL_PROMPT=0; fi   # never hang on a password prompt
 
 ask_yes() {   # ask_yes "question" - returns 0 for yes; --yes answers yes
@@ -193,6 +212,7 @@ write_status() {
         printf '"current":%s,"latest":%s,"previous":%s,"behind":%s,"ahead":%s,' \
             "$(json_str "$(g rev-parse HEAD 2>/dev/null || true)")" "$(json_str "${LATEST:-}")" \
             "$(json_str "$(cat "$PREVIOUS" 2>/dev/null || true)")" "${BEHIND:-0}" "${AHEAD:-0}"
+        printf '"credentials":%s,' "$(json_str "$(token_user)")"
         printf '"local_changes":[%s],"commits":[%s],"dashboard_updates":%s}\n' "$changes" "$commits" \
             "$(service_enabled && echo true || echo false)"
     } >"$tmp"
@@ -204,6 +224,54 @@ fail() {   # fail "message": report it here and on the dashboard, then stop
     write_status failed "$1" || true
     exit 1
 }
+
+# --------------------------------------------------------------------------- GitHub token
+
+token_user() {   # the user name saved with the token, or nothing
+    [ -s "$CREDENTIALS" ] && sed -n 's|^https://\([^:]*\):.*|\1|p' "$CREDENTIALS" | head -n 1 || true
+}
+
+# save_token USER TOKEN: GitHub user names are letters, digits and hyphens; tokens (ghp_..., github_pat_...)
+# letters, digits and underscores. Checking that keeps the file's URL format safe without escaping.
+save_token() {
+    local user=$1 token=$2 url host
+    [[ "$user" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || { err "that doesn't look like a GitHub user name"; return 1; }
+    [[ "$token" =~ ^[A-Za-z0-9_]{20,255}$ ]] || { err "that doesn't look like a GitHub access token (ghp_... or github_pat_...)"; return 1; }
+    url=$(g config --get "remote.$(g config --get "branch.$(g symbolic-ref --short -q HEAD).remote" || echo origin).url" 2>/dev/null || true)
+    case "$url" in
+        https://*) host=${url#https://}; host=${host%%/*}; host=${host##*@} ;;
+        "")        host=github.com ;;
+        *)         warn "this clone downloads from $url, which doesn't use HTTPS, so a token isn't used for it.
+         Switch it with:  git -C $HERE remote set-url origin https://github.com/<owner>/<repo>.git"
+                   host=github.com ;;
+    esac
+    ( umask 077; printf 'https://%s:%s@%s\n' "$user" "$token" "$host" >"$CREDENTIALS.tmp" )
+    chown "$OWNER" "$CREDENTIALS.tmp" 2>/dev/null || true
+    chmod 600 "$CREDENTIALS.tmp"
+    mv -f "$CREDENTIALS.tmp" "$CREDENTIALS"
+    say "Saved the GitHub token for $user (used for $host; only $OWNER and root can read it)"
+}
+
+clear_token() {
+    rm -f "$CREDENTIALS" "$CREDENTIALS.tmp"
+    say "Forgot the saved GitHub token"
+}
+
+if [ "$TOKEN_ACTION" = set ]; then
+    if [ -t 0 ]; then
+        echo "Create a token at https://github.com/settings/personal-access-tokens/new: a fine-grained token,"
+        echo "only this repository, permission Contents: Read-only. (GitHub doesn't take passwords for git.)"
+        read -r -s -p "GitHub token for $TOKEN_USER (not shown): " token </dev/tty; echo
+    else
+        read -r token || true
+    fi
+    save_token "$TOKEN_USER" "$token" || exit 1
+    unset token
+    CHECK=1                            # check right away, which shows whether the token works
+elif [ "$TOKEN_ACTION" = clear ]; then
+    clear_token
+    CHECK=1
+fi
 
 # --------------------------------------------------------------------------- dashboard service
 
@@ -289,6 +357,20 @@ if [ "$FROM_DASHBOARD" -eq 1 ]; then
     case "$action" in
         check)  CHECK=1 ;;
         update) REBUILD=1 ;;
+        credentials)
+            # the dashboard leaves "user" and "token" lines (or "clear") in a 0600 file; take them
+            # out of the data folder at once, keep them in the clone, then check that they work
+            creds="$STATE_DIR/credentials"
+            if [ "$(head -n 1 "$creds" 2>/dev/null)" = clear ]; then
+                clear_token
+            else
+                { read -r c_user; read -r c_token; } <"$creds" 2>/dev/null || true
+                rm -f "$creds"
+                save_token "${c_user:-}" "${c_token:-}" || { unset c_token; fail "The GitHub token was not saved: it doesn't look like a user name and token."; }
+                unset c_token
+            fi
+            rm -f "$creds"
+            CHECK=1 ;;
         *)      echo "unknown request; nothing done"; exit 0 ;;
     esac
 fi
@@ -492,8 +574,15 @@ RUN_STATE=checking
 BEHIND=$(g rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0)     # as of the last check
 write_status "$RUN_STATE" "Checking for updates" check
 info "Checking for updates ($UPSTREAM)"
-fetch_err=$(g fetch --quiet "$REMOTE" 2>&1) || fail "could not download updates from '$REMOTE': ${fetch_err:-no details}
-       (offline, or a private repository that needs the clone owner's saved credentials?)"
+fetch_err=$(g fetch --quiet "$REMOTE" 2>&1) || {
+    if printf '%s' "$fetch_err" | grep -qiE 'authentication|could not read username|terminal prompts disabled|403|401|not found'; then
+        if [ -s "$CREDENTIALS" ]; then
+            fail "GitHub refused the saved token for $(token_user) ($fetch_err). It may have expired or not cover this repository: save a new one in Settings > Private repository, or with  sudo $HERE/update.sh --set-token <user>"
+        fi
+        fail "could not download updates from '$REMOTE': the repository needs a login ($fetch_err). For a private repository, save a GitHub access token in Settings > Private repository, or with  sudo $HERE/update.sh --set-token <your GitHub user>"
+    fi
+    fail "could not download updates from '$REMOTE': ${fetch_err:-no details} (offline?)"
+}
 LATEST=$(g rev-parse "$UPSTREAM")
 BEHIND=$(g rev-list --count "HEAD..$UPSTREAM")
 AHEAD=$(g rev-list --count "$UPSTREAM..HEAD")

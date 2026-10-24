@@ -7,6 +7,8 @@
   document.addEventListener("htmx:sendError", (e) => {
     if (e.detail.elt && e.detail.elt.closest("[data-quiet-offline]")) e.stopImmediatePropagation();
   });
+  // a GitHub token handed to the server: don't leave it in the form
+  document.addEventListener("credentials-sent", () => document.querySelectorAll("[name=token]").forEach((el) => { el.value = ""; }));
 
   function toast(msg, kind) {
     const box = document.getElementById("toasts");

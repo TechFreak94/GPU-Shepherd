@@ -55,7 +55,9 @@ without needing git) so the dashboard knows exactly what is running.
 The app and `update.sh` share only files in `<data dir>/update/`: `status.json` (written by every
 check or update and at each step of one: commits behind, their subjects, local edits, state, step,
 the clone's and the remote's version), `request` (written by the app: `check` or `update`),
-`log.txt` and `changelog.md` (the remote's newest `CHANGELOG.md`). The dashboard's Updates dialog
+`log.txt`, `changelog.md` (the remote's newest `CHANGELOG.md`) and, for a few seconds,
+`credentials` (a GitHub token from Settings, which `update.sh` moves into the clone's `.git`
+folder and passes to git through its `store` credential helper). The dashboard's Updates dialog
 polls while a check or update runs, so it shows each step and carries on across the restart. The optional systemd units from
 `update.sh --enable-dashboard-updates` are a daily `--check` timer and a path unit that runs
 `update.sh --from-dashboard` when `request` appears. A request no one picks up within two minutes

@@ -720,6 +720,24 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "partials/logs.html", title="Update log", refresh="/ui/update/log" if u.busy else "",
                     text=updates.log_text(store.root) or "Nothing yet: the updater writes here once it starts.")
 
+    @app.post("/ui/update/credentials")
+    async def update_credentials(request: Request):
+        raw = await request.form()
+        u = updates.status(store.root)
+        if not u.dashboard_updates:
+            return toast(Response(status_code=204), f"Saving a token needs the update service. On the server run: {u.command} --set-token <user>", "warn")
+        if u.busy:
+            return toast(Response(status_code=204), "An update or check is running; try again when it is done.", "warn")
+        try:
+            updates.request_credentials(store.root, str(raw.get("user", "")).strip(), str(raw.get("token", "")).strip(),
+                                        clear=raw.get("clear") == "1")
+        except ValueError as err:
+            return toast(Response(status_code=204), str(err), "error")
+        log.info("update: GitHub token %s from the dashboard", "removal requested" if raw.get("clear") == "1" else "handed to the host")
+        resp = update_page(request)          # shows the check that follows, which proves the token works
+        resp.headers["HX-Trigger"] = json.dumps({"refresh": True, "credentials-sent": True})
+        return resp
+
     @app.post("/ui/update/{action}")
     def update_request(request: Request, action: str):
         if action not in updates.ACTIONS:
