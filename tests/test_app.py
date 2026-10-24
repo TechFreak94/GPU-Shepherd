@@ -224,7 +224,8 @@ def test_dashboard_details_and_machine_panels(stack):
     assert "nousresearch/hermes-agent:stable" in card and "shepherd-hermes" in card
     assert 'href="http://testserver:9119/"' in card and '>testserver:9119</a>' in card and "limit 4g" in card and "Up " in card
     assert "HERMES_UID" in card and "change-me-please" not in card     # setting names, never their values
-    assert "% of the whole machine" in card
+    assert "share of the whole machine" in card and "Advanced details" in card
+    assert all(f'id="tip-hermes-{k}"' in card for k in ("gpu", "use", "addr", "state", "image", "folders", "env"))
     # the long explanations live in tooltips that hover, focus and tap can all reach
     assert 'aria-describedby="tip-hermes-about"' in card and 'role="tooltip" id="tip-hermes-about"' in card
     assert card.index("Home lab") > card.index('id="tip-hermes-about"')     # the description is in the tooltip

@@ -28,6 +28,18 @@
   document.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target.id === "modal-body") openModal(); });
   document.addEventListener("htmx:responseError", (e) => toast("Request failed (HTTP " + e.detail.xhr.status + ")", "error"));
   document.addEventListener("htmx:sendError", () => toast("GPU Shepherd is not reachable", "error"));
+  // the dashboard re-renders every few seconds: keep the "Advanced details" boxes the user opened open
+  const openDetails = new Set();
+  document.addEventListener("toggle", (e) => {
+    const d = e.target;
+    if (d.tagName !== "DETAILS" || !d.closest("#dash")) return;
+    const card = d.closest("[id]");
+    if (card) (d.open ? openDetails.add(card.id) : openDetails.delete(card.id));
+  }, true);
+  document.addEventListener("htmx:afterSwap", (e) => {
+    if (e.detail.target.id !== "dash") return;
+    openDetails.forEach((id) => { const d = document.querySelector("#" + CSS.escape(id) + " details"); if (d) d.open = true; });
+  });
   // tooltips: hover and keyboard focus are pure CSS; a click or tap pins one open until you click elsewhere or press Esc
   const tipOf = (el) => el && el.closest(".has-tip");
   let pinned = null, focusedTip = null;

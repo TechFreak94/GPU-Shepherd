@@ -1,3 +1,7 @@
+{# A small ⓘ button with its tooltip. The tooltip shows on hover, keyboard focus or tap (see app.js) #}
+{% macro info(key, label) -%}
+<span class="has-tip" data-tip="{{ key }}"><button type="button" class="tip-btn info" aria-label="About {{ label }}" aria-describedby="tip-{{ key }}" aria-expanded="false">i</button><span class="tip" role="tooltip" id="tip-{{ key }}">{{ caller() }}</span></span>
+{%- endmacro %}
 {% include "partials/update_banner.html" %}
 {% if problems %}
 <div class="notice error">Some instance files could not be read:
@@ -79,26 +83,11 @@
 <section class="grid" aria-label="Instances">
 {% for c in cards %}{% set i = c.inst %}{% set g = i.gpu %}{% set u = c.usage %}
   <article class="card inst" id="inst-{{ i.id }}">
-    {# Kept short on purpose: the longer explanations sit in tooltips (hover, keyboard focus or tap) #}
+    {# Each detail shows its value; the ⓘ next to it explains it (hover, keyboard focus or tap) #}
     <div class="row head">
-      <div class="title has-tip" data-tip="{{ i.id }}-about">
+      <div class="title">
         <h2>{{ i.name }}{% if i.kind == "llama-swap" %}<span class="tag accent">model server</span>{% endif %}</h2>
-        <button type="button" class="tip-btn info" aria-label="About {{ i.name }}" aria-describedby="tip-{{ i.id }}-about" aria-expanded="false">i</button>
-        <div class="tip" role="tooltip" id="tip-{{ i.id }}-about">
-          {% if i.description %}<p><strong>{{ i.description }}</strong></p>{% endif %}
-          <dl class="facts stack">
-            <dt>State</dt><dd>{% if c.state %}{{ c.state.status_text or c.status }}{% else %}Never started{% endif %}</dd>
-            <dt>Image</dt><dd class="mono">{{ i.image }}</dd>
-            <dt>ID</dt><dd class="mono">{{ i.id }}</dd>
-            <dt>Container</dt><dd class="mono">{{ c.container }}</dd>
-            <dt>Start on boot</dt><dd>{{ "yes" if i.autostart else "no" }}</dd>
-            {% if i.command %}<dt>Command</dt><dd class="mono">{{ i.command|join(" ") }}</dd>{% endif %}
-            <dt>Folders</dt><dd>{% for v in i.volumes %}<div class="mono">{{ v.host }} → {{ v.container }}{{ " (read only)" if v.read_only }}</div>{% else %}none{% endfor %}</dd>
-            {% if i.env %}<dt>Settings</dt><dd class="mono">{{ i.env.keys()|join(", ") }}</dd>{% endif %}
-            {% if i.shm_size %}<dt>Shared memory</dt><dd>{{ i.shm_size }}</dd>{% endif %}
-            {% if i.user %}<dt>Runs as</dt><dd class="mono">{{ i.user }}</dd>{% endif %}
-          </dl>
-        </div>
+        {% if i.description %}{% call info(i.id ~ "-about", i.name) %}<span class="tl">{{ i.description }}</span>{% endcall %}{% endif %}
       </div>
       {% if c.running %}<span class="pill on" title="{{ c.state.status_text }}">running</span>
       {% elif c.state %}<span class="pill off" title="{{ c.state.status_text }}">{{ "stopped" if c.status in ("exited", "created") else c.status }}</span>
@@ -108,63 +97,85 @@
     {% if c.pending %}<p class="meta"><span class="tag warn">Saved changes not applied - restart to apply</span></p>{% endif %}
 
     <dl class="facts">
-      <div class="fact has-tip" data-tip="{{ i.id }}-gpu">
-        <dt><button type="button" class="tip-btn" aria-describedby="tip-{{ i.id }}-gpu" aria-expanded="false">GPU</button></dt>
+      <div class="fact">
+        <dt>GPU {% call info(i.id ~ "-gpu", "GPU") -%}
+          {% if c.running and c.assigned %}<span class="tl"><strong>{{ c.assigned|map(attribute="name")|unique|join(", ") }}</strong>{% if c.vram_total %}: {{ "%.1f"|format(c.vram_used / 1024) }} GB of video memory in use{% endif %}</span>{% endif %}
+          <span class="tl">{% if g.mode == "fixed" %}Always uses GPU {{ g.gpus|join(", ") }}.
+            {%- elif g.mode == "elastic" %}Uses {% if not g.max_gpus %}{{ g.min_gpus }} or more GPUs{% elif g.max_gpus == g.min_gpus %}exactly {{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }} to {{ g.max_gpus }} GPUs{% endif %}, and gives extra ones up when another instance needs them.
+            {%- else %}Does not use a GPU.{% endif %}</span>
+          {% if g.mode != "none" %}<span class="tl muted">Priority {{ g.priority }}: when instances want the same GPU, the higher priority keeps it.</span>{% endif %}
+        {%- endcall %}</dt>
         <dd>{% if c.running and c.gpus %}<strong>{{ gpu_text(c.gpus) }}</strong>
             {%- if c.vram_total %}{% set pct = (100 * c.vram_used / c.vram_total)|round|int %} · {{ "%.1f"|format(c.vram_used / 1024) }} of {{ "%.1f"|format(c.vram_total / 1024) }} GB
             <div class="meter thin" role="img" aria-label="{{ pct }}% video memory used"><i class="{{ level(pct) }}" style="width: {{ pct }}%"></i></div>{% endif %}
           {% elif c.running %}none
-          {% else %}<span class="muted">none while stopped</span>{% endif %}
-          <div class="tip" role="tooltip" id="tip-{{ i.id }}-gpu">
-            {% if c.running and c.assigned %}<p><strong>{{ c.assigned|map(attribute="name")|unique|join(", ") }}</strong>{% if c.vram_total %}: {{ "%.1f"|format(c.vram_used / 1024) }} GB of video memory in use{% endif %}</p>{% endif %}
-            <p>{% if g.mode == "fixed" %}Always uses GPU {{ g.gpus|join(", ") }}.
-              {%- elif g.mode == "elastic" %}Uses {% if not g.max_gpus %}{{ g.min_gpus }} or more GPUs{% elif g.max_gpus == g.min_gpus %}exactly {{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }} to {{ g.max_gpus }} GPUs{% endif %}, and gives extra ones up when another instance needs them.
-              {%- else %}Does not use a GPU.{% endif %}</p>
-            {% if g.mode != "none" %}<p class="muted">Priority {{ g.priority }}: when instances want the same GPU, the higher priority keeps it.</p>{% endif %}
-          </div></dd>
+          {% else %}<span class="muted">none while stopped</span>{% endif %}</dd>
       </div>
 
       {% if c.running %}
-      <div class="fact has-tip" data-tip="{{ i.id }}-use">
-        <dt><button type="button" class="tip-btn" aria-describedby="tip-{{ i.id }}-use" aria-expanded="false">Using</button></dt>
-        <dd>{% if u %}CPU {{ "measuring…" if u.cpu_pct is none else ("%.1f"|format(u.cpu_pct) ~ "%") }} · RAM {{ u.mem_used|gib }}{% else %}<span class="muted">not available</span>{% endif %}
-          <div class="tip" role="tooltip" id="tip-{{ i.id }}-use">
-            {% if u %}<p>CPU: {% if u.cpu_pct is not none %}{{ "%.1f"|format(u.cpu_pct) }}% of the whole machine{% else %}measured from the next refresh{% endif %}.</p>{% endif %}
-            <p>RAM: {% if u %}{{ u.mem_used|gib }}, {% endif %}{% if i.memory_limit %}limit {{ i.memory_limit }}{% else %}no limit{% endif %}. Model layers offloaded from the GPUs count here.</p>
-          </div></dd>
+      <div class="fact">
+        <dt>Using {% call info(i.id ~ "-use", "CPU and RAM use") -%}
+          <span class="tl">CPU: share of the whole machine{% if u and u.cpu_pct is none %}, measured from the next refresh{% endif %}.</span>
+          <span class="tl">RAM: {% if i.memory_limit %}limit {{ i.memory_limit }}{% else %}no limit{% endif %}. Model layers offloaded from the GPUs count here.</span>
+        {%- endcall %}</dt>
+        <dd>{% if u %}CPU {{ "measuring…" if u.cpu_pct is none else ("%.1f"|format(u.cpu_pct) ~ "%") }} · RAM {{ u.mem_used|gib }}{% else %}<span class="muted">not available</span>{% endif %}</dd>
       </div>
       {% endif %}
 
-      <div class="fact has-tip" data-tip="{{ i.id }}-addr">
-        <dt><button type="button" class="tip-btn" aria-describedby="tip-{{ i.id }}-addr" aria-expanded="false">Address</button></dt>
+      <div class="fact">
+        <dt>Address {% call info(i.id ~ "-addr", "Address") -%}
+          {% for p in c.ports %}<span class="tl">Port {{ p.port.host }} on this machine → port {{ p.port.container }}{{ "/udp" if p.port.protocol == "udp" }} in the container</span>
+          {% else %}<span class="tl">Nothing in this container is reachable from outside it.</span>{% endfor %}
+          {% if c.ports and c.running %}<span class="tl muted">Links open in a new tab.</span>{% elif c.ports %}<span class="tl muted">Links appear once it is running.</span>{% endif %}
+        {%- endcall %}</dt>
         <dd>{% for p in c.ports %}{% if c.running %}<a class="ext" href="{{ p.url }}" target="_blank" rel="noopener">{{ p.label }}</a>{% else %}<span class="mono">port {{ p.port.host }}</span>{% endif %}{{ " " if not loop.last }}
-          {%- else %}<span class="muted">no ports published</span>{% endfor %}
-          <div class="tip" role="tooltip" id="tip-{{ i.id }}-addr">
-            {% for p in c.ports %}<p>Port {{ p.port.host }} on this machine → port {{ p.port.container }}{{ "/udp" if p.port.protocol == "udp" }} in the container</p>
-            {% else %}<p>Nothing in this container is reachable from outside it.</p>{% endfor %}
-            {% if c.ports and c.running %}<p class="muted">Links open in a new tab.</p>{% elif c.ports %}<p class="muted">Links appear once it is running.</p>{% endif %}
-          </div></dd>
+          {%- else %}<span class="muted">no ports published</span>{% endfor %}</dd>
       </div>
 
       {% if i.kind == "llama-swap" %}
-      <div class="fact has-tip" data-tip="{{ i.id }}-models">
-        <dt><button type="button" class="tip-btn" aria-describedby="tip-{{ i.id }}-models" aria-expanded="false">Models</button></dt>
+      <div class="fact">
+        <dt>Models {% call info(i.id ~ "-models", "Models") -%}
+          {% if c.running and not c.loaded and not c.loading and not c.models_error %}<span class="tl">A model loads on the first request for it.</span>{% endif %}
+          {% for mid, r in c.offload.items() %}<span class="tl">{{ mid }}:
+            {%- if r.gpu_layers is not none %} {{ r.gpu_layers }} layers on GPU{% endif %}
+            {%- if r.cpu_moe %}{{ "," if r.gpu_layers is not none }} {{ r.cpu_moe }} expert layers in system RAM{% endif %}</span>{% endfor %}
+          {% if c.aliases %}<span class="tl">Auto names: {% for a, m in c.aliases.items() %}<span class="mono">{{ a }}</span> → {{ m }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+          <span class="tl muted">Load, unload and configure them under Models.</span>
+        {%- endcall %}</dt>
         <dd>{% if not c.running %}<span class="muted">{{ c.model_count }} in the catalogue</span>
           {% elif c.models_error %}<span class="muted">{{ c.models_error }}</span>
           {% elif c.loading %}<span class="busy-t">Loading {{ c.loading|join(", ") }}…</span>
           {% elif c.loaded %}<strong>{{ c.loaded|join(", ") }}</strong> loaded
-          {% else %}<span class="muted">none loaded</span>{% endif %}
-          <div class="tip" role="tooltip" id="tip-{{ i.id }}-models">
-            {% if c.running and not c.loaded and not c.loading and not c.models_error %}<p>A model loads on the first request for it.</p>{% endif %}
-            {% for mid, r in c.offload.items() %}<p>{{ mid }}:
-              {%- if r.gpu_layers is not none %} {{ r.gpu_layers }} layers on GPU{% endif %}
-              {%- if r.cpu_moe %}{{ "," if r.gpu_layers is not none }} {{ r.cpu_moe }} expert layers in system RAM{% endif %}</p>{% endfor %}
-            {% if c.aliases %}<p>Auto names: {% for a, m in c.aliases.items() %}<span class="mono">{{ a }}</span> → {{ m }}{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
-            <p class="muted">Load, unload and configure them under Models.</p>
-          </div></dd>
+          {% else %}<span class="muted">none loaded</span>{% endif %}</dd>
       </div>
       {% endif %}
     </dl>
+
+    <details class="more">
+      <summary>Advanced details</summary>
+      <dl class="facts">
+        <div class="fact"><dt>State {% call info(i.id ~ "-state", "State") %}<span class="tl">What Docker reports for the container: how long it has been up, or when and how it stopped.</span>{% endcall %}</dt>
+          <dd>{% if c.state %}{{ c.state.status_text or c.status }}{% else %}Never started{% endif %}</dd></div>
+        <div class="fact"><dt>Image {% call info(i.id ~ "-image", "Image") %}<span class="tl">The Docker image this instance runs. Change it under Edit, then restart to use it.</span>{% endcall %}</dt>
+          <dd class="mono">{{ i.image }}</dd></div>
+        <div class="fact"><dt>ID {% call info(i.id ~ "-id", "ID") %}<span class="tl">GPU Shepherd's name for this instance, used in its file (<span class="mono">instances/{{ i.id }}.yaml</span>) and the API.</span>{% endcall %}</dt>
+          <dd class="mono">{{ i.id }}</dd></div>
+        <div class="fact"><dt>Container {% call info(i.id ~ "-container", "Container") %}<span class="tl">The Docker container's name, for commands like <span class="mono">docker logs {{ c.container }}</span>.</span>{% endcall %}</dt>
+          <dd class="mono">{{ c.container }}</dd></div>
+        <div class="fact"><dt>Start on boot {% call info(i.id ~ "-boot", "Start on boot") %}<span class="tl">Whether GPU Shepherd starts this instance when it starts itself, for example after a reboot.</span>{% endcall %}</dt>
+          <dd>{{ "yes" if i.autostart else "no" }}</dd></div>
+        {% if i.command %}<div class="fact"><dt>Command {% call info(i.id ~ "-cmd", "Command") %}<span class="tl">Replaces the image's default command when the container starts.</span>{% endcall %}</dt>
+          <dd class="mono">{{ i.command|join(" ") }}</dd></div>{% endif %}
+        <div class="fact"><dt>Folders {% call info(i.id ~ "-folders", "Folders") %}<span class="tl">Folders on this machine that the container can use: this machine → inside the container. Files there survive restarts and updates.</span>{% endcall %}</dt>
+          <dd>{% for v in i.volumes %}<div class="mono small">{{ v.host }} → {{ v.container }}{{ " (read only)" if v.read_only }}</div>{% else %}<span class="muted">none</span>{% endfor %}</dd></div>
+        {% if i.env %}<div class="fact"><dt>Settings {% call info(i.id ~ "-env", "Settings") %}<span class="tl">Environment variables passed to the container. Only the names are shown here; values stay hidden (see Edit).</span>{% endcall %}</dt>
+          <dd class="mono small">{{ i.env.keys()|join(", ") }}</dd></div>{% endif %}
+        {% if i.shm_size %}<div class="fact"><dt>Shared memory {% call info(i.id ~ "-shm", "Shared memory") %}<span class="tl">Size of <span class="mono">/dev/shm</span> in the container. PyTorch apps such as ComfyUI need more than Docker's 64 MB default.</span>{% endcall %}</dt>
+          <dd>{{ i.shm_size }}</dd></div>{% endif %}
+        {% if i.user %}<div class="fact"><dt>Runs as {% call info(i.id ~ "-user", "Runs as") %}<span class="tl">The user and group ID the container's process runs as, so files it writes belong to that user.</span>{% endcall %}</dt>
+          <dd class="mono">{{ i.user }}</dd></div>{% endif %}
+      </dl>
+    </details>
 
     <div class="btns">
       {% if c.running %}
