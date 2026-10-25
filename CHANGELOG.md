@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.4 - 2026-10-25
+
+- The App Store has one LLM server app: pick its chat model and coding model while installing it (either or both, or one file for both) (#18)
+
 ## 0.12.3 - 2026-10-25
 
 - New App Store: install model servers, Open WebUI, Hermes Agent and ComfyUI with automatic setup, or open every field with manual configuration (#17)
