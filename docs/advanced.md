@@ -23,7 +23,7 @@ Instances are saved to `instances/<id>.yaml` in the data folder, model servers' 
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
 | - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
-| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count. Changing it needs no restart. |
+| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*; *App* for anything else). Changing it needs no restart. |
 
 ### GPUs
 

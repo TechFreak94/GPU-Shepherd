@@ -63,6 +63,7 @@ display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap
 .on{color:var(--ok)}.off{color:var(--muted)}.busy-t{color:var(--warn)}.bad{color:var(--bad)}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:4px;background:var(--bar);color:var(--muted);margin-left:6px;vertical-align:middle;cursor:default}
 .tag.warn{color:var(--warn)}.tag.accent{color:var(--accent)}
+.tag.kind{font-weight:600}.tag.kind.server{color:var(--accent);background:var(--hl)}.tag.kind.ui{color:var(--ok);background:var(--ok-soft)}
 .btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 /* anything clickable looks raised and reacts to the pointer */
 button,.btn{font:inherit;font-size:13px;font-weight:550;padding:6px 13px;border-radius:7px;border:1px solid var(--btn-line);
