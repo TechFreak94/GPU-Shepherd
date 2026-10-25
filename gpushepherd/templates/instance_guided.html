@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Set up {{ t.title }} · GPU Shepherd{% endblock %}
+{% block title %}Install {{ t.title }} · GPU Shepherd{% endblock %}
 {% block content %}
 <div id="editor">
 <div class="pagehead">
-  <div><h1>Set up {{ t.title }}</h1>
+  <div><h1>Install {{ t.title }}</h1>
   <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}</div></div>
-  <a class="btn" href="/instances/new">Back to templates</a>
+  <a class="btn" href="/apps">Back to the App Store</a>
 </div>
+{% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
 <form class="guided" hx-post="/instances/guided" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
   <input type="hidden" name="template" value="{{ t.key }}">
@@ -50,22 +51,65 @@
   </div>
   {% endif %}
 
+  {% if t.login %}
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>Login</h3>
+    <div class="fields">
+      <div><label for="login_user">User name</label><input type="text" id="login_user" name="login_user" value="{{ f.login_user }}" required autocomplete="off"></div>
+      <div><label for="password">Password</label><input type="text" id="password" name="password" value="{{ f.password }}" required minlength="8" autocomplete="new-password" spellcheck="false">
+        <div class="hint">For {{ t.title }}'s own web page. A random one is suggested: note it down. It is kept in the instance's environment.</div></div>
+    </div>
+  </div>
+  {% endif %}
+
   {% if t.connects %}
   <div class="section">
     <h3 style="margin-top:0"><span class="step"></span>Connections</h3>
     <div class="fields">
-      <div><label for="server">Model server to chat with</label>
+      <div><label for="server">{{ "Model server it thinks with" if t.connects == "hermes" else "Model server to chat with" }}</label>
         <select id="server" name="server">
-          <option value="">None for now</option>
           {% for id, name in servers %}<option value="{{ id }}" {{ "selected" if f.server == id }}>{{ name }} ({{ id }})</option>{% endfor %}
+          <option value="{{ new_server }}" {{ "selected" if f.server == new_server }}>A new {{ bundled.title|lower }}, installed with it</option>
+          <option value="" {{ "selected" if not f.server }}>None for now</option>
         </select>
-        <div class="hint">{% if servers %}Its address and API key are filled in for you.{% else %}There is no model server yet: <a href="/instances/new/llm-chat">set one up first</a>, or add it later under Edit.{% endif %}</div></div>
+        <div class="hint">{% if servers %}Its address and API key are filled in for you.{% else %}There is no model server yet, so a new one is installed alongside it.{% endif %}</div></div>
+      {% if t.connects == "openwebui" %}
       <div><label for="comfyui">Make images with</label>
         <select id="comfyui" name="comfyui">
           <option value="">Nothing (no image generation)</option>
           {% for id, name in comfy %}<option value="{{ id }}" {{ "selected" if f.comfyui == id }}>{{ name }} ({{ id }})</option>{% endfor %}
         </select>
         <div class="hint">Pick your ComfyUI instance to generate images from the chat.</div></div>
+      {% endif %}
+    </div>
+    <div class="subsection" data-server="{{ new_server }}">
+      <strong>New {{ bundled.title|lower }}</strong>
+      <div class="hint" style="margin-top:2px">{{ bundled.blurb }} It uses {{ "every free GPU" if bundled.gpu == "all" else bundled.gpu }} and gets the next free ID and port; change anything later under Edit.</div>
+      <div class="fields" style="margin-top:10px">
+        <div><label for="models_dir">Models folder on this machine</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}">
+          <div class="hint">Mounted read-only at <span class="mono">{{ bundled.models_mount[1] }}</span>.</div></div>
+        <div><label for="file">Model file (.gguf, optional)</label><input type="text" id="file" name="file" value="{{ f.file }}" placeholder="{{ bundled.models_mount[1] }}/model-Q4_K_M.gguf">
+          <div class="hint">Clients ask for it as <span class="mono">{{ bundled.first_model.alias }}</span>. Leave it empty to add models on its Models page.</div></div>
+      </div>
+      {% if files %}
+      <div class="hint">Pick one of the files in the models folder:</div>
+      <div class="files">
+        {% for x in files %}<button type="button" data-pick-file="{{ x.container_path }}">
+          <span class="mono">{{ x.container_path }}</span><span class="muted small">{{ x.size_gb }} GB</span></button>{% endfor %}
+      </div>
+      {% endif %}
+      {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if t.connects == "hermes" %}
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>Home Assistant <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span></h3>
+    <div class="fields">
+      <div><label for="hass_url">Home Assistant address</label><input type="text" inputmode="url" id="hass_url" name="hass_url" value="{{ f.hass_url }}" placeholder="http://homeassistant.local:8123"></div>
+      <div><label for="hass_token">Long-lived access token</label><input type="password" id="hass_token" name="hass_token" value="{{ f.hass_token }}" autocomplete="off">
+        <div class="hint">Create one in Home Assistant under your profile, Security. Hermes also needs its Home Assistant plugin, which you turn on in its dashboard.</div></div>
     </div>
   </div>
   {% endif %}
@@ -100,6 +144,8 @@
     <dl class="facts">
       <dt>Image</dt><dd class="mono">{{ t.image }}</dd>
       <dt>Type</dt><dd>{{ "Model server (llama-swap)" if t.kind == "llama-swap" else "Container" }}</dd>
+      {% if t.command %}<dt>Command</dt><dd class="mono">{{ t.command|join(" ") }}</dd>{% endif %}
+      {% if t.connects %}<dt data-server="{{ new_server }}">Also installs</dt><dd data-server="{{ new_server }}">{{ bundled.title }} ({{ bundled.image }})</dd>{% endif %}
       <dt>Settings file</dt><dd class="mono">instances/{{ f.id or "id" }}.yaml</dd>
       {% if t.env %}<dt>Environment</dt><dd class="mono">{% for k, v in t.env.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
     </dl>
@@ -107,9 +153,9 @@
   </div>
 
   <div class="actions">
-    <a class="btn" href="/instances/new">Cancel</a>
-    <button type="submit" name="action" value="advanced" title="Open the full form with these answers filled in">Customize every field…</button>
-    <button class="primary" type="submit" name="action" value="create">Create {{ t.title }}</button>
+    <a class="btn" href="/apps">Cancel</a>
+    <button type="submit" name="action" value="advanced" title="Open the manual configuration with these answers filled in">Customize every field…</button>
+    <button class="primary" type="submit" name="action" value="create">Install {{ t.title }}</button>
   </div>
 </form>
 </div>

@@ -345,12 +345,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "user_spec": inst.user or "", "memory_limit": inst.memory_limit or "",
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
                 "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
-                "drain_path": inst.drain.path, "drain_key": inst.drain.key}
+                "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
         gpus, _ = engine.snapshot().gpus, None
         gpu_count = max(len(gpus), 1)
-        return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error,
+        try:
+            app_t = tpl.get(form.get("app") or "") if not editing else None
+        except ConfigError:
+            app_t = None
+        return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
     # ------------------------------------------------------------------ guided setup (templates)
@@ -361,9 +365,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             if inst.kind != "llama-swap":
                 continue
             cat = store.catalog(inst.id)
-            chat = next((m.id for m in cat.models if "chat" in m.aliases), "")
+            alias = next((a for a in ("chat", "coder") for m in cat.models if a in m.aliases or a == m.id), "")
             servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
-                                "default_model": "chat" if chat else (cat.models[0].id if cat.models else "")}
+                                "default_model": alias or (cat.models[0].id if cat.models else "")}
         return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in engine.snapshot().gpus],
                            instances=instances, servers=servers, model_sizes={})
 
@@ -387,7 +391,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return llamaswap.local_model_files(probe)
 
     def guided(request: Request, t: tpl.Template, f: dict, m: tpl.Machine, error: str = "", status: int = 200):
-        files, notes = model_files(f["models_dir"]) if t.first_model and f.get("models_dir") else ([], [])
+        wants_files = t.first_model or t.connects
+        files, notes = model_files(f["models_dir"]) if wants_files and f.get("models_dir") else ([], [])
         gpus = engine.snapshot().gpus
         choices = [(k, v) for k, v in tpl.GPU_CHOICES.items()]
         choices[-1:-1] = [(f"pin:{g.index}", f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)")
@@ -395,27 +400,48 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         comfy = [(i.id, i.name) for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"]
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
-                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus)
+                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
+                    new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER))
 
-    @app.get("/instances/new", response_class=HTMLResponse)
-    def new_instance(request: Request, kind: str = ""):
+    def appdata_root() -> str:
+        return str(engine.host_data_dir / "appdata")
+
+    # ------------------------------------------------------------------ App Store
+    @app.get("/apps", response_class=HTMLResponse)
+    def app_store(request: Request):
+        instances, _ = store.instances()
+        return page(request, "apps.html", groups=tpl.groups(), gpu_choices=tpl.GPU_CHOICES,
+                    installed=tpl.installed(instances))
+
+    @app.get("/apps/{key}", response_class=HTMLResponse)
+    def install_app(request: Request, key: str, mode: str = "auto"):
+        try:
+            t = tpl.get(key)
+        except ConfigError as err:
+            return RedirectResponse(f"/apps?msg={err}", status_code=303)
+        m = machine()
+        f = tpl.defaults(t, m, default_models_dir(m.instances), appdata_root())
+        if mode != "manual":
+            return guided(request, t, f, m)
+        # manual: the full form, filled in from the same defaults (a model server is picked, not made)
+        if f["server"] == tpl.NEW_SERVER:
+            f["server"] = ""
+        inst, _ = tpl.build(t, f, m)
+        return editor(request, form_from_instance(inst), editing=False)
+
+    @app.get("/instances/new")
+    def new_instance(kind: str = ""):
         if kind:                              # old links went straight to the full form
             return RedirectResponse(f"/instances/new/custom?kind={kind}", status_code=303)
-        return page(request, "instance_new.html", groups=tpl.groups(), gpu_choices=tpl.GPU_CHOICES)
+        return RedirectResponse("/apps", status_code=303)
 
     @app.get("/instances/new/custom", response_class=HTMLResponse)
     def new_custom(request: Request, kind: str = "container"):
         return editor(request, blank_instance(kind), editing=False)
 
-    @app.get("/instances/new/{key}", response_class=HTMLResponse)
-    def new_from_template(request: Request, key: str):
-        try:
-            t = tpl.get(key)
-        except ConfigError as err:
-            return RedirectResponse(f"/instances/new?msg={err}", status_code=303)
-        m = machine()
-        f = tpl.defaults(t, m, default_models_dir(m.instances), str(engine.host_data_dir / "appdata"))
-        return guided(request, t, f, m)
+    @app.get("/instances/new/{key}")
+    def new_from_template(key: str):          # links from before the App Store
+        return RedirectResponse(f"/apps/{key}", status_code=303)
 
     @app.post("/instances/guided")
     async def save_guided(request: Request):
@@ -425,26 +451,29 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except ConfigError as err:
             return toast(Response(status_code=204), str(err), "error")
         f = {k: str(raw.get(k, "")) for k in ("name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
-                                               "comfyui", "file", "ctx_size", "offload")}
+                                               "comfyui", "file", "ctx_size", "offload", "login_user", "password",
+                                               "hass_url", "hass_token")}
         f["autostart"] = raw.get("autostart") == "on"
         m = machine()
-        if t.first_model and f["models_dir"]:
+        if (t.first_model or t.connects) and f["models_dir"]:
             m.model_sizes = {x["container_path"]: x["size_gb"] for x in model_files(f["models_dir"])[0]}
         try:
-            inst, model = tpl.build(t, f, m)
             if raw.get("action") == "advanced":
-                form = form_from_instance(inst)
-                resp = editor(request, form, editing=False)
+                answers = f | {"server": "" if f["server"] == tpl.NEW_SERVER else f["server"]}
+                inst, _ = tpl.build(t, answers, m)
+                resp = editor(request, form_from_instance(inst), editing=False)
                 resp.headers["HX-Retarget"] = "#editor"
                 resp.headers["HX-Reselect"] = "#editor"
                 return resp
+            bundle = tpl.bundled_server(f, m, appdata_root()) if t.connects else None
+            answers = f | {"server": bundle[0].id} if bundle else f
+            inst, model = tpl.build(t, answers, m)
+            seeds = tpl.seed_files(t, answers, m)
+            if bundle:
+                store.save_instance(bundle[0])
+                store.save_catalog(bundle[1])
             store.save_instance(inst)
-            for v in inst.volumes:            # make the app's own folders, so they are not owned by root
-                if not v.read_only and Path(v.host).is_relative_to(store.root):
-                    try:
-                        Path(v.host).mkdir(parents=True, exist_ok=True)
-                    except OSError:
-                        pass
+            make_app_folders(inst, t, seeds)
             if inst.kind == "llama-swap":
                 cat = store.catalog(inst.id)
                 if model:
@@ -452,16 +481,46 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     store.save_catalog(Catalog.model_validate(cat.model_dump()))
         except (ConfigError, ValueError) as err:
             msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
-            resp = guided(request, t, f, m, error=msg)
+            resp = guided(request, t, f, machine(), error=msg)   # without a model server made on the way
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
         if inst.kind == "llama-swap":
             what = f"with {model.id}" if model else "- add a model below"
             return Response(status_code=204, headers={
-                "HX-Redirect": f"/instances/{inst.id}/models?msg=Created {inst.name} {what}. Press Start on the dashboard to run it."})
+                "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}. Press Start on the dashboard to run it."})
+        also = f" and {bundle[0].name}" if bundle else ""
         return Response(status_code=204, headers={
-            "HX-Redirect": f"/?msg=Created {inst.name}. Press Start to run it.#inst-{inst.id}"})
+            "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.#inst-{inst.id}"})
+
+    def make_app_folders(inst: Instance, t: tpl.Template, seeds: dict[str, str]) -> None:
+        """Make a new app's own folders (so Docker doesn't make them as root) and its first settings
+        files. Only folders inside the data folder, which GPU Shepherd can see."""
+        appdata = {sub: v.host for (sub, inside) in t.appdata for v in inst.volumes if v.container == inside}
+        for v in inst.volumes:
+            host = Path(v.host)
+            if v.read_only or not host.is_relative_to(store.root):
+                continue
+            try:
+                host.mkdir(parents=True, exist_ok=True)
+                if t.data_owner and os.geteuid() == 0:
+                    os.chown(host, *t.data_owner)
+            except OSError as err:
+                log.warning("could not prepare %s for %s: %s", host, inst.id, err)
+        for rel, text in seeds.items():
+            sub, _, name = rel.partition("/")
+            if sub not in appdata or not Path(appdata[sub]).is_dir():
+                continue
+            path = Path(appdata[sub]) / name
+            if path.exists():
+                continue
+            try:
+                path.write_text(text, encoding="utf-8")
+                path.chmod(0o600)                 # it holds the model server's API key
+                if t.data_owner and os.geteuid() == 0:
+                    os.chown(path, *t.data_owner)
+            except OSError as err:
+                log.warning("could not write %s for %s: %s", path, inst.id, err)
 
     @app.get("/instances/{iid}/edit", response_class=HTMLResponse)
     def edit_instance(request: Request, iid: str):
@@ -477,7 +536,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
                                           "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
-                                          "drain_path", "drain_key")}
+                                          "drain_path", "drain_key", "app")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
         editing = f["editing"] == "1"
@@ -500,8 +559,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   timeout=int(f["drain_timeout"]) if str(f["drain_timeout"]).strip() else 600,
                                   on_timeout=f["drain_on_timeout"] or "stop",
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
-                                  path=f["drain_path"], key=f["drain_key"]))
+                                  path=f["drain_path"], key=f["drain_key"]),
+                app=str(f["app"]).strip())
             store.save_instance(inst)
+            if inst.app and not editing:      # an App Store app installed by hand: make its folders too
+                try:
+                    make_app_folders(inst, tpl.get(inst.app), {})
+                except ConfigError:
+                    pass
             if inst.kind == "llama-swap":
                 store.catalog(inst.id)        # create an empty catalogue with an API key
         except (ConfigError, ValueError) as err:

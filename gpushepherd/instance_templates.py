@@ -1,8 +1,10 @@
-"""Built-in templates for the guided "Add instance" flow.
+"""The App Store's apps: built-in templates for installing an app as an instance.
 
-A template is a generic starting point (ComfyUI, Open WebUI, a chat or coding model server) that
-asks a few questions and fills in everything else. What it creates is an ordinary instance (and,
-for model servers, a first catalogue entry), so it can be edited field by field afterwards.
+A template is a generic starting point (a chat or coding model server, ComfyUI, Open WebUI,
+Hermes Agent) that asks a few questions and fills in everything else. What it creates is an
+ordinary instance (and, for model servers, a first catalogue entry), so it can be edited field by
+field afterwards. Every app can also be installed by hand: the full form, filled in from the
+same defaults.
 
 This module is pure: the app passes in what it knows about the machine (GPUs, existing
 instances, folders) and gets pydantic objects back.
@@ -10,10 +12,11 @@ instances, folders) and gets pydantic objects back.
 from __future__ import annotations
 
 import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import (CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule, PortMap, VolumeMap,
+from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule, PortMap, VolumeMap,
                      MODEL_ID, SLUG)
 
 LLAMA_SWAP_IMAGE = "ghcr.io/mostlygeek/llama-swap:cuda"
@@ -53,14 +56,18 @@ class Template:
     appdata: tuple[tuple[str, str], ...] = ()  # (subfolder of the app data folder, path inside)
     models_mount: tuple[str, str, bool] | None = None   # (subfolder of the models folder, path inside, read-only)
     first_model: FirstModel | None = None
-    connects: bool = False                     # asks which model server / ComfyUI to use
+    connects: str = ""                         # how it is told about a model server: "openwebui" or "hermes"
+    command: tuple[str, ...] = ()
+    login: tuple[str, str] | None = None       # (user env var, password env var) of its own login
+    data_owner: tuple[int, int] | None = None  # uid:gid the app runs as, for the folders made for it
     needs: str = ""
     docs: str = ""
+    badge: str = ""                            # a few characters for its App Store icon
 
 
 TEMPLATES: tuple[Template, ...] = (
     Template(
-        key="llm-chat", title="Chat model server", group="Model servers",
+        key="llm-chat", badge="LLM", title="Chat model server", group="Model servers",
         blurb="An OpenAI-compatible endpoint that loads whichever model a client asks for.",
         points=("llama-swap + llama.cpp", "Uses every free GPU and gives them back when something else needs one",
                 "Pick a .gguf file now or add models later"),
@@ -71,7 +78,7 @@ TEMPLATES: tuple[Template, ...] = (
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
         docs="https://github.com/mostlygeek/llama-swap"),
     Template(
-        key="llm-coder", title="Coding model server", group="Model servers",
+        key="llm-coder", badge="</>", title="Coding model server", group="Model servers",
         blurb="A model server tuned for coding agents and editor plugins (Aider, Continue, OpenCode).",
         points=("llama-swap + llama.cpp", "Long context (64K) and steadier sampling for code",
                 "Answers to the model name \"coder\""),
@@ -82,7 +89,29 @@ TEMPLATES: tuple[Template, ...] = (
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
         docs="https://github.com/mostlygeek/llama-swap"),
     Template(
-        key="comfyui", title="ComfyUI", group="Image and video",
+        key="open-webui", badge="OW", title="Open WebUI", group="Chat and agents",
+        blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
+        points=("No GPU needed", "Connects to a model server for you, API key included",
+                "Optional: make images with ComfyUI"),
+        default_id="webui", default_name="Chat UI", description="Open WebUI",
+        image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
+        env={"ENABLE_OLLAMA_API": "false"},
+        appdata=(("data", "/app/backend/data"),), connects="openwebui",
+        needs="Nothing special", docs="https://docs.openwebui.com"),
+    Template(
+        key="hermes", badge="H", title="Hermes Agent", group="Chat and agents",
+        blurb="An AI agent by Nous Research with memory, skills and scheduled tasks, thinking with your own model server.",
+        points=("No GPU needed", "Connects to a model server for you, API key included",
+                "Web dashboard with its own login; optional Home Assistant connection"),
+        default_id="hermes", default_name="Hermes Agent", description="Hermes Agent",
+        image="nousresearch/hermes-agent:latest", command=("gateway", "run"),
+        container_port=9119, host_port=9119, gpu="none",
+        env={"HERMES_DASHBOARD": "1"}, login=("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
+        appdata=(("data", "/opt/data"),), data_owner=(10000, 10000), connects="hermes",
+        needs="A model server whose model can call tools (Qwen3 models can)",
+        docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
+    Template(
+        key="comfyui", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
                 "Models in the models folder's comfyui/ subfolder"),
@@ -94,17 +123,11 @@ TEMPLATES: tuple[Template, ...] = (
         models_mount=("comfyui", "/root/ComfyUI/models", False),
         needs="An NVIDIA GPU with 8+ GB and driver 580 or newer (CUDA 13 image)",
         docs="https://github.com/YanWenKun/ComfyUI-Docker"),
-    Template(
-        key="open-webui", title="Open WebUI", group="Chat interfaces",
-        blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
-        points=("No GPU needed", "Connects to a model server for you, API key included",
-                "Optional: make images with ComfyUI"),
-        default_id="webui", default_name="Chat UI", description="Open WebUI",
-        image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
-        env={"ENABLE_OLLAMA_API": "false"},
-        appdata=(("data", "/app/backend/data"),), connects=True,
-        needs="Nothing special", docs="https://docs.openwebui.com"),
 )
+
+# the model server an app with a connection can install alongside itself
+BUNDLED_SERVER = "llm-chat"
+NEW_SERVER = "new"
 
 GPU_CHOICES = {
     "one": "One GPU, whichever is free",
@@ -117,6 +140,23 @@ OFFLOAD_CHOICES = {
     "gpu": "Keep the whole model on the GPUs",
     "moe": "Keep MoE expert layers in system RAM (for models larger than your GPUs)",
 }
+
+
+def matches(t: Template, inst: Instance) -> bool:
+    """Whether an instance was installed from this template (older ones by their image)."""
+    if inst.app:
+        return inst.app == t.key
+    if t.kind == "llama-swap" or inst.kind == "llama-swap":
+        if inst.kind != t.kind:
+            return False
+        known = {x.description: x.key for x in TEMPLATES if x.kind == "llama-swap"}
+        return known.get(inst.description, BUNDLED_SERVER) == t.key     # other model servers count as chat
+    return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
+
+
+def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
+    """Template key -> the instances installed from it."""
+    return {t.key: [i for i in instances.values() if matches(t, i)] for t in TEMPLATES}
 
 
 def get(key: str) -> Template:
@@ -201,8 +241,10 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
     comfy = next((i.id for i in m.instances.values() if "comfyui" in (i.image + i.id).lower()), "")
     return {"name": name, "id": iid, "port": free_port(t.host_port, taken_ports), "gpu": t.gpu,
             "models_dir": models_dir, "appdata_dir": str(Path(appdata_root) / iid),
-            "server": next(iter(m.servers), ""), "comfyui": comfy, "file": "",
-            "ctx_size": t.first_model.ctx_size if t.first_model else 0, "offload": "auto", "autostart": False}
+            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy, "file": "",
+            "ctx_size": t.first_model.ctx_size if t.first_model else 0, "offload": "auto", "autostart": False,
+            "login_user": "admin" if t.login else "", "password": secrets.token_urlsafe(12) if t.login else "",
+            "hass_url": "", "hass_token": ""}
 
 
 def build(t: Template, a: dict, m: Machine) -> tuple[Instance, CatalogModel | None]:
@@ -231,13 +273,58 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, CatalogModel | No
         volumes += [VolumeMap(host=f"{appdata}/{sub}", container=inside) for sub, inside in t.appdata]
 
     env = dict(t.env)
-    if t.connects:
-        env.update(_connections(a, m))
+    if t.login:
+        user, password = str(a.get("login_user", "")).strip(), str(a.get("password", "")).strip()
+        if not user or len(password) < 8:
+            raise ConfigError("Login: enter a user name and a password of at least 8 characters")
+        env |= {t.login[0]: user, t.login[1]: password}
+    if t.connects == "openwebui":
+        env.update(_openwebui(a, m))
+    elif t.connects == "hermes":
+        env.update(_hermes(a, m))
 
     inst = Instance(id=iid, name=str(a.get("name", "")).strip() or iid, description=t.description, kind=t.kind,
-                    image=t.image, env=env, ports=[PortMap(host=int(port), container=t.container_port)],
-                    volumes=volumes, gpu=gpu, autostart=bool(a.get("autostart")), open_path=t.open_path)
+                    image=t.image, command=list(t.command), env=env,
+                    ports=[PortMap(host=int(port), container=t.container_port)], volumes=volumes, gpu=gpu,
+                    autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key)
     return inst, _first_model(t, a, m)
+
+
+def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
+    """The chat model server an app installs alongside itself when asked to (server = "new"),
+    built from the answers' models folder and model file, with its catalogue (and API key). Adds it
+    to the machine, so the app's own build connects to it."""
+    if str(a.get("server", "")) != NEW_SERVER:
+        return None
+    t = get(BUNDLED_SERVER)
+    d = defaults(t, m, str(a.get("models_dir", "")), appdata_root)
+    if str(a.get("port", "")) == str(d["port"]):
+        taken = {p.host for i in m.instances.values() for p in i.ports} | {d["port"]}
+        d["port"] = free_port(d["port"], taken)
+    if str(a.get("id", "")) == d["id"]:
+        d["id"] = free_id(d["id"], set(m.instances) | {d["id"]})
+    d |= {"file": str(a.get("file", "")), "gpu": t.gpu}
+    srv, model = build(t, d, m)
+    cat = Catalog(instance_id=srv.id, models=[model] if model else [])
+    m.instances[srv.id] = srv
+    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name,
+                         "default_model": t.first_model.alias if model else ""}
+    return srv, cat
+
+
+def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
+    """Files to write into a new app's data folder (subfolder/path -> text), if they don't exist yet."""
+    server = str(a.get("server", "")).strip()
+    if t.connects != "hermes" or not server or server not in m.servers:
+        return {}
+    info = m.servers[server]
+    lines = ["# Written by GPU Shepherd when Hermes Agent was installed. Hermes owns this file now:",
+             "# change the model with `hermes model` or in its dashboard.",
+             "model:", "  provider: custom", f"  base_url: {_server_url(server, m)}",
+             f"  api_key: {info['api_key']}"]
+    if info.get("default_model"):
+        lines.append(f"  default: {info['default_model']}")
+    return {"data/config.yaml": "\n".join(lines) + "\n"}
 
 
 def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
@@ -252,15 +339,44 @@ def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
     raise ConfigError(f"unknown GPU choice '{choice}'")
 
 
-def _connections(a: dict, m: Machine) -> dict[str, str]:
-    env: dict[str, str] = {}
+def _server(a: dict, m: Machine) -> str:
     server = str(a.get("server", "")).strip()
+    if server == NEW_SERVER:
+        raise ConfigError("the new model server has not been set up yet")
+    if server and (server not in m.servers or server not in m.instances):
+        raise ConfigError(f"no model server '{server}'")
+    return server
+
+
+def _server_url(server: str, m: Machine) -> str:
+    ports = m.instances[server].ports
+    return f"http://{server}:{ports[0].container if ports else 8080}/v1"
+
+
+def _hermes(a: dict, m: Machine) -> dict[str, str]:
+    env: dict[str, str] = {}
+    server = _server(a, m)
     if server:
-        if server not in m.servers or server not in m.instances:
-            raise ConfigError(f"no model server '{server}'")
         info = m.servers[server]
-        port = m.instances[server].ports[0].container if m.instances[server].ports else 8080
-        env |= {"OPENAI_API_BASE_URLS": f"http://{server}:{port}/v1", "OPENAI_API_KEYS": info["api_key"]}
+        env |= {"OPENAI_BASE_URL": _server_url(server, m), "OPENAI_API_KEY": info["api_key"]}
+        if info.get("default_model"):
+            env["HERMES_MODEL"] = info["default_model"]
+    hass_url, hass_token = str(a.get("hass_url", "")).strip(), str(a.get("hass_token", "")).strip()
+    if hass_url and not re.match(r"^https?://\S+$", hass_url):
+        raise ConfigError("Home Assistant address: enter a URL like http://homeassistant.local:8123")
+    if hass_token:
+        env |= {"HASS_TOKEN": hass_token, "HASS_URL": hass_url or "http://homeassistant.local:8123"}
+    elif hass_url:
+        raise ConfigError("Home Assistant: also paste a long-lived access token, or clear the address")
+    return env
+
+
+def _openwebui(a: dict, m: Machine) -> dict[str, str]:
+    env: dict[str, str] = {}
+    server = _server(a, m)
+    if server:
+        info = m.servers[server]
+        env |= {"OPENAI_API_BASE_URLS": _server_url(server, m), "OPENAI_API_KEYS": info["api_key"]}
         if info.get("default_model"):
             env["DEFAULT_MODELS"] = info["default_model"]
     comfy = str(a.get("comfyui", "")).strip()

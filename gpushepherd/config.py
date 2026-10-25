@@ -126,6 +126,7 @@ class Instance(BaseModel):
     user: str | None = None           # e.g. "1000:1000"
     memory_limit: str | None = None   # e.g. "4g"
     drain: DrainPolicy = DrainPolicy()  # wait for running work before stopping
+    app: str = ""                     # the App Store app it was installed from, if any
 
     @field_validator("id")
     @classmethod

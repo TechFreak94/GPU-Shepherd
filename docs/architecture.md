@@ -9,7 +9,7 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
                       │     ├─ gpu.py         nvidia-smi
                       │     ├─ backend.py     DockerBackend (docker SDK) / FakeBackend
                       │     └─ connectors/llamaswap.py   render config, talk to llama-swap
-                      ├─ instance_templates.py   built-in templates for guided setup (pure)
+                      ├─ instance_templates.py   the App Store's apps and what they build (pure)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
                       ├─ auth.py       scrypt password hashing, first-run password

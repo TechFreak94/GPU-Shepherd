@@ -150,6 +150,27 @@ form.guided{counter-reset:step}
 .step::before{counter-increment:step;content:counter(step)}
 .step{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;
 background:var(--accent);color:var(--accent-fg);font-size:12px;margin-right:6px;letter-spacing:0}
+/* App Store */
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px}
+.grid.templates{grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+main a.chip,main a.mode{text-decoration:none}
+.chip{display:inline-block;padding:4px 12px;border-radius:999px;border:1px solid var(--btn-line);background:var(--btn);color:var(--fg);font-size:13px;text-decoration:none}
+main a.chip:hover{background:var(--btn-hover);color:var(--fg)}
+main a.chip[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.card.app{display:flex;flex-direction:column;gap:8px}
+.card.app>.btns{margin-top:auto;padding-top:4px}
+.card.app h2{margin:0}
+.app-head{display:flex;gap:12px;align-items:center}
+.app-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;
+font:700 14px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#fff;background:#5f6772}
+.app-icon.model-servers{background:#2f6fde}.app-icon.chat-and-agents{background:#1f8a5b}
+.app-icon.image-and-video{background:#b5527a}.app-icon.advanced{background:#6b6f78}
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:0 0 16px}
+.mode{display:block;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);text-decoration:none}
+main a.mode:hover{border-color:var(--accent);color:var(--fg)}
+.mode[aria-current=page]{border-color:var(--accent);box-shadow:0 0 0 3px var(--hl)}
+.mode strong{display:block;font-size:14px}.mode span{font-size:12px;color:var(--muted)}
+.subsection{margin-top:12px;padding:12px 14px;border-left:3px solid var(--accent);background:var(--hl);border-radius:0 8px 8px 0}
 fieldset.choices{border:0;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:6px}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* version, update progress and changelog */

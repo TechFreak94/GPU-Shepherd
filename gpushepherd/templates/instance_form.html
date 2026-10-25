@@ -1,16 +1,18 @@
 {% extends "base.html" %}
-{% block title %}{{ "Edit " ~ f.name if editing else "Add instance" }} · GPU Shepherd{% endblock %}
+{% block title %}{{ "Edit " ~ f.name if editing else ("Install " ~ app_t.title if app_t else "Add instance") }} · GPU Shepherd{% endblock %}
 {% block content %}
 <div id="editor">
 <div class="pagehead">
-  <div><h1>{{ "Edit " ~ f.name if editing else ("Add model server" if f.kind == "llama-swap" else "Add instance") }}</h1>
-  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.{% if not editing %} Prefer a few questions instead? <a href="/instances/new">Start from a template</a>.{% endif %}</div></div>
-  <a class="btn" href="{{ '/' if editing else '/instances/new' }}">Back</a>
+  <div><h1>{% if editing %}Edit {{ f.name }}{% elif app_t %}Install {{ app_t.title }}{% else %}{{ "Add model server" if f.kind == "llama-swap" else "Add instance" }}{% endif %}</h1>
+  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.{% if not editing and not app_t %} Prefer a few questions instead? <a href="/apps">Pick an app in the App Store</a>.{% endif %}</div></div>
+  <a class="btn" href="{{ '/' if editing else ('/apps/' ~ app_t.key if app_t else '/apps') }}">Back</a>
 </div>
+{% if app_t %}{% with manual = True %}{% include "partials/install_mode.html" %}{% endwith %}{% endif %}
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
 <form hx-post="/instances/save" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
   <input type="hidden" name="editing" value="{{ '1' if editing else '0' }}">
   <input type="hidden" name="kind" value="{{ f.kind or 'container' }}">
+  <input type="hidden" name="app" value="{{ f.app or '' }}">
 
   <div class="section">
     <h3 style="margin-top:0">Basics</h3>
@@ -120,7 +122,7 @@
     {% if editing %}<button type="button" class="danger" hx-post="/instances/{{ f.id }}/delete"
       hx-confirm="Delete {{ f.name }}? Its container is removed; folders on disk are kept.">Delete</button>{% endif %}
     <a class="btn" href="/">Cancel</a>
-    <button class="primary" type="submit">Save</button>
+    <button class="primary" type="submit">{{ "Install " ~ app_t.title if app_t else "Save" }}</button>
   </div>
 </form>
 </div>

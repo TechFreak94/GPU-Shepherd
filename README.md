@@ -19,12 +19,13 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
-- **Guided setup**: *Add instance* starts from a template (chat or coding model server, ComfyUI,
-  Open WebUI) and asks only what it can't work out. It picks a free ID and port, mounts the right
-  folders, connects Open WebUI to your model server and decides whether a model needs system RAM.
-  *Any Docker image* opens the full form instead.
+- **App Store**: install a chat or coding model server, Open WebUI, Hermes Agent or ComfyUI.
+  **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
+  folders, connects chat and agent apps to your model server (or installs one alongside them) and
+  decides whether a model needs system RAM. **Manual** opens every field instead, filled in with
+  the same defaults, and *Any Docker image* covers apps that aren't listed.
 
-  ![Templates](docs/screenshots/templates.png)
+  ![App Store](docs/screenshots/app-store.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
   forms. One compact card per instance with Start / Stop / Restart / Open / Logs, showing its
   state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
@@ -116,7 +117,7 @@ creates. To pick model files in the UI, mount your model folders the same way (r
 ### First login
 
 Open `http://<server>:8090` and log in as `admin` with the password the installer printed (also in
-`INITIAL_PASSWORD.txt` in the data folder). Then **Add instance**.
+`INITIAL_PASSWORD.txt` in the data folder). Then open the **App Store**.
 
 Lost the password? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one.
 It works at once, no restart needed.

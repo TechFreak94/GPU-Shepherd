@@ -50,8 +50,8 @@ class Engine:
         return self.store.settings().container_prefix + iid
 
     def config_hash(self, inst: Instance) -> str:
-        # the drain policy only matters to GPU Shepherd, so changing it needs no restart
-        data = inst.model_dump(mode="json", exclude={"drain"})
+        # the drain policy and the app it came from only matter to GPU Shepherd: no restart for those
+        data = inst.model_dump(mode="json", exclude={"drain", "app"})
         if inst.kind == "llama-swap":
             data["_catalog"] = self.store.catalog(inst.id).model_dump(mode="json")
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:12]
