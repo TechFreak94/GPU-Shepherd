@@ -1,4 +1,5 @@
 """End-to-end UI flows against the in-memory backend and fake GPUs."""
+import re
 import shutil
 import time
 from pathlib import Path
@@ -332,16 +333,18 @@ def test_login_without_cookie_explains(stack):
 def test_guided_setup(stack, tmp_path_factory):
     app, client, backend, data = stack
     login(client)
-    page = client.get("/instances/new").text
-    for key in ("llm-chat", "llm-coder", "comfyui", "open-webui", "custom"):
-        assert f'href="/instances/new/{key}' in page
-    # old "Add model server" links still reach the full form
+    page = client.get("/instances/new").text            # the old address opens the App Store
+    for key in ("llm-chat", "llm-coder", "comfyui", "open-webui", "hermes"):
+        assert f'href="/apps/{key}"' in page and f'href="/apps/{key}?mode=manual"' in page
+    assert 'href="/instances/new/custom"' in page
+    # old "Add model server" and template links still work
     assert 'name="kind" value="llama-swap"' in client.get("/instances/new?kind=llama-swap").text
+    assert "Install Coding model server" in client.get("/instances/new/llm-coder").text
 
     models = tmp_path_factory.mktemp("models")
     with open(models / "Big-MoE-Q4.gguf", "wb") as fh:
         fh.truncate(10 * 1_073_741_824)                   # sparse: 10 GB on two 8 GB GPUs
-    form = client.get("/instances/new/llm-coder").text
+    form = client.get("/apps/llm-coder").text
     assert 'value="coder"' in form and 'value="8081"' in form and 'value="/srv/models"' in form
 
     answers = {"template": "llm-coder", "name": "Coder", "id": "coder", "port": "8081", "gpu": "all",
@@ -376,6 +379,75 @@ def test_guided_setup(stack, tmp_path_factory):
     assert r.status_code == 200 and 'action="/instances/save"' not in r.text
     assert 'hx-post="/instances/save"' in r.text and "8189:8188" in r.text and "yanwk/comfyui-boot" in r.text
     assert not (data / "instances" / "comfyui-2.yaml").exists()
+
+
+def test_app_store(stack):
+    app, client, backend, data = stack
+    login(client)
+    page = client.get("/apps").text
+    assert "App Store" in page and 'data-filter="chat-and-agents"' in page
+    # the example stack already has Open WebUI, ComfyUI, Hermes and a chat model server
+    for key in ("open-webui", "comfyui", "hermes", "llm-chat"):
+        card = page.split(f'id="app-{key}"')[1].split("</article>")[0]
+        assert "1 installed" in card and "Install another" in card, key
+    assert "installed" not in page.split('id="app-llm-coder"')[1].split("</article>")[0]
+
+    # automatic and manual are two ways into the same app
+    auto = client.get("/apps/hermes").text
+    assert 'href="/apps/hermes?mode=manual"' in auto and 'aria-current="page"' in auto
+    assert 'name="password"' in auto and 'name="hass_token"' in auto
+    manual = client.get("/apps/hermes?mode=manual").text
+    assert 'hx-post="/instances/save"' in manual and "Install Hermes Agent" in manual
+    assert "nousresearch/hermes-agent:latest" in manual and "hermes-2" in manual and "gateway run" in manual
+    assert "OPENAI_BASE_URL=http://llm:8080/v1" in manual and 'name="app" value="hermes"' in manual
+    assert client.get("/apps/nope", follow_redirects=False).status_code == 303
+
+    # installing by hand keeps which app it is
+    form = {"editing": "0", "kind": "container", "app": "comfyui", "id": "comfy-b", "name": "ComfyUI B",
+            "image": "yanwk/comfyui-boot:cu130-slim-v2", "ports": "8190:8188", "gpu_mode": "none",
+            "volumes": f"{data}/appdata/comfy-b/output:/root/ComfyUI/output"}
+    assert client.post("/instances/save", headers=HX, data=form).status_code == 204
+    assert yaml.safe_load((data / "instances" / "comfy-b.yaml").read_text())["app"] == "comfyui"
+    assert (data / "appdata" / "comfy-b" / "output").is_dir()
+    assert "2 installed" in client.get("/apps").text.split('id="app-comfyui"')[1].split("</article>")[0]
+
+
+def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
+    """Hermes on a machine without a model server: the server comes with it, and Hermes is wired to it."""
+    app, client, backend, data = stack
+    login(client)
+    for f in (data / "instances").glob("*.yaml"):
+        f.unlink()
+    models = tmp_path_factory.mktemp("models")
+    (models / "Qwen3-8B-Q4.gguf").write_bytes(b"gguf")
+    page = client.get("/apps/hermes").text
+    assert 'value="new" selected' in page and 'data-server="new"' in page
+
+    answers = {"template": "hermes", "name": "Hermes", "id": "hermes", "port": "9119", "gpu": "none",
+               "appdata_dir": str(data / "appdata" / "hermes"), "server": "new", "models_dir": str(models),
+               "file": "/models/Qwen3-8B-Q4.gguf", "login_user": "admin", "password": "short",
+               "hass_url": "http://ha.lan:8123", "hass_token": "tok", "action": "create"}
+    r = client.post("/instances/guided", headers=HX, data=answers)
+    assert "at least 8 characters" in r.text and not (data / "instances" / "llm.yaml").exists()
+    assert "A new chat model server" in r.text           # no half-made server in the list
+
+    r = client.post("/instances/guided", headers=HX, data=answers | {"password": "long-enough-pw"})
+    assert r.status_code == 204, re.findall(r"error-box.*?</div>", r.text)
+    assert "Installed Hermes and LLM server" in r.headers["HX-Redirect"]
+    srv = yaml.safe_load((data / "instances" / "llm.yaml").read_text())
+    cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
+    assert srv["kind"] == "llama-swap" and srv["app"] == "llm-chat" and srv["ports"][0]["host"] == 8080
+    assert cat["models"][0]["file"] == "/models/Qwen3-8B-Q4.gguf" and cat["models"][0]["aliases"] == ["chat"]
+    hermes = yaml.safe_load((data / "instances" / "hermes.yaml").read_text())
+    assert hermes["command"] == ["gateway", "run"] and hermes["app"] == "hermes"
+    env = hermes["env"]
+    assert env["OPENAI_BASE_URL"] == "http://llm:8080/v1" and env["OPENAI_API_KEY"] == cat["api_key"]
+    assert env["HERMES_MODEL"] == "chat" and env["HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"] == "long-enough-pw"
+    assert env["HASS_URL"] == "http://ha.lan:8123" and env["HASS_TOKEN"] == "tok"
+    config = (data / "appdata" / "hermes" / "data" / "config.yaml")
+    assert yaml.safe_load(config.read_text())["model"] == {
+        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat"}
+    assert config.stat().st_mode & 0o777 == 0o600
 
 
 def test_swap_waits_for_running_work(stack):

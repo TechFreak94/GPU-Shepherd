@@ -94,8 +94,21 @@
     if (del) { e.preventDefault(); del.closest(".autorow").remove(); }
   });
 
-  // show only the fields that fit the chosen GPU mode and busy check
-  const toggles = { gpu_mode: "gpuMode", drain_check: "drainCheck" };
+  // App Store: the category chips show one category at a time (the links still jump there without JS)
+  function filterApps(group) {
+    document.querySelectorAll("#apps [data-group]").forEach((el) => { el.hidden = !!group && el.dataset.group !== group; });
+    document.querySelectorAll("[data-filter]").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.filter === group)));
+  }
+  document.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-filter]");
+    if (!chip) return;
+    e.preventDefault();
+    filterApps(chip.dataset.filter);
+  });
+  document.addEventListener("DOMContentLoaded", () => { if (document.getElementById("apps")) filterApps(""); });
+
+  // show only the fields that fit the chosen GPU mode, busy check and model server
+  const toggles = { gpu_mode: "gpuMode", drain_check: "drainCheck", server: "server" };
   function sync() {
     Object.entries(toggles).forEach(([name, key]) => {
       const sel = document.querySelector("[name=" + name + "]");

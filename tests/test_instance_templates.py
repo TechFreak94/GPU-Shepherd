@@ -16,7 +16,9 @@ def test_templates_are_generic_and_valid():
     m = machine()
     for t in tpl.TEMPLATES:
         f = tpl.defaults(t, m, "/srv/models", "/opt/gpu-shepherd/appdata")
-        inst, _ = tpl.build(t, f, m)
+        assert f["server"] == (tpl.NEW_SERVER if t.connects else "")   # no server yet: offer to install one
+        inst, _ = tpl.build(t, f | {"server": ""}, m)
+        assert inst.app == t.key and tpl.matches(t, inst)
         assert inst.id == t.default_id and inst.ports[0].host == t.host_port
         assert all(v.host.startswith("/") for v in inst.volumes)
 
@@ -92,3 +94,50 @@ def test_bad_answers():
                      ({"file": "/models/a.gguf", "ctx_size": "lots"}, "Context")):
         with pytest.raises(ConfigError, match=msg):
             tpl.build(t, f | bad, m)
+
+
+def test_hermes():
+    llm = Instance(id="llm", name="LLM", image="x", kind="llama-swap", ports=[PortMap(host=8090, container=8080)])
+    m = machine(instances={"llm": llm}, servers={"llm": {"api_key": "sk-abc", "name": "LLM", "default_model": "coder"}})
+    t = tpl.get("hermes")
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["server"] == "llm" and f["login_user"] == "admin" and len(f["password"]) >= 12
+    inst, _ = tpl.build(t, f, m)
+    assert inst.command == ["gateway", "run"] and inst.ports[0].container == 9119 and inst.gpu.mode == "none"
+    assert {v.container: v.host for v in inst.volumes} == {"/opt/data": "/a/hermes/data"}
+    assert inst.env["OPENAI_BASE_URL"] == "http://llm:8080/v1" and inst.env["HERMES_MODEL"] == "coder"
+    assert inst.env["HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"] == f["password"] and "HASS_TOKEN" not in inst.env
+    seed = tpl.seed_files(t, f, m)["data/config.yaml"]
+    assert "provider: custom" in seed and "base_url: http://llm:8080/v1" in seed and "default: coder" in seed
+    assert tpl.seed_files(t, f | {"server": ""}, m) == {} and tpl.seed_files(tpl.get("open-webui"), f, m) == {}
+    for bad, msg in (({"password": "short"}, "8 characters"), ({"hass_url": "ha.lan"}, "Home Assistant address"),
+                     ({"hass_url": "http://ha.lan:8123"}, "token")):
+        with pytest.raises(ConfigError, match=msg):
+            tpl.build(t, f | bad, m)
+    assert tpl.build(t, f | {"hass_token": "t"}, m)[0].env["HASS_URL"] == "http://homeassistant.local:8123"
+
+
+def test_bundled_server():
+    webui = Instance(id="webui", name="Chat UI", image="ghcr.io/open-webui/open-webui:main",
+                     ports=[PortMap(host=8080, container=8080)])
+    m = machine(instances={"webui": webui})
+    t = tpl.get("open-webui")
+    f = tpl.defaults(t, m, "/srv/models", "/a") | {"id": "llm", "port": "3000", "file": "Qwen3-8B.gguf"}
+    assert tpl.bundled_server(f | {"server": ""}, m, "/a") is None
+    srv, cat = tpl.bundled_server(f, m, "/a")
+    assert srv.id == "llm-2" and srv.ports[0].host == 8081 and srv.kind == "llama-swap" and srv.app == "llm-chat"
+    assert cat.instance_id == "llm-2" and cat.models[0].file == "/models/Qwen3-8B.gguf"
+    env = tpl.build(t, f | {"server": srv.id}, m)[0].env
+    assert env["OPENAI_API_BASE_URLS"] == "http://llm-2:8080/v1" and env["OPENAI_API_KEYS"] == cat.api_key
+    assert env["DEFAULT_MODELS"] == "chat"
+    with pytest.raises(ConfigError, match="not been set up"):
+        tpl.build(t, f, m)
+
+
+def test_installed_counts_older_instances():
+    old = {"a": Instance(id="a", name="A", image="yanwk/comfyui-boot:cu128"),
+           "b": Instance(id="b", name="B", image="x", kind="llama-swap", description="my server"),
+           "c": Instance(id="c", name="C", image="x", kind="llama-swap", description="llama-swap model server (coding)"),
+           "d": Instance(id="d", name="D", image="x", app="hermes")}
+    got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
+    assert got == {"llm-chat": ["b"], "llm-coder": ["c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"]}

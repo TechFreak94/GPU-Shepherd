@@ -1,8 +1,8 @@
 # Instance and model options
 
-Every option you can set in the editors, what it does, and the key it is saved under. Templates
-(*Add instance*) fill most of these in for you; open an instance's **Edit** page, or choose
-*Customize every field* while adding one, to change them.
+Every option you can set in the editors, what it does, and the key it is saved under. The App
+Store's automatic setup fills most of these in for you; open an instance's **Edit** page, or
+choose *Manual configuration* (or *Customize every field*) while installing one, to change them.
 
 Instances are saved to `instances/<id>.yaml` in the data folder, model servers' model lists to
 `catalogs/<id>.yaml`. Changes take effect the next time the instance starts or restarts.
@@ -10,7 +10,7 @@ Instances are saved to `instances/<id>.yaml` in the data folder, model servers' 
 - [Instances](#instances): basics, GPUs, network and storage, command, behaviour, before stopping
 - [Model servers](#model-servers): models, GPU and system RAM, auto names, server settings
 - [Settings](#settings)
-- [What templates fill in](#what-templates-fill-in)
+- [What App Store apps fill in](#what-app-store-apps-fill-in)
 
 ## Instances
 
@@ -22,7 +22,8 @@ Instances are saved to `instances/<id>.yaml` in the data folder, model servers' 
 | ID | `id` | Lowercase letters, digits and dashes, at most 40. Names the file and the container (`shepherd-<id>`), and is the host name other instances use to reach it (`http://<id>:<port>`). Can't be changed after creation. |
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
-| - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the template or the *Add model server* link. |
+| - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
+| - | `app` | The App Store app it was installed from (`llm-chat`, `hermes`...), for the store's *installed* count. Changing it needs no restart. |
 
 ### GPUs
 
@@ -213,11 +214,12 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
 
-## What templates fill in
+## What App Store apps fill in
 
-*Add instance* starts from a template and asks only what it can't work out. What it creates is an
-ordinary instance (plus, for model servers, a first model), so every field above can be changed
-afterwards.
+Each app in the App Store can be installed two ways. **Install** (automatic setup) asks only what
+it can't work out. **Manual** opens the full form, filled in with the same defaults, so you can
+change anything before it is saved. Either way the result is an ordinary instance (plus, for model
+servers, a first model), so every field above can be changed afterwards.
 
 | Template | GPUs | Fills in |
 |---|---|---|
@@ -225,8 +227,13 @@ afterwards.
 | Coding model server | every free GPU | the same, with the name `coder`, 64K context and lower temperature |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one |
+| Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
 
-It also picks a free ID and port. The GPU question can pin an instance to one GPU instead (a fixed
+Open WebUI and Hermes Agent can also install a new chat model server alongside themselves
+(*A new chat model server, installed with it*), with a model file you pick from the models folder.
+It is offered first when there is no model server yet.
+
+Automatic setup also picks a free ID and port. The GPU question can pin an instance to one GPU instead (a fixed
 policy).
 
 For the first model, *Decide from the file size* keeps the model on the GPUs for each GPU count
@@ -234,4 +241,4 @@ where it fits (file size plus 20% for the KV cache and buffers, against the smal
 memory) and moves all MoE expert layers to RAM where it doesn't. Fine-tune it afterwards on the
 model's edit page.
 
-*Any Docker image* skips the questions and opens the full form.
+*Any Docker image* skips the questions and opens an empty form, for apps the App Store doesn't list.

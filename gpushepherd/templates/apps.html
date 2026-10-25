@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}App Store · GPU Shepherd{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div><h1>App Store</h1>
+  <div class="small muted">Install a model server, a chat or agent UI, or an image app. <strong>Install</strong> asks a few questions and sets up the rest; <strong>Manual</strong> opens every field, filled in with the same defaults.</div></div>
+  <a class="btn" href="/">Back</a>
+</div>
+<nav class="filters" aria-label="Categories">
+  <a class="chip" href="#apps" data-filter="">All</a>
+  {% for group, items in groups %}<a class="chip" href="#{{ group|lower|replace(' ', '-') }}" data-filter="{{ group|lower|replace(' ', '-') }}">{{ group }}</a>{% endfor %}
+  <a class="chip" href="#advanced" data-filter="advanced">Advanced</a>
+</nav>
+<div id="apps">
+{% for group, items in groups %}
+{% set gid = group|lower|replace(' ', '-') %}
+<section data-group="{{ gid }}">
+<h3 id="{{ gid }}">{{ group }}</h3>
+<div class="grid templates">
+  {% for t in items %}
+  {% set have = installed[t.key] %}
+  <article class="card template app" aria-labelledby="app-{{ t.key }}">
+    <div class="app-head">
+      <span class="app-icon {{ gid }}" aria-hidden="true">{{ t.badge }}</span>
+      <div><h2 id="app-{{ t.key }}">{{ t.title }}</h2>
+        <div class="small muted">{{ "Every free GPU" if t.gpu == "all" else gpu_choices[t.gpu] }}{% if have %} · <span class="tag accent" title="{{ have|map(attribute='name')|join(', ') }}">{{ have|length }} installed</span>{% endif %}</div></div>
+    </div>
+    <p class="sub">{{ t.blurb }}</p>
+    <ul class="points">{% for p in t.points %}<li>{{ p }}</li>{% endfor %}</ul>
+    <div class="small muted">Needs: {{ t.needs }}{% if t.docs %} · <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}</div>
+    <div class="btns">
+      <a class="btn primary" href="/apps/{{ t.key }}">{{ "Install another" if have else "Install" }}</a>
+      <a class="btn" href="/apps/{{ t.key }}?mode=manual" title="Every field by hand, filled in with this app's defaults">Manual</a>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+</section>
+{% endfor %}
+<section data-group="advanced">
+<h3 id="advanced">Advanced</h3>
+<div class="grid templates">
+  <article class="card template app">
+    <div class="app-head"><span class="app-icon advanced" aria-hidden="true">D</span><h2>Any Docker image</h2></div>
+    <p class="sub">An app that isn't listed: image, ports, folders, environment, command, GPU policy and limits, all by hand.</p>
+    <div class="btns"><a class="btn" href="/instances/new/custom">Fill in every field</a></div>
+  </article>
+  <article class="card template app">
+    <div class="app-head"><span class="app-icon advanced" aria-hidden="true">M</span><h2>Model server, by hand</h2></div>
+    <p class="sub">A llama-swap server with every field open. Add its models on the Models page afterwards.</p>
+    <div class="btns"><a class="btn" href="/instances/new/custom?kind=llama-swap">Fill in every field</a></div>
+  </article>
+</div>
+</section>
+</div>
+{% endblock %}
