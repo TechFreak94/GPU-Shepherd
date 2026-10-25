@@ -4,6 +4,12 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.3 - 2026-10-25
+
+- New App Store: install model servers, Open WebUI, Hermes Agent and ComfyUI with automatic setup, or open every field with manual configuration (#17)
+- Hermes Agent can be installed from the App Store, connected to your model server and optionally Home Assistant (#17)
+- Open WebUI and Hermes Agent can install a chat model server alongside themselves (#17)
+
 ## 0.12.2 - 2026-10-25
 
 - Every detail on an instance card has its own ⓘ tooltip again, and the Advanced details section is back. (#16)
