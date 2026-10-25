@@ -95,7 +95,7 @@ TEMPLATES: tuple[Template, ...] = (
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
-        needs="Nothing special", docs="https://docs.openwebui.com"),
+        needs="An LLM server to chat with", docs="https://docs.openwebui.com"),
     Template(
         key="hermes", badge="H", title="Hermes Agent", group="Chat and agents",
         blurb="An AI agent by Nous Research with memory, skills and scheduled tasks, thinking with your own model server.",

@@ -8,6 +8,7 @@
   <a class="btn" href="{{ '/' if editing else ('/apps/' ~ app_t.key if app_t else '/apps') }}">Back</a>
 </div>
 {% if app_t %}{% with manual = True %}{% include "partials/install_mode.html" %}{% endwith %}{% endif %}
+{% if no_server %}{% with need = app_t, manual = True %}{% include "partials/needs_server.html" %}{% endwith %}{% endif %}
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
 <form hx-post="/instances/save" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
   <input type="hidden" name="editing" value="{{ '1' if editing else '0' }}">
