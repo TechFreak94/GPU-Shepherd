@@ -1,9 +1,14 @@
-:root{--bg:#f5f6f8;--card:#fff;--fg:#1b1e23;--muted:#5f6772;--line:#e1e4e9;--accent:#2f6fde;--accent-fg:#fff;
+:root{color-scheme:light;--bg:#f5f6f8;--card:#fff;--fg:#1b1e23;--muted:#5f6772;--line:#e1e4e9;--accent:#2f6fde;--accent-fg:#fff;
 --accent-hover:#2258b8;--ok:#1d8048;--warn:#9a6410;--bad:#c22f2f;--bar:#e7eaef;--field:#fff;--shadow:0 1px 2px rgba(0,0,0,.04);
 --btn:#eef1f5;--btn-hover:#e1e6ed;--btn-line:#c9d0da;--ok-soft:#e3f3ea;--off-soft:#eceef1;--hl:#eaf1fd}
-@media (prefers-color-scheme:dark){:root{--bg:#111316;--card:#1a1d22;--fg:#e6e8eb;--muted:#9aa1ab;--line:#2b2f37;
+/* dark follows the system unless the theme was picked by hand (data-theme on <html>, from the theme cookie) */
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#111316;--card:#1a1d22;--fg:#e6e8eb;--muted:#9aa1ab;--line:#2b2f37;
 --accent:#6d9dff;--accent-fg:#0b1020;--accent-hover:#8fb3ff;--ok:#4cc38a;--warn:#e0a84a;--bad:#f07272;--bar:#292d35;
 --field:#14171b;--shadow:none;--btn:#262a31;--btn-hover:#30353e;--btn-line:#3c424c;--ok-soft:#17311f;--off-soft:#23272d;--hl:#1b2638}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#111316;--card:#1a1d22;--fg:#e6e8eb;--muted:#9aa1ab;--line:#2b2f37;
+--accent:#6d9dff;--accent-fg:#0b1020;--accent-hover:#8fb3ff;--ok:#4cc38a;--warn:#e0a84a;--bad:#f07272;--bar:#292d35;
+--field:#14171b;--shadow:none;--btn:#262a31;--btn-hover:#30353e;--btn-line:#3c424c;--ok-soft:#17311f;--off-soft:#23272d;--hl:#1b2638}
+:root[data-theme=light]{color-scheme:light}
 *{box-sizing:border-box}
 [hidden]{display:none !important}
 html{-webkit-text-size-adjust:100%}
@@ -198,3 +203,9 @@ pre.log-tail{max-height:220px;margin:8px 0 0}
 .release{margin:0 0 14px}.release h4{margin:0 0 4px;font-size:14px}
 .release ul{margin:0;padding-left:18px;font-size:13px}.release li{margin:3px 0}
 .changes .release{margin-bottom:10px}
+/* theme picker: header button and the Settings choice */
+nav button.theme{display:inline-flex;padding:4px 2px}
+nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;display:none}
+:root:not([data-theme]) .t-system,:root[data-theme=light] .t-light,:root[data-theme=dark] .t-dark{display:block !important}
+.themes{display:flex;gap:6px;flex-wrap:wrap}
+.themes button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}

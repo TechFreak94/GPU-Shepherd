@@ -119,6 +119,27 @@
   });
   document.addEventListener("DOMContentLoaded", () => { if (document.getElementById("apps")) filterApps(""); });
 
+  // theme: System (no cookie), Light or Dark. A cookie, so the server draws every page in it without a flash.
+  const THEMES = { "": "System", light: "Light", dark: "Dark" };
+  const ORDER = ["", "light", "dark"];
+  function setTheme(t) {
+    const root = document.documentElement;
+    if (t) root.dataset.theme = t; else delete root.dataset.theme;
+    document.cookie = "theme=" + t + "; path=/; SameSite=Strict; max-age=" + (t ? 400 * 24 * 3600 : 0);
+    document.querySelectorAll("[data-theme-toggle]").forEach((b) => {
+      b.title = "Theme: " + THEMES[t] + " (click to change)";
+      b.setAttribute("aria-label", "Theme: " + THEMES[t]);
+    });
+    document.querySelectorAll("[data-theme-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeSet === t)));
+  }
+  document.addEventListener("click", (e) => {
+    const set = e.target.closest("[data-theme-set]");
+    if (set) return setTheme(set.dataset.themeSet);
+    if (!e.target.closest("[data-theme-toggle]")) return;
+    const now = document.documentElement.dataset.theme || "";
+    setTheme(ORDER[(ORDER.indexOf(now) + 1) % ORDER.length]);
+  });
+
   // show only the fields that fit the chosen GPU mode, busy check and model server
   const toggles = { gpu_mode: "gpuMode", drain_check: "drainCheck", server: "server" };
   function sync() {

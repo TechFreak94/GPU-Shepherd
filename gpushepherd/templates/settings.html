@@ -14,6 +14,18 @@
   <div class="actions"><button class="primary" type="submit">Change password</button></div>
 </form>
 
+<h3>Appearance</h3>
+<div class="card">
+  <strong>Theme</strong>
+  <p class="small muted" style="margin-top:4px">System follows your device's light or dark setting. The choice is saved in this browser;
+    the theme button next to Settings at the top of every page switches it too.</p>
+  <div class="themes" role="group" aria-label="Theme">
+    {% for key, label in [("", "System"), ("light", "Light"), ("dark", "Dark")] %}
+    <button type="button" data-theme-set="{{ key }}" aria-pressed="{{ 'true' if theme == key else 'false' }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+</div>
+
 <h3>Containers</h3>
 <form class="card" hx-post="/settings/general">
   <div class="fields">

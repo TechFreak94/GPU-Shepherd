@@ -211,6 +211,7 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | Password | `password_hash` | Change it on the Settings page. Lost it? See [CLI and scripts](cli.md#reset-the-password). |
 | Publish ports on | `bind_address` | `0.0.0.0` = your whole network, `127.0.0.1` = this machine only. |
 | Docker network | `network` | The network every instance joins. |
+| Theme | - | System (follows your device), Light or Dark. Saved per browser in a `theme` cookie, not in `settings.yaml`. The theme button at the top of every page cycles through them. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
 

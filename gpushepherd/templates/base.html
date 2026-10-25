@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"{% if theme %} data-theme="{{ theme }}"{% endif %}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -16,15 +16,21 @@
     <a class="brand" href="/">GPU Shepherd</a>
     {% if user %}<button class="link version" hx-get="/ui/update" hx-target="#modal-body" title="Version, check for updates, what's new">v{{ version }}</button>{% endif %}
     {% if demo %}<span class="tag warn">demo mode - nothing real is started</span>{% endif %}
-    {% if user %}
     <nav>
+      {% if user %}
       {% set here = request.url.path %}
       <a href="/"{% if here == "/" %} aria-current="page"{% endif %}>Dashboard</a>
       <a href="/apps"{% if here.startswith("/apps") or here.startswith("/instances/new") %} aria-current="page"{% endif %}>App Store</a>
       <a href="/settings"{% if here == "/settings" %} aria-current="page"{% endif %}>Settings</a>
-      <button class="link" hx-post="/logout" title="Log out of GPU Shepherd">Log out</button>
+      {% endif %}
+      {% set tlabel = {"light": "Light", "dark": "Dark"}.get(theme, "System") %}
+      <button class="link theme" type="button" data-theme-toggle title="Theme: {{ tlabel }} (click to change)" aria-label="Theme: {{ tlabel }}">
+        <svg class="t-system" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+        <svg class="t-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>
+        <svg class="t-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></svg>
+      </button>
+      {% if user %}<button class="link" hx-post="/logout" title="Log out of GPU Shepherd">Log out</button>{% endif %}
     </nav>
-    {% endif %}
   </div>
 </header>
 <main class="wrap">

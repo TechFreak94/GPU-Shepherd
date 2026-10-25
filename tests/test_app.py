@@ -563,3 +563,16 @@ def test_drain_settings_in_the_editor(stack):
                               "timeout": 1800, "on_timeout": "cancel"}
     r = client.post("/instances/save", headers=HX, data={**fields, "drain_path": ""})
     assert "needs a path" in r.text
+
+
+def test_theme_cookie(stack):
+    _, client, _, _ = stack
+    page = client.get("/login")
+    assert "data-theme=" not in page.text.split(">", 2)[1] and "data-theme-toggle" in page.text
+    login(client)
+    client.cookies.set("theme", "dark")
+    page = client.get("/settings")
+    assert '<html lang="en" data-theme="dark">' in page.text
+    assert 'data-theme-set="dark" aria-pressed="true"' in page.text
+    client.cookies.set("theme", "neon\" onload=\"x")
+    assert '<html lang="en">' in client.get("/").text
