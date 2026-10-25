@@ -33,6 +33,7 @@ from .scheduler import gpu_text
 log = logging.getLogger("gpushepherd")
 HERE = Path(__file__).parent
 PUBLIC = ("/login", "/static/", "/healthz")
+THEMES = ("light", "dark")  # no cookie = follow the system
 
 
 class DemoLlamaClient:
@@ -132,6 +133,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def page(request: Request, template: str, status: int = 200, **ctx):
         ctx.setdefault("user", request.session.get("user"))
         ctx.setdefault("flash", request.query_params.get("msg", ""))
+        # picked in the browser (app.js), so the page is drawn in that theme from the start
+        theme = request.cookies.get("theme", "")
+        ctx.setdefault("theme", theme if theme in THEMES else "")
         return templates.TemplateResponse(request, template, ctx, status_code=status)
 
     def toast(resp: Response, msg: str, kind: str = "info") -> Response:
