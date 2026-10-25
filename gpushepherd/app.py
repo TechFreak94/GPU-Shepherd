@@ -363,7 +363,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     no_server=no_server,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
-    # ------------------------------------------------------------------ guided setup (templates)
+    # ------------------------------------------------------------------ automatic install (templates)
     def machine() -> tpl.Machine:
         instances, _ = store.instances()
         servers = {}

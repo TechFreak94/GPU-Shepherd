@@ -66,7 +66,7 @@ command there.
 
 | Field | YAML | What it does |
 |---|---|---|
-| Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances created by templates and presets start with this off. |
+| Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances installed from the App Store or a preset start with this off. |
 | "Open" button port | `open_port` | Host port the Open button links to. Empty = the first port. |
 | "Open" button path | `open_path` | Path after the address, e.g. `/ui`. |
 | Shared memory | `shm_size` | Size of `/dev/shm`, e.g. `1g`. PyTorch apps with several workers often need more than Docker's 64 MB. |
