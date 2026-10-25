@@ -335,30 +335,35 @@ def test_guided_setup(stack, tmp_path_factory):
     app, client, backend, data = stack
     login(client)
     page = client.get("/instances/new").text            # the old address opens the App Store
-    for key in ("llm-chat", "llm-coder", "comfyui", "open-webui", "hermes"):
+    for key in ("llm-server", "comfyui", "open-webui", "hermes"):
         assert f'href="/apps/{key}"' in page and f'href="/apps/{key}?mode=manual"' in page
-    assert 'href="/instances/new/custom"' in page
-    # old "Add model server" and template links still work
+    assert 'href="/instances/new/custom"' in page and "llm-coder" not in page and "llm-chat" not in page
+    # old "Add model server" and template links still work; the chat and coding servers are one app now
     assert 'name="kind" value="llama-swap"' in client.get("/instances/new?kind=llama-swap").text
-    assert "Install Coding model server" in client.get("/instances/new/llm-coder").text
+    assert "Install LLM server" in client.get("/instances/new/llm-coder").text
+    r = client.get("/apps/llm-chat?mode=manual", follow_redirects=False)
+    assert r.headers["location"] == "/apps/llm-server?mode=manual"
 
     models = tmp_path_factory.mktemp("models")
     with open(models / "Big-MoE-Q4.gguf", "wb") as fh:
         fh.truncate(10 * 1_073_741_824)                   # sparse: 10 GB on two 8 GB GPUs
-    form = client.get("/apps/llm-coder").text
-    assert 'value="coder"' in form and 'value="8081"' in form and 'value="/srv/models"' in form
+    (models / "Qwen3-8B-Q4.gguf").write_bytes(b"gguf")
+    form = client.get("/apps/llm-server").text
+    assert 'value="llm-2"' in form and 'value="8081"' in form and 'value="/srv/models"' in form
+    assert 'name="chat_file"' in form and 'name="coder_file"' in form and 'name="coder_ctx" min="512" value="65536"' in form
 
-    answers = {"template": "llm-coder", "name": "Coder", "id": "coder", "port": "8081", "gpu": "all",
-               "models_dir": str(models), "file": "/models/Big-MoE-Q4.gguf", "ctx_size": "65536",
-               "offload": "auto", "action": "create"}
+    answers = {"template": "llm-server", "name": "Coder", "id": "coder", "port": "8081", "gpu": "all",
+               "models_dir": str(models), "coder_file": "/models/Big-MoE-Q4.gguf", "coder_ctx": "65536",
+               "chat_file": "/models/Qwen3-8B-Q4.gguf", "chat_ctx": "32768", "offload": "auto", "action": "create"}
     r = client.post("/instances/guided", headers=HX, data=answers)
     assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/instances/coder/models")
+    assert "with qwen3-8b-q4, big-moe-q4" in r.headers["HX-Redirect"]
     inst = yaml.safe_load((data / "instances" / "coder.yaml").read_text())
     assert inst["kind"] == "llama-swap" and inst["gpu"]["mode"] == "elastic"
     assert inst["volumes"] == [{"host": str(models), "container": "/models", "read_only": True}]
     cat = yaml.safe_load((data / "catalogs" / "coder.yaml").read_text())
-    assert cat["models"][0]["id"] == "big-moe-q4" and cat["models"][0]["aliases"] == ["coder"]
-    assert [(o["min_gpus"], o["cpu_moe"]) for o in cat["models"][0]["offload"]] == [(1, 999), (2, 0)]
+    assert [(x["id"], x["aliases"]) for x in cat["models"]] == [("qwen3-8b-q4", ["chat"]), ("big-moe-q4", ["coder"])]
+    assert [(o["min_gpus"], o["cpu_moe"]) for o in cat["models"][1]["offload"]] == [(1, 999), (2, 0)]
 
     # the same ID again is refused, and the form keeps the answers
     r = client.post("/instances/guided", headers=HX, data=answers)
@@ -388,10 +393,9 @@ def test_app_store(stack):
     page = client.get("/apps").text
     assert "App Store" in page and 'data-filter="chat-and-agents"' in page
     # the example stack already has Open WebUI, ComfyUI, Hermes and a chat model server
-    for key in ("open-webui", "comfyui", "hermes", "llm-chat"):
+    for key in ("open-webui", "comfyui", "hermes", "llm-server"):
         card = page.split(f'id="app-{key}"')[1].split("</article>")[0]
         assert "1 installed" in card and "Install another" in card, key
-    assert "installed" not in page.split('id="app-llm-coder"')[1].split("</article>")[0]
 
     # automatic and manual are two ways into the same app
     auto = client.get("/apps/hermes").text
@@ -426,18 +430,18 @@ def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
 
     answers = {"template": "hermes", "name": "Hermes", "id": "hermes", "port": "9119", "gpu": "none",
                "appdata_dir": str(data / "appdata" / "hermes"), "server": "new", "models_dir": str(models),
-               "file": "/models/Qwen3-8B-Q4.gguf", "login_user": "admin", "password": "short",
+               "chat_file": "/models/Qwen3-8B-Q4.gguf", "login_user": "admin", "password": "short",
                "hass_url": "http://ha.lan:8123", "hass_token": "tok", "action": "create"}
     r = client.post("/instances/guided", headers=HX, data=answers)
     assert "at least 8 characters" in r.text and not (data / "instances" / "llm.yaml").exists()
-    assert "A new chat model server" in r.text           # no half-made server in the list
+    assert "A new LLM server" in r.text           # no half-made server in the list
 
     r = client.post("/instances/guided", headers=HX, data=answers | {"password": "long-enough-pw"})
     assert r.status_code == 204, re.findall(r"error-box.*?</div>", r.text)
     assert "Installed Hermes and LLM server" in r.headers["HX-Redirect"]
     srv = yaml.safe_load((data / "instances" / "llm.yaml").read_text())
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
-    assert srv["kind"] == "llama-swap" and srv["app"] == "llm-chat" and srv["ports"][0]["host"] == 8080
+    assert srv["kind"] == "llama-swap" and srv["app"] == "llm-server" and srv["ports"][0]["host"] == 8080
     assert cat["models"][0]["file"] == "/models/Qwen3-8B-Q4.gguf" and cat["models"][0]["aliases"] == ["chat"]
     hermes = yaml.safe_load((data / "instances" / "hermes.yaml").read_text())
     assert hermes["command"] == ["gateway", "run"] and hermes["app"] == "hermes"

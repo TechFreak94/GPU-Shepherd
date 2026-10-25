@@ -90,7 +90,7 @@
     const pick = t.closest("[data-pick-file]");
     if (pick) {
       e.preventDefault();
-      const input = document.querySelector("[name=file]");
+      const input = document.querySelector("[name=" + (pick.dataset.pickTarget || "file") + "]");
       if (input) { input.value = pick.dataset.pickFile; input.focus(); }
       const id = document.querySelector("[name=id]");
       if (id && !id.value && pick.dataset.suggestId) id.value = pick.dataset.suggestId;

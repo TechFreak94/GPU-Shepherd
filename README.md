@@ -19,7 +19,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
-- **App Store**: install a chat or coding model server, Open WebUI, Hermes Agent or ComfyUI.
+- **App Store**: install an LLM server (with a chat model, a coding model or both), Open WebUI,
+  Hermes Agent or ComfyUI.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
   folders, connects chat and agent apps to your model server (or installs one alongside them) and
   decides whether a model needs system RAM. **Manual** opens every field instead, filled in with
