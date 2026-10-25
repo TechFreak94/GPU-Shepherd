@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.5 - 2026-10-25
+
+- Apps that need an LLM server say so when there isn't one, and offer to install it first (#19)
+- Removed the dashboard's "Add model server" button (use the App Store) (#19)
+
 ## 0.12.4 - 2026-10-25
 
 - The App Store has one LLM server app: pick its chat model and coding model while installing it (either or both, or one file for both) (#18)
