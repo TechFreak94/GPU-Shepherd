@@ -28,8 +28,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
   forms. One compact card per instance with Start / Stop / Restart / Open / Logs, showing its
   state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
-  Hover, tab to or tap a label (or the ⓘ next to the name) for the details behind it: the GPU rule
-  and priority, ports, image, folders, and how much of a model sits in system RAM.
+  **Advanced details** opens the image, folders, command and the rest. Every detail has a small ⓘ
+  next to it: hover, tab to or tap it to see what the value means (GPU rule and priority, ports,
+  how much of a model sits in system RAM, and so on).
 - **Machine overview**: CPU, RAM and every GPU at a glance, with how much each instance uses.
 - **GPU policies** per instance:
   - *Fixed* - always these GPUs (e.g. ComfyUI on GPU 0).
