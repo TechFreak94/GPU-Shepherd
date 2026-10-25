@@ -121,6 +121,10 @@ input:focus,select:focus,textarea:focus,button:focus-visible,.btn:focus-visible,
 .scroll{overflow-x:auto}
 .files{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:6px}
 .files button{text-align:left;display:flex;justify-content:space-between;gap:10px}
+.file-row{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--line)}
+.file-row .mono{flex:1;min-width:0;overflow-wrap:anywhere}
+.file-row button{flex:none}
+.fields.slot+.fields.slot{margin-top:10px}
 .autorow{display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;margin-bottom:8px}
 @media (max-width:640px){.autorow{grid-template-columns:1fr}}
 details summary{cursor:pointer;color:var(--accent);font-size:13px;width:max-content;list-style:none}

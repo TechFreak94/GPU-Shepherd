@@ -391,7 +391,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return llamaswap.local_model_files(probe)
 
     def guided(request: Request, t: tpl.Template, f: dict, m: tpl.Machine, error: str = "", status: int = 200):
-        wants_files = t.first_model or t.connects
+        wants_files = bool(tpl.slots(t))
         files, notes = model_files(f["models_dir"]) if wants_files and f.get("models_dir") else ([], [])
         gpus = engine.snapshot().gpus
         choices = [(k, v) for k, v in tpl.GPU_CHOICES.items()]
@@ -401,7 +401,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
                     servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
-                    new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER))
+                    new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t))
 
     def appdata_root() -> str:
         return str(engine.host_data_dir / "appdata")
@@ -419,6 +419,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             t = tpl.get(key)
         except ConfigError as err:
             return RedirectResponse(f"/apps?msg={err}", status_code=303)
+        if t.key != key:                      # renamed app (the chat and coding servers are one LLM server now)
+            return RedirectResponse(f"/apps/{t.key}" + ("?mode=manual" if mode == "manual" else ""), status_code=303)
         m = machine()
         f = tpl.defaults(t, m, default_models_dir(m.instances), appdata_root())
         if mode != "manual":
@@ -450,12 +452,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             t = tpl.get(str(raw.get("template", "")))
         except ConfigError as err:
             return toast(Response(status_code=204), str(err), "error")
-        f = {k: str(raw.get(k, "")) for k in ("name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
-                                               "comfyui", "file", "ctx_size", "offload", "login_user", "password",
-                                               "hass_url", "hass_token")}
+        slot_fields = [f"{x.key}_{part}" for x in tpl.slots(t) for part in ("file", "ctx")]
+        f = {k: str(raw.get(k, "")) for k in ["name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
+                                              "comfyui", "offload", "login_user", "password", "hass_url",
+                                              "hass_token", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
         m = machine()
-        if (t.first_model or t.connects) and f["models_dir"]:
+        if slot_fields and f["models_dir"]:
             m.model_sizes = {x["container_path"]: x["size_gb"] for x in model_files(f["models_dir"])[0]}
         try:
             if raw.get("action") == "advanced":
@@ -467,7 +470,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 return resp
             bundle = tpl.bundled_server(f, m, appdata_root()) if t.connects else None
             answers = f | {"server": bundle[0].id} if bundle else f
-            inst, model = tpl.build(t, answers, m)
+            inst, models = tpl.build(t, answers, m)
             seeds = tpl.seed_files(t, answers, m)
             if bundle:
                 store.save_instance(bundle[0])
@@ -476,8 +479,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             make_app_folders(inst, t, seeds)
             if inst.kind == "llama-swap":
                 cat = store.catalog(inst.id)
-                if model:
-                    cat.models.append(model)
+                if models:
+                    cat.models += models
                     store.save_catalog(Catalog.model_validate(cat.model_dump()))
         except (ConfigError, ValueError) as err:
             msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
@@ -486,7 +489,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             resp.headers["HX-Reselect"] = "#editor"
             return resp
         if inst.kind == "llama-swap":
-            what = f"with {model.id}" if model else "- add a model below"
+            what = f"with {', '.join(x.id for x in models)}" if models else "- add a model below"
             return Response(status_code=204, headers={
                 "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}. Press Start on the dashboard to run it."})
         also = f" and {bundle[0].name}" if bundle else ""

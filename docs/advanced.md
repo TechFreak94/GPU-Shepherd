@@ -23,7 +23,7 @@ Instances are saved to `instances/<id>.yaml` in the data folder, model servers' 
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
 | - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
-| - | `app` | The App Store app it was installed from (`llm-chat`, `hermes`...), for the store's *installed* count. Changing it needs no restart. |
+| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count. Changing it needs no restart. |
 
 ### GPUs
 
@@ -219,24 +219,23 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 Each app in the App Store can be installed two ways. **Install** (automatic setup) asks only what
 it can't work out. **Manual** opens the full form, filled in with the same defaults, so you can
 change anything before it is saved. Either way the result is an ordinary instance (plus, for model
-servers, a first model), so every field above can be changed afterwards.
+servers, the models you picked), so every field above can be changed afterwards.
 
 | Template | GPUs | Fills in |
 |---|---|---|
-| Chat model server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), a first model named `chat`, 32K context |
-| Coding model server | every free GPU | the same, with the name `coder`, 64K context and lower temperature |
+| LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context) and a coding model named `coder` (64K context, lower temperature). Either is optional, and one file can be both. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one |
 | Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
 
-Open WebUI and Hermes Agent can also install a new chat model server alongside themselves
-(*A new chat model server, installed with it*), with a model file you pick from the models folder.
+Open WebUI and Hermes Agent can also install a new LLM server alongside themselves
+(*A new LLM server, installed with it*), with a chat model you pick from the models folder.
 It is offered first when there is no model server yet.
 
 Automatic setup also picks a free ID and port. The GPU question can pin an instance to one GPU instead (a fixed
 policy).
 
-For the first model, *Decide from the file size* keeps the model on the GPUs for each GPU count
+For the models, *Decide from the file size* keeps the model on the GPUs for each GPU count
 where it fits (file size plus 20% for the KV cache and buffers, against the smallest GPUs' combined
 memory) and moves all MoE expert layers to RAM where it doesn't. Fine-tune it afterwards on the
 model's edit page.

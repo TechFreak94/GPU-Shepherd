@@ -27,12 +27,16 @@ LOAD_OVERHEAD = 1.2
 
 
 @dataclass(frozen=True)
-class FirstModel:
-    """Defaults for the model a model-server template adds to its catalogue."""
+class ModelSlot:
+    """A model the install form offers to add to a model server's catalogue, under a fixed name
+    that clients ask for. Its answers are <key>_file and <key>_ctx."""
+    key: str
+    label: str
     alias: str
     ctx_size: int
-    kv_cache: str = "q8_0"
     sampling: str = ""
+    kv_cache: str = "q8_0"
+    hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,7 +59,7 @@ class Template:
     env: dict[str, str] = field(default_factory=dict)
     appdata: tuple[tuple[str, str], ...] = ()  # (subfolder of the app data folder, path inside)
     models_mount: tuple[str, str, bool] | None = None   # (subfolder of the models folder, path inside, read-only)
-    first_model: FirstModel | None = None
+    models: tuple[ModelSlot, ...] = ()        # model servers: the models picked while installing
     connects: str = ""                         # how it is told about a model server: "openwebui" or "hermes"
     command: tuple[str, ...] = ()
     login: tuple[str, str] | None = None       # (user env var, password env var) of its own login
@@ -67,25 +71,19 @@ class Template:
 
 TEMPLATES: tuple[Template, ...] = (
     Template(
-        key="llm-chat", badge="LLM", title="Chat model server", group="Model servers",
-        blurb="An OpenAI-compatible endpoint that loads whichever model a client asks for.",
+        key="llm-server", badge="LLM", title="LLM server", group="Model servers",
+        blurb="An OpenAI-compatible model server that loads whichever model a client asks for: chat, coding or both.",
         points=("llama-swap + llama.cpp", "Uses every free GPU and gives them back when something else needs one",
-                "Pick a .gguf file now or add models later"),
-        default_id="llm", default_name="LLM server", description="llama-swap model server (chat)",
+                "Pick a chat model and a coding model now, or add models later"),
+        default_id="llm", default_name="LLM server", description="llama-swap model server",
         kind="llama-swap", image=LLAMA_SWAP_IMAGE, container_port=8080, host_port=8080, gpu="all",
         open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True),
-        first_model=FirstModel(alias="chat", ctx_size=32768, sampling="--temp 0.7 --top-p 0.95"),
-        needs="An NVIDIA GPU; models larger than its memory can use system RAM",
-        docs="https://github.com/mostlygeek/llama-swap"),
-    Template(
-        key="llm-coder", badge="</>", title="Coding model server", group="Model servers",
-        blurb="A model server tuned for coding agents and editor plugins (Aider, Continue, OpenCode).",
-        points=("llama-swap + llama.cpp", "Long context (64K) and steadier sampling for code",
-                "Answers to the model name \"coder\""),
-        default_id="coder", default_name="Coding LLM", description="llama-swap model server (coding)",
-        kind="llama-swap", image=LLAMA_SWAP_IMAGE, container_port=8080, host_port=8081, gpu="all",
-        open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True),
-        first_model=FirstModel(alias="coder", ctx_size=65536, sampling="--temp 0.3 --top-p 0.95"),
+        models=(ModelSlot(key="chat", label="Chat model", alias="chat", ctx_size=32768,
+                          sampling="--temp 0.7 --top-p 0.95",
+                          hint="For chat apps such as Open WebUI and Hermes Agent."),
+                ModelSlot(key="coder", label="Coding model", alias="coder", ctx_size=65536,
+                          sampling="--temp 0.3 --top-p 0.95",
+                          hint="For coding agents and editor plugins (Aider, Continue, OpenCode): long context, steadier sampling.")),
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
         docs="https://github.com/mostlygeek/llama-swap"),
     Template(
@@ -125,8 +123,11 @@ TEMPLATES: tuple[Template, ...] = (
         docs="https://github.com/YanWenKun/ComfyUI-Docker"),
 )
 
-# the model server an app with a connection can install alongside itself
-BUNDLED_SERVER = "llm-chat"
+# the model server an app with a connection can install alongside itself, and the model slot it fills
+BUNDLED_SERVER = "llm-server"
+BUNDLED_SLOT = "chat"
+# App Store keys from before there was one LLM server app
+RENAMED = {"llm-chat": "llm-server", "llm-coder": "llm-server"}
 NEW_SERVER = "new"
 
 GPU_CHOICES = {
@@ -144,13 +145,10 @@ OFFLOAD_CHOICES = {
 
 def matches(t: Template, inst: Instance) -> bool:
     """Whether an instance was installed from this template (older ones by their image)."""
+    if inst.kind == "llama-swap" or t.kind == "llama-swap":
+        return inst.kind == t.kind                 # every model server is an LLM server
     if inst.app:
-        return inst.app == t.key
-    if t.kind == "llama-swap" or inst.kind == "llama-swap":
-        if inst.kind != t.kind:
-            return False
-        known = {x.description: x.key for x in TEMPLATES if x.kind == "llama-swap"}
-        return known.get(inst.description, BUNDLED_SERVER) == t.key     # other model servers count as chat
+        return RENAMED.get(inst.app, inst.app) == t.key
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
 
 
@@ -160,6 +158,7 @@ def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
 
 
 def get(key: str) -> Template:
+    key = RENAMED.get(key, key)
     for t in TEMPLATES:
         if t.key == key:
             return t
@@ -241,14 +240,15 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
     comfy = next((i.id for i in m.instances.values() if "comfyui" in (i.image + i.id).lower()), "")
     return {"name": name, "id": iid, "port": free_port(t.host_port, taken_ports), "gpu": t.gpu,
             "models_dir": models_dir, "appdata_dir": str(Path(appdata_root) / iid),
-            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy, "file": "",
-            "ctx_size": t.first_model.ctx_size if t.first_model else 0, "offload": "auto", "autostart": False,
+            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy,
+            **{f"{s.key}_file": "" for s in slots(t)}, **{f"{s.key}_ctx": s.ctx_size for s in slots(t)},
+            "offload": "auto", "autostart": False,
             "login_user": "admin" if t.login else "", "password": secrets.token_urlsafe(12) if t.login else "",
             "hass_url": "", "hass_token": ""}
 
 
-def build(t: Template, a: dict, m: Machine) -> tuple[Instance, CatalogModel | None]:
-    """Turn the guided form's answers into an instance and, for model servers, its first model."""
+def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel]]:
+    """Turn the guided form's answers into an instance and, for model servers, the models picked."""
     iid = str(a.get("id", "")).strip()
     if not SLUG.match(iid):
         raise ConfigError("ID: use lowercase letters, digits and dashes (max 40 characters)")
@@ -287,7 +287,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, CatalogModel | No
                     image=t.image, command=list(t.command), env=env,
                     ports=[PortMap(host=int(port), container=t.container_port)], volumes=volumes, gpu=gpu,
                     autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key)
-    return inst, _first_model(t, a, m)
+    return inst, _models(t, a, m)
 
 
 def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
@@ -303,12 +303,11 @@ def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Ca
         d["port"] = free_port(d["port"], taken)
     if str(a.get("id", "")) == d["id"]:
         d["id"] = free_id(d["id"], set(m.instances) | {d["id"]})
-    d |= {"file": str(a.get("file", "")), "gpu": t.gpu}
-    srv, model = build(t, d, m)
-    cat = Catalog(instance_id=srv.id, models=[model] if model else [])
+    d |= {f"{BUNDLED_SLOT}_file": str(a.get(f"{BUNDLED_SLOT}_file", "")), "gpu": t.gpu}
+    srv, models = build(t, d, m)
+    cat = Catalog(instance_id=srv.id, models=models)
     m.instances[srv.id] = srv
-    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name,
-                         "default_model": t.first_model.alias if model else ""}
+    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": BUNDLED_SLOT if models else ""}
     return srv, cat
 
 
@@ -390,26 +389,48 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
     return env
 
 
-def _first_model(t: Template, a: dict, m: Machine) -> CatalogModel | None:
-    file = str(a.get("file", "")).strip()
-    if not t.first_model or not file:
-        return None
-    if not file.startswith("/"):
-        file = f"{MODELS_IN_CONTAINER}/{file}"
-    ctx = str(a.get("ctx_size", "")).strip()
-    if ctx and not ctx.isdigit():
-        raise ConfigError("Context size: enter a whole number of tokens")
+def slots(t: Template) -> tuple[ModelSlot, ...]:
+    """The model slots an app's form shows: a model server's own, or the one its bundled server fills."""
+    if t.models:
+        return t.models
+    if t.connects:
+        return tuple(x for x in get(BUNDLED_SERVER).models if x.key == BUNDLED_SLOT)
+    return ()
+
+
+def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
+    """The catalogue entries for the model files picked in the form. The same file picked for two
+    slots becomes one model that answers to both names."""
     choice = str(a.get("offload") or "auto")
-    if choice == "moe":
-        offload = [OffloadRule(min_gpus=1, cpu_moe=999)]
-    elif choice == "auto":
-        offload = auto_offload(m.model_sizes.get(file), m.gpu_mem_gb)
-    else:
-        offload = []
-    mid = model_id_from_file(file)
-    if not MODEL_ID.match(mid):
-        mid = "model"
-    fm = t.first_model
-    return CatalogModel(id=mid, name=Path(file).name.removesuffix(".gguf"), file=file,
-                        ctx_size=int(ctx or fm.ctx_size), kv_cache=fm.kv_cache, sampling=fm.sampling,
-                        aliases=[fm.alias] if fm.alias != mid else [], offload=offload)
+    out: list[CatalogModel] = []
+    for slot in t.models:
+        file = str(a.get(f"{slot.key}_file", "")).strip()
+        if not file:
+            continue
+        if not file.startswith("/"):
+            file = f"{MODELS_IN_CONTAINER}/{file}"
+        ctx = str(a.get(f"{slot.key}_ctx", "")).strip()
+        if ctx and not ctx.isdigit():
+            raise ConfigError(f"{slot.label}: enter the context size as a whole number of tokens")
+        ctx_size = int(ctx or slot.ctx_size)
+        same = next((x for x in out if x.file == file), None)
+        if same:
+            same.aliases.append(slot.alias)
+            same.ctx_size = max(same.ctx_size, ctx_size)
+            continue
+        if choice == "moe":
+            offload = [OffloadRule(min_gpus=1, cpu_moe=999)]
+        elif choice == "auto":
+            offload = auto_offload(m.model_sizes.get(file), m.gpu_mem_gb)
+        else:
+            offload = []
+        mid = model_id_from_file(file)
+        if not MODEL_ID.match(mid):
+            mid = "model"
+        mid = free_id(mid, {x.id for x in out})
+        out.append(CatalogModel(id=mid, name=Path(file).name.removesuffix(".gguf"), file=file, ctx_size=ctx_size,
+                                kv_cache=slot.kv_cache, sampling=slot.sampling, offload=offload,
+                                aliases=[slot.alias] if slot.alias != mid else []))
+    for x in out:
+        x.aliases = [al for al in x.aliases if al != x.id]
+    return out

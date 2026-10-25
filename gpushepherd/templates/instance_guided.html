@@ -1,6 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Install {{ t.title }} · GPU Shepherd{% endblock %}
 {% block content %}
+{% macro file_picker(files, slots) %}
+{% if files %}
+<div class="hint">Files in the models folder{% if slots|length > 1 %}: pick one for each model{% endif %}.</div>
+<div class="files">
+  {% for x in files %}<div class="file-row">
+    <span class="mono">{{ x.container_path }}</span><span class="muted small">{{ x.size_gb }} GB</span>
+    {% for sl in slots %}<button type="button" class="small" data-pick-file="{{ x.container_path }}" data-pick-target="{{ sl.key }}_file" title="Use as the {{ sl.label|lower }}">{{ "Use" if slots|length == 1 else sl.label.split()[0] }}</button>{% endfor %}
+  </div>{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+{% macro slot_fields(slots, f, with_ctx) %}
+{% for sl in slots %}
+<div class="fields slot">
+  <div><label for="{{ sl.key }}_file">{{ sl.label }} <span class="tag accent" title="Clients ask for it by this name">{{ sl.alias }}</span></label>
+    <input type="text" id="{{ sl.key }}_file" name="{{ sl.key }}_file" value="{{ f[sl.key ~ '_file'] }}" placeholder="/models/model-Q4_K_M.gguf">
+    <div class="hint">{{ sl.hint }} Clients ask for it as <span class="mono">{{ sl.alias }}</span>.</div></div>
+  {% if with_ctx %}<div><label for="{{ sl.key }}_ctx">Context (tokens)</label><input type="number" id="{{ sl.key }}_ctx" name="{{ sl.key }}_ctx" min="512" value="{{ f[sl.key ~ '_ctx'] }}"></div>{% endif %}
+</div>
+{% endfor %}
+{% endmacro %}
 <div id="editor">
 <div class="pagehead">
   <div><h1>Install {{ t.title }}</h1>
@@ -69,7 +90,7 @@
       <div><label for="server">{{ "Model server it thinks with" if t.connects == "hermes" else "Model server to chat with" }}</label>
         <select id="server" name="server">
           {% for id, name in servers %}<option value="{{ id }}" {{ "selected" if f.server == id }}>{{ name }} ({{ id }})</option>{% endfor %}
-          <option value="{{ new_server }}" {{ "selected" if f.server == new_server }}>A new {{ bundled.title|lower }}, installed with it</option>
+          <option value="{{ new_server }}" {{ "selected" if f.server == new_server }}>A new {{ bundled.title }}, installed with it</option>
           <option value="" {{ "selected" if not f.server }}>None for now</option>
         </select>
         <div class="hint">{% if servers %}Its address and API key are filled in for you.{% else %}There is no model server yet, so a new one is installed alongside it.{% endif %}</div></div>
@@ -83,21 +104,15 @@
       {% endif %}
     </div>
     <div class="subsection" data-server="{{ new_server }}">
-      <strong>New {{ bundled.title|lower }}</strong>
+      <strong>New {{ bundled.title }}</strong>
       <div class="hint" style="margin-top:2px">{{ bundled.blurb }} It uses {{ "every free GPU" if bundled.gpu == "all" else bundled.gpu }} and gets the next free ID and port; change anything later under Edit.</div>
       <div class="fields" style="margin-top:10px">
         <div><label for="models_dir">Models folder on this machine</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}">
           <div class="hint">Mounted read-only at <span class="mono">{{ bundled.models_mount[1] }}</span>.</div></div>
-        <div><label for="file">Model file (.gguf, optional)</label><input type="text" id="file" name="file" value="{{ f.file }}" placeholder="{{ bundled.models_mount[1] }}/model-Q4_K_M.gguf">
-          <div class="hint">Clients ask for it as <span class="mono">{{ bundled.first_model.alias }}</span>. Leave it empty to add models on its Models page.</div></div>
       </div>
-      {% if files %}
-      <div class="hint">Pick one of the files in the models folder:</div>
-      <div class="files">
-        {% for x in files %}<button type="button" data-pick-file="{{ x.container_path }}">
-          <span class="mono">{{ x.container_path }}</span><span class="muted small">{{ x.size_gb }} GB</span></button>{% endfor %}
-      </div>
-      {% endif %}
+      {{ slot_fields(slots, f, False) }}
+      <div class="hint">Leave it empty to add models on its Models page.</div>
+      {{ file_picker(files, slots) }}
       {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
     </div>
   </div>
@@ -114,27 +129,19 @@
   </div>
   {% endif %}
 
-  {% if t.first_model %}
+  {% if t.models %}
   <div class="section">
-    <h3 style="margin-top:0"><span class="step"></span>First model <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span></h3>
-    <label for="file">Model file (.gguf)</label>
-    <input type="text" id="file" name="file" value="{{ f.file }}" placeholder="{{ t.models_mount[1] }}/model-Q4_K_M.gguf">
-    {% if files %}
-    <div class="hint">Pick one of the files in the models folder:</div>
-    <div class="files">
-      {% for x in files %}<button type="button" data-pick-file="{{ x.container_path }}">
-        <span class="mono">{{ x.container_path }}</span><span class="muted small">{{ x.size_gb }} GB</span></button>{% endfor %}
-    </div>
-    {% endif %}
+    <h3 style="margin-top:0"><span class="step"></span>Models <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span></h3>
+    <div class="hint" style="margin:0 0 10px">Pick a .gguf file for each model this server should offer; one is enough, and the same file can do both. Leave both empty to add models on the Models page next.</div>
+    {{ slot_fields(slots, f, True) }}
+    {{ file_picker(files, slots) }}
     {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
-    <div class="hint">Leave it empty to add models on the Models page next. Clients can ask for it as <span class="mono">{{ t.first_model.alias }}</span>.</div>
     <div class="fields" style="margin-top:12px">
-      <div><label for="ctx_size">Context (tokens)</label><input type="number" id="ctx_size" name="ctx_size" min="512" value="{{ f.ctx_size }}"></div>
       <div><label for="offload">GPU memory and system RAM</label>
         <select id="offload" name="offload">
           {% for value, label in offload_choices.items() %}<option value="{{ value }}" {{ "selected" if f.offload == value }}>{{ label }}</option>{% endfor %}
         </select>
-        <div class="hint">Automatic keeps the model on the GPUs when it fits and moves MoE expert layers to RAM when it doesn't, separately for each number of GPUs. Fine-tune it on the Models page.</div></div>
+        <div class="hint">Automatic keeps a model on the GPUs when it fits and moves MoE expert layers to RAM when it doesn't, separately for each number of GPUs. Fine-tune it on the Models page.</div></div>
     </div>
   </div>
   {% endif %}
