@@ -52,6 +52,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
   models larger than your GPUs still run, set per GPU count.
 
   ![Models](docs/screenshots/models.png)
+- **Light or dark**: follows your device, or pick Light or Dark with the theme button at the top.
+
+  ![Dark theme](docs/screenshots/dashboard-dark.png)
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
