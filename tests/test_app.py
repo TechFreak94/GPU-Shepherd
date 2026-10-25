@@ -417,6 +417,38 @@ def test_app_store(stack):
     assert "2 installed" in client.get("/apps").text.split('id="app-comfyui"')[1].split("</article>")[0]
 
 
+def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
+    """No LLM server yet: apps that need one say so and offer to install it first, then come back."""
+    app, client, backend, data = stack
+    login(client)
+    assert "Add model server" not in client.get("/").text
+    assert "needs an LLM server" not in client.get("/apps/open-webui").text       # the example has one
+    for f in (data / "instances").glob("*.yaml"):
+        f.unlink()
+    assert "Add model server" not in client.get("/").text
+    store_page = client.get("/apps").text
+    for key in ("open-webui", "hermes"):
+        assert "none is installed yet" in store_page.split(f'id="app-{key}"')[1].split("</article>")[0]
+    assert "none is installed yet" not in store_page.split('id="app-comfyui"')[1].split("</article>")[0]
+    for url in ("/apps/hermes", "/apps/hermes?mode=manual"):
+        page = client.get(url).text
+        assert "Hermes Agent needs an LLM server" in page and 'href="/apps/llm-server?then=hermes"' in page
+    assert "needs an LLM server" not in client.get("/apps/comfyui").text
+
+    # the LLM server installed "first" goes on to Hermes, which then picks it
+    page = client.get("/apps/llm-server?then=hermes").text
+    assert 'name="then" value="hermes"' in page and "Next: Hermes Agent" in page and "and continue" in page
+    assert 'name="then"' not in client.get("/apps/llm-server?then=comfyui").text   # only apps that need a server
+    models = tmp_path_factory.mktemp("models")
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "llm-server", "then": "hermes", "name": "LLM server", "id": "llm", "port": "8080", "gpu": "all",
+        "models_dir": str(models), "offload": "auto", "action": "create"})
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/apps/hermes?msg=Installed LLM server")
+    page = client.get(r.headers["HX-Redirect"]).text
+    assert "needs an LLM server" not in page and '<option value="llm" selected>' in page
+    assert "Now set up Hermes Agent" in page
+
+
 def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
     """Hermes on a machine without a model server: the server comes with it, and Hermes is wired to it."""
     app, client, backend, data = stack

@@ -29,9 +29,12 @@
   <a class="btn" href="/apps">Back to the App Store</a>
 </div>
 {% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}
+{% if no_server %}{% with need = t, manual = False %}{% include "partials/needs_server.html" %}{% endwith %}{% endif %}
+{% if then_t %}<div class="notice next" role="status"><strong>Next: {{ then_t.title }}.</strong> Once this LLM server is installed you go on to set up {{ then_t.title }}, already connected to it.</div>{% endif %}
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
 <form class="guided" hx-post="/instances/guided" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
   <input type="hidden" name="template" value="{{ t.key }}">
+  {% if then_t %}<input type="hidden" name="then" value="{{ then_t.key }}">{% endif %}
 
   <div class="section">
     <h3 style="margin-top:0"><span class="step"></span>Name and address</h3>
@@ -162,7 +165,7 @@
   <div class="actions">
     <a class="btn" href="/apps">Cancel</a>
     <button type="submit" name="action" value="advanced" title="Open the manual configuration with these answers filled in">Customize every field…</button>
-    <button class="primary" type="submit" name="action" value="create">Install {{ t.title }}</button>
+    <button class="primary" type="submit" name="action" value="create">Install {{ t.title }}{% if then_t %} and continue{% endif %}</button>
   </div>
 </form>
 </div>

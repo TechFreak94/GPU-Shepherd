@@ -354,7 +354,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             app_t = tpl.get(form.get("app") or "") if not editing else None
         except ConfigError:
             app_t = None
+        no_server = bool(app_t and app_t.connects) and not has_llm_server()
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
+                    no_server=no_server,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
     # ------------------------------------------------------------------ guided setup (templates)
@@ -390,7 +392,19 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                          volumes=[VolumeMap(host=models_dir, container=tpl.MODELS_IN_CONTAINER)])
         return llamaswap.local_model_files(probe)
 
-    def guided(request: Request, t: tpl.Template, f: dict, m: tpl.Machine, error: str = "", status: int = 200):
+    def has_llm_server() -> bool:
+        return any(i.kind == "llama-swap" for i in store.instances()[0].values())
+
+    def next_app(key: str) -> tpl.Template | None:
+        """The app to go on to after installing an LLM server for it (?then=)."""
+        try:
+            t = tpl.get(key) if key else None
+        except ConfigError:
+            return None
+        return t if t and t.connects else None
+
+    def guided(request: Request, t: tpl.Template, f: dict, m: tpl.Machine, error: str = "", status: int = 200,
+               then: tpl.Template | None = None):
         wants_files = bool(tpl.slots(t))
         files, notes = model_files(f["models_dir"]) if wants_files and f.get("models_dir") else ([], [])
         gpus = engine.snapshot().gpus
@@ -401,7 +415,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
                     servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
-                    new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t))
+                    new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
+                    no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
 
     def appdata_root() -> str:
         return str(engine.host_data_dir / "appdata")
@@ -411,10 +426,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def app_store(request: Request):
         instances, _ = store.instances()
         return page(request, "apps.html", groups=tpl.groups(), gpu_choices=tpl.GPU_CHOICES,
-                    installed=tpl.installed(instances))
+                    installed=tpl.installed(instances),
+                    has_server=any(i.kind == "llama-swap" for i in instances.values()), server_app=tpl.BUNDLED_SERVER)
 
     @app.get("/apps/{key}", response_class=HTMLResponse)
-    def install_app(request: Request, key: str, mode: str = "auto"):
+    def install_app(request: Request, key: str, mode: str = "auto", then: str = ""):
         try:
             t = tpl.get(key)
         except ConfigError as err:
@@ -424,7 +440,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         m = machine()
         f = tpl.defaults(t, m, default_models_dir(m.instances), appdata_root())
         if mode != "manual":
-            return guided(request, t, f, m)
+            return guided(request, t, f, m, then=next_app(then))
         # manual: the full form, filled in from the same defaults (a model server is picked, not made)
         if f["server"] == tpl.NEW_SERVER:
             f["server"] = ""
@@ -457,6 +473,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                               "comfyui", "offload", "login_user", "password", "hass_url",
                                               "hass_token", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
+        then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None
         m = machine()
         if slot_fields and f["models_dir"]:
             m.model_sizes = {x["container_path"]: x["size_gb"] for x in model_files(f["models_dir"])[0]}
@@ -484,10 +501,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     store.save_catalog(Catalog.model_validate(cat.model_dump()))
         except (ConfigError, ValueError) as err:
             msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
-            resp = guided(request, t, f, machine(), error=msg)   # without a model server made on the way
+            resp = guided(request, t, f, machine(), error=msg, then=then)   # without a model server made on the way
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
+        if then:                              # installed for another app: go on to that one, now connected to it
+            what = f" with {', '.join(x.id for x in models)}" if models else ""
+            return Response(status_code=204, headers={
+                "HX-Redirect": f"/apps/{then.key}?msg=Installed {inst.name}{what}. Now set up {then.title}: it will use {inst.name}."})
         if inst.kind == "llama-swap":
             what = f"with {', '.join(x.id for x in models)}" if models else "- add a model below"
             return Response(status_code=204, headers={

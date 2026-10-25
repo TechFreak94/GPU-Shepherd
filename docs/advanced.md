@@ -230,7 +230,9 @@ servers, the models you picked), so every field above can be changed afterwards.
 
 Open WebUI and Hermes Agent can also install a new LLM server alongside themselves
 (*A new LLM server, installed with it*), with a chat model you pick from the models folder.
-It is offered first when there is no model server yet.
+It is offered first when there is no model server yet, and the install page says so, with an
+*Install an LLM server first* button: that installs the LLM server and then comes back to the app,
+already connected to it.
 
 Automatic setup also picks a free ID and port. The GPU question can pin an instance to one GPU instead (a fixed
 policy).
