@@ -311,7 +311,7 @@ def cmd_apps(args, c: Client) -> int:
             if a["needs"]:
                 print(f"Needs: {a['needs']}")
             if a.get("also_installs"):
-                print(f"Also installs: {', '.join(a['also_installs'])} (starts with it)")
+                print(f"Also installs: {', '.join(a['also_installs'])} (starts and stops with it)")
             if a.get("after_install"):
                 print(f"Afterwards: {a['after_install']}")
             print("\nInstall answers (change any with KEY=VALUE):")

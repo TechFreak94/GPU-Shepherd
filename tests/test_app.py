@@ -631,7 +631,8 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     act(client, app, "librechat", "start")
     assert {"shepherd-librechat", "shepherd-librechat-mongodb"} <= set(backend.containers)
     act(client, app, "librechat", "stop")
-    assert "shepherd-librechat-mongodb" in backend.containers   # the database stays up until stopped itself
+    assert not backend.running["shepherd-librechat"] and not backend.running["shepherd-librechat-mongodb"]
+    assert backend.calls.index("stop shepherd-librechat") < backend.calls.index("stop shepherd-librechat-mongodb")
 
     # by hand: the full form keeps "Starts with", and saving makes the missing database too
     manual = client.get("/apps/librechat?mode=manual").text

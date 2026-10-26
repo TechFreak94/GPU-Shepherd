@@ -172,7 +172,7 @@
       <dt>Image</dt><dd class="mono">{{ t.image }}</dd>
       <dt>Type</dt><dd>{{ "Model server (llama-swap)" if t.kind == "llama-swap" else "Container" }}</dd>
       {% if t.command %}<dt>Command</dt><dd class="mono">{{ t.command|join(" ") }}</dd>{% endif %}
-      {% for c in companions %}<dt>Also installs</dt><dd>{{ c.title }} (<span class="mono">{{ c.image }}</span>), as <span class="mono">{{ (f.id or "id") ~ "-" ~ c.default_id }}</span>: it starts whenever {{ t.title }} does</dd>{% endfor %}
+      {% for c in companions %}<dt>Also installs</dt><dd>{{ c.title }} (<span class="mono">{{ c.image }}</span>), as <span class="mono">{{ (f.id or "id") ~ "-" ~ c.default_id }}</span>: it starts and stops with {{ t.title }}</dd>{% endfor %}
       {% if t.connects %}<dt data-server="{{ new_server }}">Also installs</dt><dd data-server="{{ new_server }}">{{ bundled.title }} ({{ bundled.image }})</dd>{% endif %}
       {% if t.after_install %}<dt>Afterwards</dt><dd>{{ t.after_install }}</dd>{% endif %}
       <dt>Settings file</dt><dd class="mono">instances/{{ f.id or "id" }}.yaml</dd>
