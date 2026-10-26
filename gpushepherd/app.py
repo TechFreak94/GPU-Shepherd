@@ -169,7 +169,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             st = snap.states.get(inst.id)
             gpus = snap.allocations.get(inst.id, [])
             assigned = [gpu_by_index[g] for g in gpus if g in gpu_by_index]
-            card = {"inst": inst, "state": st, "running": bool(st and st.running),
+            card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "not created"),
                     "container": engine.container_name(inst.id),
                     "gpus": gpus, "assigned": assigned,

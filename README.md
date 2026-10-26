@@ -28,7 +28,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
   ![App Store](docs/screenshots/app-store.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
-  forms. One compact card per instance with Start / Stop / Restart / Open / Logs, showing its
+  forms. One compact card per instance with Start / Stop / Restart / Open / Logs, a tag saying
+  what it is (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, or *App* for any other image), its
   state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
   **Advanced details** opens the image, folders, command and the rest. Every detail has a small ⓘ
   next to it: hover, tab to or tap it to see what the value means (GPU rule and priority, ports,
