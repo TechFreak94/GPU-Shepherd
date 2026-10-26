@@ -22,7 +22,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 
 | Field | YAML | What it does |
 |---|---|---|
-| Name | `name` | Shown on the dashboard. |
+| Name | `name` | Shown on the dashboard. A name that only repeats the app's tag, like `Chat UI` (what older versions called Open WebUI), shows as the app's name (*Open WebUI*); saving the instance writes that name to its file. |
 | ID | `id` | Lowercase letters, digits and dashes, at most 40. Names the file and the container (`shepherd-<id>`), and is the host name other instances use to reach it (`http://<id>:<port>`). Can't be changed after creation. |
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |

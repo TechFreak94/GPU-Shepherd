@@ -53,6 +53,8 @@ class Engine:
         # the drain policy, the app it came from and what starts with it only matter to GPU Shepherd:
         # no restart for those
         data = inst.model_dump(mode="json", exclude={"drain", "app", "requires"})
+        if inst._file_name is not None:            # renamed only on screen (see config._named)
+            data["name"] = inst._file_name
         if inst.kind == "llama-swap":
             data["_catalog"] = self.store.catalog(inst.id).model_dump(mode="json")
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:12]

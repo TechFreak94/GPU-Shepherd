@@ -222,3 +222,14 @@ def test_anythingllm():
     assert "LLM_PROVIDER='generic-openai'" in env and "GENERIC_OPEN_AI_BASE_PATH='http://llm:8080/v1'" in env
     assert "GENERIC_OPEN_AI_API_KEY='sk-abc'" in env and "GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT='32768'" in env
     assert "LLM_PROVIDER" not in tpl.seed_files(t, f | {"server": ""}, m)["server.env"]
+
+
+def test_app_name_replaces_a_name_that_only_repeats_the_tag():
+    webui = lambda iid, name: Instance(id=iid, name=name, image="ghcr.io/open-webui/open-webui:main")
+    assert tpl.app_name(webui("webui", "Chat UI")) == "Open WebUI"
+    assert tpl.app_name(webui("webui-2", "Chat UI 2")) == "Open WebUI 2"
+    assert tpl.app_name(webui("family", "Family chat")) == "Family chat"     # the user's own name
+    assert tpl.app_name(webui("webui", "Chat UI 2")) == "Chat UI 2"
+    assert tpl.app_name(Instance(id="x", name="App", image="nginx")) == "App"
+    assert tpl.app_name(Instance(id="h", name="Agent UI", image="x", app="hermes")) == "Hermes Agent"
+    assert all(t.default_name != t.tag for t in tpl.TEMPLATES)
