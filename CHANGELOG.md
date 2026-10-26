@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.4 - 2026-10-26
+
+- The installer now supports Debian 12/13, Fedora, RHEL/Rocky/Alma 9+ and Arch, as well as Ubuntu. WSL2 support is experimental. (#31)
+- SELinux hosts: GPU Shepherd and its apps work when Docker uses SELinux. (#31)
+- New guides: Linux distributions, Proxmox, TrueNAS SCALE and Unraid. (#31)
+- GPU Shepherd stays up after a broken settings file, a bad model list or Docker being down. A failed update is now caught and rolled back. (#31)
+
 ## 0.13.3 - 2026-10-26
 
 - Tag ComfyUI as Image Server (#30)
