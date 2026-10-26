@@ -589,3 +589,56 @@ def test_dashboard_kind_tags(stack):
     assert '<span class="tag kind ui">Image UI</span>' in card("comfyui")
     assert '<span class="tag kind ui">Agent UI</span>' in card("hermes")
     assert "model server</span>" not in dash
+
+
+def test_librechat_installs_its_database_and_starts_with_it(stack):
+    app, client, backend, data = stack
+    login(client)
+    page = client.get("/apps").text
+    assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
+    assert "librechat-mongodb" not in page                     # companions are not on the store
+    form = client.get("/apps/librechat").text
+    assert "LibreChat database" in form and "mongo:8.0" in form and "the first account becomes the admin" in form
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "librechat", "name": "LibreChat", "id": "librechat", "port": "3080", "gpu": "none",
+        "appdata_dir": str(data / "appdata" / "librechat"), "server": "llm", "action": "create"})
+    assert r.status_code == 204 and "Installed LibreChat and LibreChat database" in r.headers["HX-Redirect"]
+    inst = yaml.safe_load((data / "instances" / "librechat.yaml").read_text())
+    db = yaml.safe_load((data / "instances" / "librechat-mongodb.yaml").read_text())
+    assert inst["requires"] == ["librechat-mongodb"] and db["app"] == "librechat-mongodb" and db["ports"] == []
+    yml = (data / "appdata" / "librechat" / "librechat.yaml")
+    assert yml.is_file() and "${LLM_API_KEY}" in yml.read_text() and (data / "appdata" / "librechat" / "uploads").is_dir()
+    dash = client.get("/").text
+    assert ">Database</span>" in dash.split('id="inst-librechat-mongodb"')[1]
+
+    act(client, app, "librechat", "start")
+    assert {"shepherd-librechat", "shepherd-librechat-mongodb"} <= set(backend.containers)
+    act(client, app, "librechat", "stop")
+    assert "shepherd-librechat-mongodb" in backend.containers   # the database stays up until stopped itself
+
+    # by hand: the full form keeps "Starts with", and saving makes the missing database too
+    manual = client.get("/apps/librechat?mode=manual").text
+    assert 'name="requires" value="librechat-2-mongodb"' in manual and "/app/librechat.yaml" in manual
+    vols = f"{data}/appdata/lc3/librechat.yaml:/app/librechat.yaml\n{data}/appdata/lc3/uploads:/app/uploads"
+    r = client.post("/instances/save", headers=HX, data={
+        "editing": "0", "kind": "container", "app": "librechat", "id": "lc3", "name": "LC3",
+        "image": "librechat/librechat:latest", "ports": "3090:3080", "gpu_mode": "none", "volumes": vols,
+        "requires": "lc3-mongodb"})
+    assert r.status_code == 204
+    assert yaml.safe_load((data / "instances" / "lc3-mongodb.yaml").read_text())["volumes"][0]["host"] == \
+        f"{data}/appdata/lc3/mongodb"
+    assert (data / "appdata" / "lc3" / "librechat.yaml").is_file()      # a file, not a folder Docker would make
+
+
+def test_anythingllm_settings_file(stack):
+    app, client, backend, data = stack
+    login(client)
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "anythingllm", "name": "AnythingLLM", "id": "anythingllm", "port": "3001", "gpu": "none",
+        "appdata_dir": str(data / "appdata" / "anythingllm"), "server": "llm", "action": "create"})
+    assert r.status_code == 204 and "make a workspace" in r.headers["HX-Redirect"]
+    env = (data / "appdata" / "anythingllm" / "server.env").read_text()
+    assert "GENERIC_OPEN_AI_BASE_PATH='http://llm:8080/v1'" in env and "GENERIC_OPEN_AI_MODEL_PREF='chat'" in env
+    assert (data / "appdata" / "anythingllm" / "storage").is_dir()
+    act(client, app, "anythingllm", "start")
+    assert "shepherd-anythingllm" in backend.containers

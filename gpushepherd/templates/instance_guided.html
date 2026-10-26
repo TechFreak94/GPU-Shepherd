@@ -69,7 +69,9 @@
       {% endif %}
       {% if t.appdata %}
       <div><label for="appdata_dir">App data folder</label><input type="text" id="appdata_dir" name="appdata_dir" value="{{ f.appdata_dir }}" required>
-        <div class="hint">Keeps {{ t.appdata|map('first')|join(', ') }} when the container is re-created.</div></div>
+        {% set keeps = namespace(items=t.appdata|map('first')|list + t.files|map('first')|list) %}
+        {% for c in companions %}{% set keeps.items = keeps.items + (c.appdata|map('first')|list) %}{% endfor %}
+        <div class="hint">Keeps {{ keeps.items|join(', ') }} when the container is re-created.</div></div>
       {% endif %}
     </div>
   </div>
@@ -155,7 +157,9 @@
       <dt>Image</dt><dd class="mono">{{ t.image }}</dd>
       <dt>Type</dt><dd>{{ "Model server (llama-swap)" if t.kind == "llama-swap" else "Container" }}</dd>
       {% if t.command %}<dt>Command</dt><dd class="mono">{{ t.command|join(" ") }}</dd>{% endif %}
+      {% for c in companions %}<dt>Also installs</dt><dd>{{ c.title }} (<span class="mono">{{ c.image }}</span>), as <span class="mono">{{ (f.id or "id") ~ "-" ~ c.default_id }}</span>: it starts whenever {{ t.title }} does</dd>{% endfor %}
       {% if t.connects %}<dt data-server="{{ new_server }}">Also installs</dt><dd data-server="{{ new_server }}">{{ bundled.title }} ({{ bundled.image }})</dd>{% endif %}
+      {% if t.after_install %}<dt>Afterwards</dt><dd>{{ t.after_install }}</dd>{% endif %}
       <dt>Settings file</dt><dd class="mono">instances/{{ f.id or "id" }}.yaml</dd>
       {% if t.env %}<dt>Environment</dt><dd class="mono">{% for k, v in t.env.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
     </dl>

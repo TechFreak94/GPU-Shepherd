@@ -81,6 +81,8 @@
       <div><label for="open_port">"Open" button port</label><input type="number" id="open_port" name="open_port" min="1" max="65535" value="{{ f.open_port or '' }}" placeholder="first port">
       </div>
       <div><label for="open_path">"Open" button path</label><input type="text" id="open_path" name="open_path" value="{{ f.open_path or '/' }}"></div>
+      <div><label for="requires">Starts with</label><input type="text" id="requires" name="requires" value="{{ f.requires or '' }}" placeholder="librechat-mongodb">
+        <div class="hint">IDs of instances it needs, such as its database, separated by commas. Starting it starts them first.</div></div>
     </div>
     <details style="margin-top:12px"><summary>Advanced</summary>
       <div class="fields" style="margin-top:10px">

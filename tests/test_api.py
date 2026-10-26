@@ -109,6 +109,12 @@ def test_app_store_install(stack):
     r = client.post("/api/v1/apps/comfyui/install", json={"id": "comfy2"})
     assert r.status_code == 400 and "already exists" in r.json()["error"]
     assert client.post("/api/v1/apps/nope/install", json={}).status_code == 404
+    lc = client.get("/api/v1/apps/librechat").json()
+    assert lc["also_installs"] == ["LibreChat database"] and "first account" in lc["after_install"]
+    r = client.post("/api/v1/apps/librechat/install", json={"server": "llm"})
+    assert r.status_code == 201 and r.json()["companions"] == ["librechat-mongodb"], r.text
+    assert "Installed LibreChat and LibreChat database." in r.json()["message"]
+    assert "librechat-mongodb" not in {a["key"] for a in client.get("/api/v1/apps").json()}
 
 
 def test_models_and_server_settings(stack):

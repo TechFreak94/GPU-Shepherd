@@ -1,9 +1,14 @@
 """The App Store's apps: built-in templates for installing an app as an instance.
 
-A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, Hermes Agent) that
-asks a few questions and fills in everything else. What it creates is an ordinary instance (and,
-for model servers, the models picked), so it can be edited field by field afterwards. Every app can also be installed by hand: the full form, filled in from the
-same defaults.
+A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, LibreChat, Hermes
+Agent...) that asks a few questions and fills in everything else. What it creates is an ordinary
+instance (and, for model servers, the models picked), so it can be edited field by field
+afterwards. Every app can also be installed by hand: the full form, filled in from the same
+defaults.
+
+An app that needs a helper container (LibreChat's database) lists it in `companions`: a hidden
+template installed alongside as its own instance, which the app `requires`, so starting the app
+starts it too.
 
 This module is pure: the app passes in what it knows about the machine (GPUs, existing
 instances, folders) and gets pydantic objects back.
@@ -57,9 +62,10 @@ class Template:
     open_path: str = "/"
     env: dict[str, str] = field(default_factory=dict)
     appdata: tuple[tuple[str, str], ...] = ()  # (subfolder of the app data folder, path inside)
+    files: tuple[tuple[str, str], ...] = ()    # (file in the app data folder, path inside): settings files
     models_mount: tuple[str, str, bool] | None = None   # (subfolder of the models folder, path inside, read-only)
     models: tuple[ModelSlot, ...] = ()        # model servers: the models picked while installing
-    connects: str = ""                         # how it is told about a model server: "openwebui" or "hermes"
+    connects: str = ""                         # how it is told about a model server (see CONNECTS)
     command: tuple[str, ...] = ()
     login: tuple[str, str] | None = None       # (user env var, password env var) of its own login
     data_owner: tuple[int, int] | None = None  # uid:gid the app runs as, for the folders made for it
@@ -67,6 +73,9 @@ class Template:
     docs: str = ""
     badge: str = ""                            # a few characters for its App Store icon
     tag: str = ""                              # what kind of instance it is, on its dashboard card
+    companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
+    hidden: bool = False                       # a companion: not offered in the App Store itself
+    after_install: str = ""                    # what is left to do in the app itself once it runs
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -109,6 +118,38 @@ TEMPLATES: tuple[Template, ...] = (
         needs="A model server whose model can call tools (Qwen3 models can)",
         docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
     Template(
+        key="librechat", tag="Chat UI", badge="LC", title="LibreChat", group="Chat and agents",
+        blurb="A multi-user ChatGPT-style chat with agents, presets and conversation search, using your own model server.",
+        points=("No GPU needed", "Connects to a model server for you, API key included",
+                "Installs its MongoDB database alongside, which starts with it"),
+        default_id="librechat", default_name="LibreChat", description="LibreChat",
+        image="librechat/librechat:latest", container_port=3080, host_port=3080, gpu="none",
+        env={"HOST": "0.0.0.0", "PORT": "3080", "ALLOW_REGISTRATION": "true", "ALLOW_EMAIL_LOGIN": "true",
+             "ALLOW_SOCIAL_LOGIN": "false", "ENDPOINTS": "custom,agents", "SEARCH": "false",
+             # plain http on a LAN address: secure cookies would never come back and logins would loop
+             "SESSION_COOKIE_SECURE": "false", "NO_INDEX": "true"},
+        appdata=(("images", "/app/client/public/images"), ("uploads", "/app/uploads"), ("logs", "/app/logs")),
+        files=(("librechat.yaml", "/app/librechat.yaml"),), data_owner=(1000, 1000),
+        companions=("librechat-mongodb",), connects="librechat",
+        after_install="Open it, sign up and log in: the first account becomes the admin. Then turn sign-ups "
+                      "off by setting ALLOW_REGISTRATION=false under Edit, unless others should make accounts.",
+        needs="An LLM server to chat with", docs="https://www.librechat.ai/docs"),
+    Template(
+        key="anythingllm", tag="Chat UI", badge="ALL", title="AnythingLLM", group="Chat and agents",
+        blurb="Chat with your documents: workspaces, built-in RAG and agents, thinking with your own model server.",
+        points=("No GPU needed", "Connects to a model server for you, API key included",
+                "Embeds documents on the CPU and keeps vectors in its own folder"),
+        default_id="anythingllm", default_name="AnythingLLM", description="AnythingLLM",
+        image="mintplexlabs/anythingllm:latest", container_port=3001, host_port=3001, gpu="none",
+        # its web scraper's Chromium without --cap-add SYS_ADMIN, as upstream documents
+        env={"STORAGE_DIR": "/app/server/storage", "DISABLE_TELEMETRY": "true",
+             "ANYTHINGLLM_CHROMIUM_ARGS": "--no-sandbox,--disable-setuid-sandbox"},
+        appdata=(("storage", "/app/server/storage"),), files=(("server.env", "/app/server/.env"),),
+        data_owner=(1000, 1000), connects="anythingllm",
+        after_install="Open it and make a workspace to chat in; the model server is already set up. "
+                      "It has no login until you set a password under Settings, Security.",
+        needs="An LLM server to chat with", docs="https://docs.anythingllm.com/installation-docker/overview"),
+    Template(
         key="comfyui", tag="Image UI", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
@@ -121,6 +162,14 @@ TEMPLATES: tuple[Template, ...] = (
         models_mount=("comfyui", "/root/ComfyUI/models", False),
         needs="An NVIDIA GPU with 8+ GB and driver 580 or newer (CUDA 13 image)",
         docs="https://github.com/YanWenKun/ComfyUI-Docker"),
+
+    # companions: installed with an app, never on their own
+    Template(
+        key="librechat-mongodb", tag="Database", badge="DB", title="LibreChat database", group="Companions",
+        blurb="MongoDB for LibreChat's accounts and conversations.", points=(), hidden=True,
+        default_id="mongodb", default_name="database", description="MongoDB for LibreChat",
+        image="mongo:8.0", command=("mongod", "--noauth", "--bind_ip_all"), container_port=27017, host_port=0,
+        gpu="none", appdata=(("mongodb", "/data/db"),), docs="https://www.librechat.ai/docs/local/docker"),
 )
 
 # the model server an app with a connection can install alongside itself, and the model slot it fills
@@ -161,8 +210,8 @@ def tag_for(inst: Instance) -> str:
 
 
 def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
-    """Template key -> the instances installed from it."""
-    return {t.key: [i for i in instances.values() if matches(t, i)] for t in TEMPLATES}
+    """Template key -> the instances installed from it (App Store apps only, not companions)."""
+    return {t.key: [i for i in instances.values() if matches(t, i)] for t in TEMPLATES if not t.hidden}
 
 
 def get(key: str) -> Template:
@@ -176,8 +225,14 @@ def get(key: str) -> Template:
 def groups() -> list[tuple[str, list[Template]]]:
     out: dict[str, list[Template]] = {}
     for t in TEMPLATES:
-        out.setdefault(t.group, []).append(t)
+        if not t.hidden:
+            out.setdefault(t.group, []).append(t)
     return list(out.items())
+
+
+def companion_id(app_id: str, c: Template) -> str:
+    """The ID of an app's companion, e.g. librechat-mongodb."""
+    return f"{app_id}-{c.default_id}"
 
 
 # --------------------------------------------------------------------------- suggestions
@@ -300,7 +355,15 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         appdata = str(a.get("appdata_dir", "")).strip().rstrip("/")
         if not appdata.startswith("/"):
             raise ConfigError("App data folder: enter an absolute path")
-        volumes += [VolumeMap(host=f"{appdata}/{sub}", container=inside) for sub, inside in t.appdata]
+        volumes += [VolumeMap(host=f"{appdata}/{sub}", container=inside) for sub, inside in t.appdata + t.files]
+    requires = []
+    for c in map(get, t.companions):
+        cid = companion_id(iid, c)
+        if not SLUG.match(cid):
+            raise ConfigError(f"ID: too long for its {c.default_name} ({cid}); use a shorter one")
+        if cid in m.instances:
+            raise ConfigError(f"an instance called '{cid}' already exists (it would be {t.title}'s {c.default_name})")
+        requires.append(cid)
 
     env = dict(t.env)
     if t.login:
@@ -312,12 +375,40 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         env.update(_openwebui(a, m))
     elif t.connects == "hermes":
         env.update(_hermes(a, m))
+    elif t.connects == "librechat":
+        env.update(_librechat(a, m, requires))
 
     inst = Instance(id=iid, name=str(a.get("name", "")).strip() or iid, description=t.description, kind=t.kind,
                     image=t.image, command=list(t.command), env=env,
                     ports=[PortMap(host=int(port), container=t.container_port)], volumes=volumes, gpu=gpu,
-                    autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key)
+                    autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key, requires=requires)
     return inst, _models(t, a, m)
+
+
+def appdata_dir(t: Template, inst: Instance) -> str:
+    """The app data folder an instance of this app was installed with ("" if it has none)."""
+    for sub, inside in t.appdata + t.files:
+        v = next((v for v in inst.volumes if v.container == inside), None)
+        if v and v.host.endswith("/" + sub):
+            return v.host.removesuffix("/" + sub)
+    return ""
+
+
+def companions(t: Template, inst: Instance) -> list[Instance]:
+    """The helper instances an app installs with itself, for the ones it requires. They keep their
+    data in the app's own data folder and use no GPU; nothing outside the instances' network
+    reaches them."""
+    out = []
+    appdata = appdata_dir(t, inst)
+    for c in map(get, t.companions):
+        cid = companion_id(inst.id, c)
+        if cid not in inst.requires or not appdata:
+            continue
+        out.append(Instance(
+            id=cid, name=f"{inst.name} {c.default_name}", description=c.description, image=c.image,
+            command=list(c.command), env=dict(c.env), gpu=_gpu_policy("none", c.priority), app=c.key,
+            volumes=[VolumeMap(host=f"{appdata}/{sub}", container=inside) for sub, inside in c.appdata + c.files]))
+    return out
 
 
 def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
@@ -337,23 +428,71 @@ def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Ca
     srv, models = build(t, d, m)
     cat = Catalog(instance_id=srv.id, models=models)
     m.instances[srv.id] = srv
-    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": BUNDLED_SLOT if models else ""}
+    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": BUNDLED_SLOT if models else "",
+                         "ctx": models[0].ctx_size if models else 0}
     return srv, cat
 
 
 def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
-    """Files to write into a new app's data folder (subfolder/path -> text), if they don't exist yet."""
+    """Files to write into a new app's data folder (path inside it -> text), if they don't exist yet.
+    Every settings file the app mounts gets one, so Docker never makes a folder in its place."""
     server = str(a.get("server", "")).strip()
-    if t.connects != "hermes" or not server or server not in m.servers:
-        return {}
-    info = m.servers[server]
-    lines = ["# Written by GPU Shepherd when Hermes Agent was installed. Hermes owns this file now:",
-             "# change the model with `hermes model` or in its dashboard.",
-             "model:", "  provider: custom", f"  base_url: {_server_url(server, m)}",
-             f"  api_key: {info['api_key']}"]
-    if info.get("default_model"):
-        lines.append(f"  default: {info['default_model']}")
-    return {"data/config.yaml": "\n".join(lines) + "\n"}
+    info = m.servers.get(server) if server in m.instances else None
+    out: dict[str, str] = {}
+    if t.connects == "hermes" and info:
+        lines = ["# Written by GPU Shepherd when Hermes Agent was installed. Hermes owns this file now:",
+                 "# change the model with `hermes model` or in its dashboard.",
+                 "model:", "  provider: custom", f"  base_url: {_server_url(server, m)}",
+                 f"  api_key: {info['api_key']}"]
+        if info.get("default_model"):
+            lines.append(f"  default: {info['default_model']}")
+        out["data/config.yaml"] = "\n".join(lines) + "\n"
+    elif t.connects == "anythingllm":
+        out["server.env"] = _anythingllm_env(_server_url(server, m) if info else "", info or {})
+    elif t.connects == "librechat":
+        out["librechat.yaml"] = LIBRECHAT_YAML
+    for name, _ in t.files:
+        out.setdefault(name, "")
+    return out
+
+
+# LibreChat's settings file: one custom endpoint whose address and key come from the instance's
+# environment (LLM_BASE_URL, LLM_API_KEY), so pointing it at another model server is an Edit away.
+# The version is the config schema LibreChat's release image reads (newer ones only log a notice).
+LIBRECHAT_YAML = """\
+# Written by GPU Shepherd when LibreChat was installed. LibreChat reads it when it starts, and it is
+# yours to change: https://www.librechat.ai/docs/configuration/librechat_yaml
+# The model server's address and API key are LLM_BASE_URL and LLM_API_KEY in the instance's
+# environment (Edit on the GPU Shepherd dashboard).
+version: 1.3.17
+cache: true
+endpoints:
+  custom:
+    - name: "Local models"
+      apiKey: "${LLM_API_KEY}"
+      baseURL: "${LLM_BASE_URL}"
+      models:
+        default: ["chat"]
+        fetch: true
+      titleConvo: true
+      titleModel: "current_model"
+      modelDisplayLabel: "Local models"
+"""
+
+
+def _anythingllm_env(url: str, info: dict) -> str:
+    """AnythingLLM's own settings file (/app/server/.env). It rewrites the file when settings change
+    in its web page, so the connection goes here rather than into the container's environment,
+    which would win over the page on every start."""
+    lines = ["# Written by GPU Shepherd when AnythingLLM was installed. AnythingLLM owns this file now:",
+             "# change settings in its web page.",
+             "EMBEDDING_ENGINE='native'", "VECTOR_DB='lancedb'"]
+    if url:
+        lines += ["LLM_PROVIDER='generic-openai'", f"GENERIC_OPEN_AI_BASE_PATH='{url}'",
+                  f"GENERIC_OPEN_AI_API_KEY='{info['api_key']}'",
+                  f"GENERIC_OPEN_AI_MODEL_PREF='{info.get('default_model') or 'chat'}'",
+                  f"GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT='{info.get('ctx') or 8192}'"]
+    return "\n".join(lines) + "\n"
 
 
 def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
@@ -397,6 +536,18 @@ def _hermes(a: dict, m: Machine) -> dict[str, str]:
         env |= {"HASS_TOKEN": hass_token, "HASS_URL": hass_url or "http://homeassistant.local:8123"}
     elif hass_url:
         raise ConfigError("Home Assistant: also paste a long-lived access token, or clear the address")
+    return env
+
+
+def _librechat(a: dict, m: Machine, requires: list[str]) -> dict[str, str]:
+    """Its database (the companion it requires), fresh secrets, and the model server for
+    librechat.yaml's endpoint."""
+    env = {"MONGO_URI": f"mongodb://{requires[0]}:27017/LibreChat",
+           "CREDS_KEY": secrets.token_hex(32), "CREDS_IV": secrets.token_hex(16),
+           "JWT_SECRET": secrets.token_hex(32), "JWT_REFRESH_SECRET": secrets.token_hex(32)}
+    server = _server(a, m)
+    if server:
+        env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
     return env
 
 

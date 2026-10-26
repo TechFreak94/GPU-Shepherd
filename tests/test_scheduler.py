@@ -149,3 +149,24 @@ def test_second_comfyui_takes_gpu1_from_llm():
     p = plan(TWO, s, {"comfyui": [0], "comfyui-2": [1]}, "start", "llm")
     assert p.allocations == {"comfyui": [0], "llm": [1]}
     assert p.preempted == ["comfyui-2"]
+
+
+def test_starting_an_app_starts_what_it_requires_first():
+    s = stack() | {"db": inst("db"), "chat": inst("chat").model_copy(update={"requires": ["db"]})}
+    p = plan(TWO, s, {}, "start", "chat")
+    assert p.to_start == ["db", "chat"] and p.allocations == {"db": [], "chat": []} and not p.side_effects
+    p = plan(TWO, s, {"db": []}, "start", "chat")          # already running: left alone
+    assert p.to_start == ["chat"] and not p.to_restart
+    assert plan(TWO, s, {"db": [], "chat": []}, "stop", "chat").to_stop == ["chat"]   # stays up for others
+    auto = plan(TWO, s, {}, "rebalance", None, {"chat"})
+    assert auto.to_start.index("db") < auto.to_start.index("chat")
+
+
+def test_missing_requirement_is_an_error():
+    s = stack() | {"chat": inst("chat").model_copy(update={"requires": ["gone"]})}
+    assert "needs instance 'gone'" in plan(TWO, s, {}, "start", "chat").error
+
+
+def test_requirement_cycle_does_not_hang():
+    s = {"a": inst("a").model_copy(update={"requires": ["b"]}), "b": inst("b").model_copy(update={"requires": ["a"]})}
+    assert sorted(plan(TWO, s, {}, "start", "a").to_start) == ["a", "b"]

@@ -147,8 +147,8 @@ theme is the one exception: it is a choice saved in each browser.
 | `apply FILE` | Create or replace an instance from a YAML or JSON file, such as `show`'s output (`-` reads standard input). `--id` gives the ID if the file has none. | Edit, *Any Docker image* |
 | `delete ID` | Delete the instance and its container; folders on disk are kept. Asks first; `-y` doesn't. | Delete |
 | `apps` | The App Store's apps and what is installed from each. | App Store |
-| `apps show KEY` | An app, the answers its install form starts with, and the choices for each. | Install |
-| `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=Qwen3-8B-Q4_K_M.gguf`, `apps install open-webui server=new chat_file=...` (installs an LLM server with it). | Install |
+| `apps show KEY` | An app, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
+| `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=Qwen3-8B-Q4_K_M.gguf`, `apps install open-webui server=new chat_file=...` (installs an LLM server with it), `apps install librechat` (and its database). | Install |
 | `apps manual KEY [KEY=VALUE...]` | Print the instance an install would make, as YAML, without saving it: edit it and `apply` it. | Manual |
 | `models list SERVER` | A model server's models, which are loaded, and its auto names. | Models |
 | `models files SERVER` | The .gguf files the server can see. | Models › file list |

@@ -348,7 +348,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "user_spec": inst.user or "", "memory_limit": inst.memory_limit or "",
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
                 "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
-                "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app}
+                "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app,
+                "requires": ", ".join(inst.requires)}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
         gpus, _ = engine.snapshot().gpus, None
@@ -386,6 +387,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
                     servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
+                    companions=[tpl.get(c) for c in t.companions],
                     no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
 
     # ------------------------------------------------------------------ App Store
@@ -463,9 +465,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             what = f"with {', '.join(x.id for x in models)}" if models else "- add a model below"
             return Response(status_code=204, headers={
                 "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}. Press Start on the dashboard to run it."})
-        also = f" and {bundle.name}" if bundle else ""
+        also = "".join(f" and {x.name}" for x in [bundle, *done.companions] if x)
+        after = f" {t.after_install}" if t.after_install else ""
         return Response(status_code=204, headers={
-            "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.#inst-{inst.id}"})
+            "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.{after}#inst-{inst.id}"})
 
     @app.get("/instances/{iid}/edit", response_class=HTMLResponse)
     def edit_instance(request: Request, iid: str):
@@ -481,7 +484,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
                                           "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
-                                          "drain_path", "drain_key", "app")}
+                                          "drain_path", "drain_key", "app", "requires")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
         editing = f["editing"] == "1"
@@ -501,7 +504,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   on_timeout=f["drain_on_timeout"] or "stop",
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
                                   path=f["drain_path"], key=f["drain_key"]),
-                app=str(f["app"]).strip())
+                app=str(f["app"]).strip(), requires=re.split(r"[\s,]+", str(f["requires"]).strip()))
             msg = svc.save_instance(inst, editing)
         except (Problem, ConfigError, ValueError) as err:
             resp = editor(request, f, editing, error=err.msg if isinstance(err, Problem) else message(err))

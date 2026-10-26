@@ -159,7 +159,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def app_json(t: tpl.Template, installed: list[Instance]) -> dict:
         return {"key": t.key, "title": t.title, "group": t.group, "blurb": t.blurb, "points": list(t.points),
                 "kind": t.kind, "image": t.image, "gpu": t.gpu, "needs": t.needs, "docs": t.docs,
-                "needs_llm_server": bool(t.connects), "installed": [i.id for i in installed]}
+                "needs_llm_server": bool(t.connects), "installed": [i.id for i in installed],
+                "also_installs": [tpl.get(c).title for c in t.companions], "after_install": t.after_install}
 
     @r.get("/api/v1/apps")
     def list_apps():
@@ -194,11 +195,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     async def install_app(request: Request, key: str):
         done = svc.install(key, await body(request) if await request.body() else {}, fill_defaults=True)
-        also = f" and {done.bundle.name}" if done.bundle else ""
-        return JSONResponse({"message": f"Installed {done.inst.name}{also}.",
+        also = "".join(f" and {x.name}" for x in [done.bundle, *done.companions] if x)
+        after = f" {tpl.get(key).after_install}" if tpl.get(key).after_install else ""
+        return JSONResponse({"message": f"Installed {done.inst.name}{also}.{after}",
                              "instance": done.inst.model_dump(mode="json"),
                              "models": [x.id for x in done.models],
-                             "llm_server": done.bundle.id if done.bundle else None}, status_code=201)
+                             "llm_server": done.bundle.id if done.bundle else None,
+                             "companions": [x.id for x in done.companions]}, status_code=201)
 
     # ------------------------------------------------------------------ model servers
     @r.get("/api/v1/instances/{iid}/models")
