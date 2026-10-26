@@ -127,7 +127,7 @@ if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1;
     exec sudo -- "$HERE/$(basename "$0")" "${ARGS[@]}"
 fi
 
-have git || { err "git is not installed (sudo apt install git)"; exit 1; }
+have git || { err "git is not installed (install it with your package manager: apt, dnf or pacman)"; exit 1; }
 [ -e "$HERE/.git" ] || { err "$HERE is not a git clone, so it can't be updated in place. Clone the
        repository again, copy your compose.yaml into the new folder and run install.sh there."; exit 1; }
 
@@ -276,7 +276,8 @@ fi
 # --------------------------------------------------------------------------- dashboard service
 
 if [ "$SERVICE" = enable ]; then
-    have systemctl || { err "systemd is needed for dashboard updates"; exit 1; }
+    { have systemctl && [ -d /run/systemd/system ]; } || { err "systemd is needed for dashboard updates (on WSL2:
+       set [boot] systemd=true in /etc/wsl.conf, then wsl --shutdown in Windows)"; exit 1; }
     [ -d "$DATA_DIR" ] || { err "$DATA_DIR does not exist yet; run install.sh first"; exit 1; }
     mkdir -p "$STATE_DIR"
     cat >"$UNIT_DIR/$UNIT.path" <<EOF
@@ -299,7 +300,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=$HERE/update.sh --from-dashboard
+# Through bash, so SELinux (Fedora, RHEL) lets systemd run it from a clone in a home folder.
+ExecStart=/bin/bash $HERE/update.sh --from-dashboard
 EOF
     cat >"$UNIT_DIR/$UNIT-check.service" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates.
@@ -310,7 +312,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=$HERE/update.sh --check --quiet
+ExecStart=/bin/bash $HERE/update.sh --check --quiet
 SuccessExitStatus=10
 EOF
     cat >"$UNIT_DIR/$UNIT-check.timer" <<EOF

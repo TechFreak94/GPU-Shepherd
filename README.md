@@ -82,6 +82,11 @@ each instance says what it needs, and starting or stopping anything re-plans who
   models, auto names).
 - [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command and its
   commands for everything the dashboard does, `download-models.sh` and environment variables.
+- [Linux distributions](docs/linux.md): which distros `install.sh` supports and where Docker, the
+  NVIDIA Container Toolkit and the driver come from, plus SELinux and Secure Boot notes.
+- [Proxmox](docs/proxmox.md): a VM with GPU passthrough, or an LXC container sharing the host's GPU.
+- [TrueNAS SCALE](docs/truenas.md): a VM with GPU passthrough, or running it on the host.
+- [Unraid](docs/unraid.md): the Nvidia Driver plugin and Docker Compose.
 - [JSON API](docs/api.md): `/api/v1`, the API token, and every endpoint with examples.
 - [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
   the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
@@ -90,9 +95,10 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Quick start
 
-### Ubuntu: guided install
+### Linux: guided install
 
-On Ubuntu 26.04 (24.04 works too) with an NVIDIA GPU:
+On Ubuntu, Debian, Fedora, RHEL-family (Rocky, Alma) or Arch with an NVIDIA GPU, and WSL2
+(experimental, see [WSL2](docs/linux.md#wsl2)); [supported versions](docs/linux.md):
 
 ```bash
 git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
@@ -108,6 +114,8 @@ first login.
 
 It is safe to re-run. For scripted installs every question has an option, and `--yes` skips the
 rest; see [CLI and scripts](docs/cli.md#installsh).
+
+On Proxmox, TrueNAS SCALE or Unraid, see [Proxmox](docs/proxmox.md), [TrueNAS SCALE](docs/truenas.md) or [Unraid](docs/unraid.md).
 
 RAM: with less than 32 GB, plan on models that fit in GPU memory. 64 GB is recommended for the
 largest models (Qwen3 Coder Next is ~49 GB at Q4).

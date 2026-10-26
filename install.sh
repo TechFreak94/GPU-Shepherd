@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# GPU Shepherd installer for Ubuntu (written for 26.04 LTS; 24.04 works too).
+# GPU Shepherd installer for Linux: Ubuntu 24.04+, Debian 12/13, Fedora, RHEL/Rocky/Alma 9+ and Arch
+# (and distros based on them). Elsewhere, install the four requirements yourself and use --skip-deps.
 #
 #   sudo ./install.sh              # guided: looks at the machine, asks a few questions, then installs
 #   sudo ./install.sh --yes        # no questions: defaults plus whatever flags you give
@@ -8,8 +9,8 @@
 #
 # What it does, skipping anything already in place:
 #   1. checks the NVIDIA driver (offers to install the recommended one)
-#   2. installs Docker Engine and the Compose plugin from Ubuntu's own packages
-#   3. installs the NVIDIA Container Toolkit and connects it to Docker
+#   2. installs Docker Engine and the Compose plugin (Ubuntu and Arch packages, or Docker's repository)
+#   3. installs the NVIDIA Container Toolkit and connects it to Docker (and SELinux, where Docker uses it)
 #   4. checks that a container can see the GPUs
 #   5. adds you to the docker group, so docker works without sudo
 #   6. on the first run, offers a preset: a ready-made set of instances to start from
@@ -61,7 +62,8 @@ in advance, for scripted or advanced installs.
                       pass "" for none
   --port N            web UI port (default: $DEFAULT_PORT)
   --data-dir DIR      where GPU Shepherd keeps its settings (default: $DEFAULT_DATA_DIR)
-  --install-driver    install the recommended NVIDIA driver if none is working (needs a reboot)
+  --install-driver    install the distro's NVIDIA driver if none is working (needs a reboot;
+                      not on RHEL-family systems or inside a container)
   --skip-deps         don't install anything; only write compose.yaml and start GPU Shepherd
   --preset NAME|DIR   on the first run, create the instances of a preset: one of the folders in
                       gpushepherd/presets (see --list-presets) or a preset folder of your own;
@@ -208,15 +210,66 @@ fi
 
 # --------------------------------------------------------------------------- look at the machine
 
+# The distro family decides the package manager and where each package comes from: ubuntu, debian,
+# fedora, rhel (RHEL, Rocky, Alma, CentOS Stream, Oracle) or arch. Derivatives are matched through
+# ID_LIKE. An unknown distro gets no package installs: everything must be in place (or --skip-deps).
+ID=""; ID_LIKE=""; VERSION_ID=""; VERSION_CODENAME=""; DEBIAN_CODENAME=""; PRETTY_NAME=""
 if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
-    if [ "${ID:-}" != "ubuntu" ]; then
-        warn "this script is written for Ubuntu; found ${PRETTY_NAME:-unknown}. Continuing anyway."
-    else
-        say "Ubuntu ${VERSION_ID:-?} detected"
+fi
+family_of() {
+    case "$1" in
+        ubuntu|debian|fedora|arch) echo "$1" ;;
+        rhel|centos|rocky|almalinux|ol) echo rhel ;;
+    esac
+}
+FAMILY=$(family_of "$ID")
+if [ -z "$FAMILY" ]; then
+    for like in $ID_LIKE; do FAMILY=$(family_of "$like"); [ -z "$FAMILY" ] || break; done
+fi
+major=${VERSION_ID%%.*}
+case "$FAMILY" in
+    ubuntu) min_major=24 ;;
+    debian) min_major=12 ;;
+    rhel)   min_major=9 ;;
+    *)      min_major="" ;;
+esac
+if [ -z "$FAMILY" ]; then
+    warn "${PRETTY_NAME:-this distro} isn't one this script knows (Ubuntu, Debian, Fedora, RHEL-family, Arch).
+         It can't install packages here: install Docker, the Compose plugin, the NVIDIA driver and
+         the NVIDIA Container Toolkit yourself, then run: sudo ./install.sh --skip-deps"
+else
+    say "${PRETTY_NAME:-$ID} detected"
+    # Only the distro itself is checked: a derivative's version numbers are its own.
+    if [ -n "$min_major" ] && [ "$(family_of "$ID")" = "$FAMILY" ] \
+            && [ -n "$major" ] && [ "$major" -eq "$major" ] 2>/dev/null && [ "$major" -lt "$min_major" ]; then
+        warn "$PRETTY_NAME is older than this script was tested on; continuing anyway."
     fi
 fi
+# WSL2 (experimental): the GPU and its driver come from Windows, Docker usually from Docker Desktop.
+WSL=0
+if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] || grep -qi microsoft /proc/version 2>/dev/null; then
+    WSL=1
+    warn "WSL2 detected. Support for it is experimental: the NVIDIA driver must be installed in Windows
+         (not in Linux), and Docker Desktop with WSL integration, or Docker Engine in this distro, runs
+         the containers. See docs/linux.md#wsl2."
+    # The Windows driver puts nvidia-smi here, which isn't always on PATH.
+    [ ! -x /usr/lib/wsl/lib/nvidia-smi ] || PATH="$PATH:/usr/lib/wsl/lib"
+fi
+# Inside a container (LXC on Proxmox, say) the driver belongs to the host, so it is never installed.
+IN_CONTAINER=""
+if have systemd-detect-virt; then
+    IN_CONTAINER=$(systemd-detect-virt --container 2>/dev/null || true)
+    case "$IN_CONTAINER" in none|wsl) IN_CONTAINER="" ;; esac
+elif [ "$WSL" -eq 0 ] && { [ -f /.dockerenv ] || [ -f /run/.containerenv ]; }; then
+    IN_CONTAINER=container
+fi
+[ -z "$IN_CONTAINER" ] || say "Running inside a container ($IN_CONTAINER)"
+# Without systemd (WSL2 before it is turned on, some containers) there is no Docker service to
+# start and no dashboard update service.
+HAS_SYSTEMD=0
+if [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; fi
 [ "$(uname -m)" = "x86_64" ] || [ "$(uname -m)" = "aarch64" ] || warn "untested CPU architecture $(uname -m)"
 
 # The kernel reports a little less than what is installed (firmware and the GPU driver reserve
@@ -235,12 +288,18 @@ elif [ "$ram_gb" -lt "$RECOMMENDED_RAM_GB" ]; then
          which keep most of their layers in system RAM. Mid-size models will work."
 fi
 
+# Docker Desktop (WSL2) brings its own GPU support: no toolkit or runtime setup here.
+docker_desktop() { [ "$WSL" -eq 1 ] && docker info --format '{{.OperatingSystem}}' 2>/dev/null | grep -q 'Docker Desktop'; }
 HAS_DRIVER=0; HAS_DOCKER=0; HAS_COMPOSE=0; HAS_CTK=0; HAS_RUNTIME=0; HAS_CURL=0; HAS_COMPOSE_FILE=0
+DOCKER_IS_PODMAN=0      # podman-docker's stand-in docker command: it can't run GPU Shepherd
 if have nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then HAS_DRIVER=1; fi
-if have docker; then HAS_DOCKER=1; fi
+if have docker; then
+    if docker --version 2>/dev/null | grep -qi podman; then DOCKER_IS_PODMAN=1; else HAS_DOCKER=1; fi
+fi
 if [ "$HAS_DOCKER" -eq 1 ] && docker compose version >/dev/null 2>&1; then HAS_COMPOSE=1; fi
 if have nvidia-ctk; then HAS_CTK=1; fi
 if [ "$HAS_DOCKER" -eq 1 ] && docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then HAS_RUNTIME=1; fi
+if [ "$HAS_DOCKER" -eq 1 ] && docker_desktop; then HAS_CTK=1; HAS_RUNTIME=1; fi
 if have curl; then HAS_CURL=1; fi
 if [ -f "$HERE/compose.yaml" ]; then HAS_COMPOSE_FILE=1; fi
 
@@ -253,41 +312,127 @@ else
 fi
 status() { if [ "$1" -eq 1 ]; then item "$OK" "$2"; else item "$NO" "no $2"; fi; }
 status "$HAS_DOCKER" "Docker"
+[ "$DOCKER_IS_PODMAN" -eq 0 ] || item "$NO" "a docker command from Podman (podman-docker), not Docker"
 status "$HAS_COMPOSE" "Docker Compose"
-status "$HAS_CTK" "NVIDIA Container Toolkit"
+if [ "$HAS_DOCKER" -eq 1 ] && docker_desktop; then item "$OK" "GPU support from Docker Desktop"
+else status "$HAS_CTK" "NVIDIA Container Toolkit"; fi
 [ "$HAS_COMPOSE_FILE" -eq 1 ] && item "$OK" "a compose.yaml from an earlier run (it will be kept)"
 echo
 
 # --------------------------------------------------------------------------- NVIDIA driver
 
-apt_updated=0
-apt_install() {
-    if [ "$apt_updated" -eq 0 ]; then
-        DEBIAN_FRONTEND=noninteractive apt-get update -q
-        apt_updated=1
-    fi
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$@"
+# Each family's package manager. apt's package lists are refreshed once, and again after a
+# repository is added. Arch is never partly upgraded behind your back (no -Sy).
+apt_fresh=0
+pkg_install() {
+    case "$FAMILY" in
+        ubuntu|debian)
+            if [ "$apt_fresh" -eq 0 ]; then DEBIAN_FRONTEND=noninteractive apt-get update -q; apt_fresh=1; fi
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$@" ;;
+        fedora|rhel)
+            dnf install -y "$@" ;;
+        arch)
+            pacman -S --needed --noconfirm "$@" || die "pacman could not install $*. If a download failed,
+       the package lists are out of date: run  sudo pacman -Syu  (reboot if it updated the kernel),
+       then run this again."
+            ;;
+        *)  die "this script can't install $* on ${PRETTY_NAME:-this distro}. Install it yourself and run
+       this again with --skip-deps." ;;
+    esac
+}
+pkg_remove() {
+    case "$FAMILY" in
+        ubuntu|debian) DEBIAN_FRONTEND=noninteractive apt-get remove -y -q "$@" ;;
+        fedora|rhel)   dnf remove -y "$@" ;;
+        arch)          pacman -R --noconfirm "$@" ;;
+    esac
 }
 
-no_driver_help="Install one with
+# Where the NVIDIA driver comes from on each family. RHEL-family systems have several equally
+# official ways (NVIDIA's CUDA repository, precompiled or DKMS, open or proprietary), so the choice
+# is left to you there; in a container the driver is the host's.
+driver_cmd=""
+case "$FAMILY" in
+    ubuntu) driver_cmd="sudo ubuntu-drivers install" ;;
+    debian) driver_cmd="sudo apt install nvidia-driver firmware-misc-nonfree linux-headers-amd64   (Debian's non-free)" ;;
+    fedora) driver_cmd="sudo dnf install akmod-nvidia xorg-x11-drv-nvidia-cuda   (from RPM Fusion)" ;;
+    arch)   driver_cmd="sudo pacman -S nvidia-open-dkms linux-headers" ;;
+esac
+[ -z "$IN_CONTAINER" ] && [ "$WSL" -eq 0 ] || driver_cmd=""
+if [ "$WSL" -eq 1 ]; then
+    no_driver_help="On WSL2 the driver comes from Windows: install NVIDIA's current Windows driver
+       (never a Linux driver inside WSL), run  wsl --update  in Windows, then run this script again."
+elif [ -n "$IN_CONTAINER" ]; then
+    no_driver_help="This is a container ($IN_CONTAINER): install the NVIDIA driver on the host, pass the
+       GPU devices into the container and install the same driver version's user-space files in it
+       (docs/proxmox.md shows how for Proxmox LXC), then run this script again."
+elif [ "$FAMILY" = rhel ]; then
+    no_driver_help="Install it from NVIDIA's CUDA repository, following
+       https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/
+       then reboot and run this script again."
+elif [ -z "$driver_cmd" ]; then
+    no_driver_help="Install your distro's NVIDIA driver, reboot and run this script again."
+else
+    no_driver_help="Install one with
        sudo ./install.sh --install-driver
-   or  sudo ubuntu-drivers install
+   or  $driver_cmd
 then reboot and run this script again."
+fi
+
+install_driver() {
+    case "$FAMILY" in
+        ubuntu)
+            pkg_install ubuntu-drivers-common
+            ubuntu-drivers install ;;
+        debian)
+            DEBIAN_FRONTEND=noninteractive apt-get update -q; apt_fresh=1
+            apt-cache policy nvidia-driver 2>/dev/null | grep -q 'Candidate: [0-9]' \
+                || die "Debian's nvidia-driver package isn't available. Enable the contrib, non-free and
+       non-free-firmware components (after \"main\" in /etc/apt/sources.list, or on the Components:
+       line of /etc/apt/sources.list.d/debian.sources), then run this script again."
+            pkg_install "linux-headers-$(dpkg --print-architecture)" nvidia-driver firmware-misc-nonfree ;;
+        fedora)
+            if ! rpm -q rpmfusion-nonfree-release >/dev/null 2>&1; then
+                say "Enabling RPM Fusion (free and nonfree), where Fedora's NVIDIA driver comes from"
+                local v; v=$(rpm -E %fedora)
+                dnf install -y "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$v.noarch.rpm" \
+                    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$v.noarch.rpm"
+            fi
+            pkg_install akmod-nvidia xorg-x11-drv-nvidia-cuda
+            say "Building the driver's kernel module (a few minutes)"
+            akmods --force || warn "the kernel module didn't build yet; it is built again at the next boot" ;;
+        arch)
+            # nvidia-open covers Turing (GTX 16 / RTX 20) and newer; older cards need a legacy
+            # driver from the AUR. DKMS builds it for every installed kernel, given its headers.
+            local headers=() k
+            for k in linux linux-lts linux-zen linux-hardened; do
+                if pacman -Q "$k" >/dev/null 2>&1; then headers+=("$k-headers"); fi
+            done
+            pkg_install nvidia-open-dkms "${headers[@]}" ;;
+    esac
+}
 
 if [ "$SKIP_DEPS" -eq 0 ] && [ "$HAS_DRIVER" -eq 0 ]; then
+    if [ -z "$driver_cmd" ]; then
+        die "no working NVIDIA driver (nvidia-smi failed). $no_driver_help"
+    fi
     if [ "$INSTALL_DRIVER" -eq 0 ] && [ "$INTERACTIVE" -eq 1 ]; then
-        echo "GPU Shepherd needs the NVIDIA driver. Ubuntu can install the recommended one for your GPU;"
-        echo "the machine then has to reboot before the rest of the install can continue."
-        if confirm "Install the recommended NVIDIA driver now?" Y; then
+        echo "GPU Shepherd needs the NVIDIA driver. This script can install ${PRETTY_NAME:-your distro}'s driver"
+        echo "for you; the machine then has to reboot before the rest of the install can continue."
+        [ "$FAMILY" != arch ] || echo "(nvidia-open: for GPUs older than the GTX 16 / RTX 20 series, install a legacy driver from the AUR instead.)"
+        if confirm "Install the NVIDIA driver now?" Y; then
             INSTALL_DRIVER=1
         else
             die "no working NVIDIA driver. $no_driver_help"
         fi
     fi
     [ "$INSTALL_DRIVER" -eq 1 ] || die "no working NVIDIA driver (nvidia-smi failed). $no_driver_help"
-    say "Installing the recommended NVIDIA driver"
-    apt_install ubuntu-drivers-common
-    ubuntu-drivers install
+    say "Installing the NVIDIA driver"
+    install_driver
+    if [ -d /sys/firmware/efi ] && have mokutil && mokutil --sb-state 2>/dev/null | grep -qi enabled; then
+        warn "Secure Boot is on: if the driver doesn't load after the reboot, enrol its signing key
+         when the blue MOK screen asks (Ubuntu and Fedora set one up), or turn Secure Boot off."
+    fi
     say "Driver installed. After the reboot, run this script again to finish: sudo ./install.sh"
     if [ "$INTERACTIVE" -eq 1 ] && confirm "Reboot now?" N; then
         reboot
@@ -455,7 +600,7 @@ fi
 if [ -z "$DASH_UPDATES" ]; then
     if systemctl is-enabled --quiet gpu-shepherd-update.path 2>/dev/null; then
         DASH_UPDATES=no                       # already on; nothing to do
-    elif [ "$INTERACTIVE" -eq 1 ] && [ -d /run/systemd/system ] && [ -e "$HERE/.git" ]; then
+    elif [ "$INTERACTIVE" -eq 1 ] && [ "$HAS_SYSTEMD" -eq 1 ] && [ -e "$HERE/.git" ]; then
         echo "    GPU Shepherd can check for updates once a day and show them on the dashboard, with a"
         echo "    button that updates it for you (a small systemd service runs ./update.sh). Without it,"
         echo "    update any time with:  sudo ./update.sh"
@@ -465,6 +610,15 @@ if [ -z "$DASH_UPDATES" ]; then
     else
         DASH_UPDATES=no
     fi
+fi
+if [ "$DASH_UPDATES" = yes ] && [ "$HAS_SYSTEMD" -eq 0 ]; then
+    if [ "$WSL" -eq 1 ]; then
+        warn "--dashboard-updates ignored: systemd isn't running in this WSL distro. Turn it on with
+         [boot] systemd=true  in /etc/wsl.conf and  wsl --shutdown  in Windows, or update with ./update.sh."
+    else
+        warn "--dashboard-updates ignored: systemd isn't running here; update with ./update.sh."
+    fi
+    DASH_UPDATES=no
 fi
 if [ "$DASH_UPDATES" = yes ] && [ ! -e "$HERE/.git" ]; then
     warn "--dashboard-updates ignored: $HERE is not a git clone, so it can't be updated in place."
@@ -481,13 +635,49 @@ fi
 
 # --------------------------------------------------------------------------- the plan
 
+case "$FAMILY" in
+    ubuntu) DOCKER_FROM="Ubuntu packages";  CTK_FROM="NVIDIA's apt repository" ;;
+    debian) DOCKER_FROM="Docker's apt repository"; CTK_FROM="NVIDIA's apt repository" ;;
+    fedora|rhel) DOCKER_FROM="Docker's rpm repository"; CTK_FROM="NVIDIA's rpm repository" ;;
+    arch)   DOCKER_FROM="Arch packages";    CTK_FROM="Arch packages" ;;
+    *)      DOCKER_FROM=""; CTK_FROM="" ;;
+esac
+# Docker's repositories name RHEL itself "rhel" and its rebuilds "centos"; Debian derivatives use
+# the Debian release they are built on.
+DOCKER_REPO=centos
+[ "$ID" != rhel ] || DOCKER_REPO=rhel
+DEBIAN_RELEASE=${DEBIAN_CODENAME:-$VERSION_CODENAME}
+SELINUX_ON=0
+if have selinuxenabled && selinuxenabled; then SELINUX_ON=1; fi
+
 plan=()
 if [ "$SKIP_DEPS" -eq 0 ]; then
-    [ "$HAS_DOCKER" -eq 1 ] || plan+=("Install Docker Engine and Docker Compose (Ubuntu packages)")
+    if [ "$WSL" -eq 1 ] && [ "$HAS_DOCKER" -eq 0 ] && [ "$HAS_SYSTEMD" -eq 0 ]; then
+        die "no Docker. In WSL2 either install Docker Desktop and turn on its WSL integration for this
+       distro, or turn systemd on ([boot] systemd=true in /etc/wsl.conf, then  wsl --shutdown  in
+       Windows) so this script can install Docker Engine here. Then run it again."
+    fi
+    if [ -z "$FAMILY" ]; then
+        missing=()
+        [ "$HAS_DOCKER" -eq 1 ] || missing+=("Docker")
+        [ "$HAS_DOCKER" -eq 0 ] || [ "$HAS_COMPOSE" -eq 1 ] || missing+=("the Docker Compose plugin")
+        [ "$HAS_CTK" -eq 1 ] || missing+=("the NVIDIA Container Toolkit")
+        [ "$HAS_CURL" -eq 1 ] || missing+=("curl")
+        if [ ${#missing[@]} -gt 0 ]; then
+            die "this script can't install packages on ${PRETTY_NAME:-this distro}. Install these yourself:
+       $(IFS=,; echo "${missing[*]}" | sed 's/,/, /g')
+       then run: sudo ./install.sh --skip-deps  (see docs/linux.md)"
+        fi
+    fi
+    [ "$DOCKER_IS_PODMAN" -eq 0 ] || plan+=("Remove podman-docker (Podman's stand-in docker command), to make way for Docker")
+    [ "$HAS_DOCKER" -eq 1 ] || plan+=("Install Docker Engine and Docker Compose ($DOCKER_FROM)")
     [ "$HAS_DOCKER" -eq 0 ] || [ "$HAS_COMPOSE" -eq 1 ] || plan+=("Install the Docker Compose plugin")
-    [ "$HAS_CTK" -eq 1 ] || plan+=("Install the NVIDIA Container Toolkit (from NVIDIA's apt repository)")
+    [ "$HAS_CTK" -eq 1 ] || plan+=("Install the NVIDIA Container Toolkit ($CTK_FROM)")
     [ "$HAS_RUNTIME" -eq 1 ] || plan+=("Connect the NVIDIA runtime to Docker and restart Docker")
     [ "$HAS_CURL" -eq 1 ] || plan+=("Install curl")
+    if [ "$SELINUX_ON" -eq 1 ]; then
+        plan+=("If Docker uses SELinux: let containers use the GPUs (container_use_devices) and let GPU Shepherd reach Docker")
+    fi
     plan+=("Check that a test container ($GPU_TEST_IMAGE) can see the GPUs")
 fi
 if [ -n "$DOCKER_USER" ]; then
@@ -521,49 +711,127 @@ fi
 
 # --------------------------------------------------------------------------- install
 
+# Whether Docker labels containers for SELinux. GPU Shepherd then needs label=disable to reach the
+# Docker socket (and it adds :z to the folders it mounts into app containers by itself).
+docker_selinux() { docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=selinux'; }
+
+install_docker() {
+    case "$FAMILY" in
+        ubuntu)
+            pkg_install docker.io docker-compose-v2 \
+                || die "could not install Docker from Ubuntu's packages (is the 'universe' repository enabled?
+       sudo add-apt-repository universe). Or install Docker Engine yourself and run this again." ;;
+        debian)
+            pkg_install ca-certificates curl
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+            chmod a+r /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
+                "https://download.docker.com/linux/debian $DEBIAN_RELEASE stable" > /etc/apt/sources.list.d/docker.list
+            apt_fresh=0
+            pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+                || die "could not install Docker from Docker's repository for Debian \"$DEBIAN_RELEASE\".
+       Install Docker Engine yourself and run this again." ;;
+        fedora|rhel)
+            local repo=$DOCKER_REPO
+            [ "$FAMILY" != fedora ] || repo=fedora
+            curl -fsSL "https://download.docker.com/linux/$repo/docker-ce.repo" -o /etc/yum.repos.d/docker-ce.repo
+            pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+                || die "could not install Docker from Docker's repository ($repo). Install Docker Engine
+       yourself and run this again." ;;
+        arch)
+            pkg_install docker docker-compose docker-buildx ;;
+    esac
+}
+install_compose() {
+    case "$FAMILY" in
+        ubuntu) if dpkg -s docker-ce >/dev/null 2>&1; then pkg_install docker-compose-plugin
+                else pkg_install docker-compose-v2; fi ;;
+        debian) if dpkg -s docker-ce >/dev/null 2>&1; then pkg_install docker-compose-plugin
+                else pkg_install docker-compose; fi ;;
+        fedora|rhel) if rpm -q docker-ce >/dev/null 2>&1; then pkg_install docker-compose-plugin
+                     else pkg_install docker-compose; fi ;;     # Fedora's own moby-engine
+        arch)   pkg_install docker-compose ;;
+    esac
+    docker compose version >/dev/null 2>&1 || die "'docker compose' still doesn't work. Install the Docker
+       Compose plugin (v2) yourself and run this again."
+}
+install_ctk() {
+    case "$FAMILY" in
+        ubuntu|debian)
+            pkg_install ca-certificates curl gpg
+            local keyring=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor --yes -o "$keyring"
+            curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+                | sed "s#deb https://#deb [signed-by=$keyring] https://#g" \
+                > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            apt_fresh=0
+            pkg_install nvidia-container-toolkit ;;
+        fedora|rhel)
+            curl -fsSL https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                -o /etc/yum.repos.d/nvidia-container-toolkit.repo
+            pkg_install nvidia-container-toolkit ;;
+        arch)
+            pkg_install nvidia-container-toolkit ;;
+    esac
+}
+
 if [ "$SKIP_DEPS" -eq 0 ]; then
+    if [ "$DOCKER_IS_PODMAN" -eq 1 ]; then
+        say "Removing podman-docker"
+        pkg_remove podman-docker
+    fi
+    if ! have curl; then
+        pkg_install curl
+    fi
     if [ "$HAS_DOCKER" -eq 0 ]; then
-        say "Installing Docker Engine and Compose (Ubuntu packages)"
-        apt_install docker.io docker-compose-v2 \
-            || die "could not install Docker from Ubuntu's packages (is the 'universe' repository enabled?
-       sudo add-apt-repository universe). Or install Docker Engine yourself and run this again."
+        say "Installing Docker Engine and Compose ($DOCKER_FROM)"
+        install_docker
     fi
     if ! docker compose version >/dev/null 2>&1; then
         say "Installing the Docker Compose plugin"
-        if dpkg -s docker-ce >/dev/null 2>&1; then
-            apt_install docker-compose-plugin       # Docker's own repository
-        else
-            apt_install docker-compose-v2
-        fi
+        install_compose
     fi
     systemctl enable --now docker >/dev/null 2>&1 || true
-    docker info >/dev/null 2>&1 || die "Docker is installed but not running (try: sudo systemctl status docker)"
+    if ! docker info >/dev/null 2>&1; then
+        if [ "$WSL" -eq 1 ] && [ "$HAS_SYSTEMD" -eq 0 ]; then
+            die "Docker isn't running. In WSL2 either start Docker Desktop with WSL integration on for
+       this distro, or turn systemd on ([boot] systemd=true in /etc/wsl.conf, then  wsl --shutdown
+       in Windows) so Docker Engine can run here. Then run this script again."
+        fi
+        die "Docker is installed but not running (try: sudo systemctl status docker)"
+    fi
     say "Docker OK: $(docker --version)"
 
-    if ! have curl; then
-        apt_install curl
+    if docker_desktop; then
+        say "Docker Desktop gives containers the GPUs itself; skipping the NVIDIA Container Toolkit"
+    elif ! have nvidia-ctk; then
+        say "Installing the NVIDIA Container Toolkit ($CTK_FROM)"
+        install_ctk
     fi
-    if ! have nvidia-ctk; then
-        say "Installing the NVIDIA Container Toolkit"
-        apt_install ca-certificates curl gpg
-        keyring=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor --yes -o "$keyring"
-        curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-            | sed "s#deb https://#deb [signed-by=$keyring] https://#g" \
-            > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-        apt_updated=0
-        apt_install nvidia-container-toolkit
-    fi
-    if ! docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then
+    if ! docker_desktop && ! docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then
         say "Connecting the NVIDIA runtime to Docker"
         nvidia-ctk runtime configure --runtime=docker
         systemctl restart docker
     fi
+    # With SELinux on in Docker (Fedora's own moby-engine does that; Docker CE doesn't by default),
+    # containers may only open the GPU device files once this boolean is on.
+    if docker_selinux && have getsebool && getsebool container_use_devices >/dev/null 2>&1 \
+            && ! getsebool container_use_devices | grep -q -- '--> on'; then
+        say "Letting containers use the GPUs under SELinux (container_use_devices)"
+        setsebool -P container_use_devices on
+    fi
 
     say "Checking that containers can see the GPUs"
     if ! docker run --rm --gpus all "$GPU_TEST_IMAGE" nvidia-smi -L; then
+        hint=""
+        if [ -n "$IN_CONTAINER" ]; then
+            hint="
+       In an unprivileged container (LXC), set  no-cgroups = true  in
+       /etc/nvidia-container-runtime/config.toml and restart Docker (see docs/proxmox.md)."
+        fi
         die "a test container could not see the GPUs. Check the driver (nvidia-smi) and
-       'sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker'."
+       'sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker'.$hint"
     fi
 else
     have docker || die "--skip-deps given, but Docker is not installed"
@@ -581,8 +849,14 @@ mkdir -p "$DATA_DIR"
 cd "$HERE"
 [ -f compose.example.yaml ] || die "compose.example.yaml not found next to install.sh - run this from the repository"
 
+DOCKER_SELINUX=0
+if docker_selinux; then DOCKER_SELINUX=1; fi
 if [ "$HAS_COMPOSE_FILE" -eq 1 ]; then
     say "Keeping your existing compose.yaml (delete it to have it written again)"
+    if [ "$DOCKER_SELINUX" -eq 1 ] && ! grep -q '^ *security_opt:.*label=disable' compose.yaml; then
+        warn "Docker uses SELinux here, and compose.yaml has no  security_opt: [label=disable]  for
+         gpu-shepherd, so it can't reach Docker. Add it (see compose.example.yaml)."
+    fi
 else
     say "Writing compose.yaml (data: $DATA_DIR, port: $PORT${MODELS_DIR:+, models: $MODELS_DIR})"
     sed -e "s#/opt/gpu-shepherd#$DATA_DIR#g" \
@@ -592,6 +866,11 @@ else
         sed -i "s|# - /srv/models:/srv/models:ro|- $MODELS_DIR:$MODELS_DIR:ro|" compose.yaml
         grep -q -- "- $MODELS_DIR:$MODELS_DIR:ro" compose.yaml \
             || warn "could not add the models folder to compose.yaml; add it under volumes by hand"
+    fi
+    if [ "$DOCKER_SELINUX" -eq 1 ]; then
+        sed -i 's|# security_opt: \[label=disable\]|security_opt: [label=disable]|' compose.yaml
+        grep -q '^ *security_opt: \[label=disable\]' compose.yaml \
+            || warn "could not add security_opt: [label=disable] to compose.yaml; add it by hand"
     fi
 fi
 

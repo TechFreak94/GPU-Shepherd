@@ -14,16 +14,16 @@ Everything GPU Shepherd does from the command line. Run the scripts from the fol
 sudo ./install.sh                 # guided: shows what the machine has, asks, shows the plan, then installs
 ```
 
-Without options it asks a few questions, each with a default (Enter accepts it), and changes
-nothing until you confirm the plan. It is safe to re-run: it only does what is still missing and
-keeps an existing `compose.yaml`. Every question also has an option, for scripted installs:
+It supports the distributions in [Linux distributions](linux.md). Without options it asks a few
+questions, each with a default (Enter accepts it), and changes nothing until you confirm the plan.
+It is safe to re-run: it only does what is still missing and keeps an existing `compose.yaml`. Every question also has an option, for scripted installs:
 
 | Option | What it does |
 |---|---|
 | `--models-dir DIR` | Folder of .gguf files to pick from in the UI, mounted read-only. `""` = none. |
 | `--port N` | Web UI port. Default `8090`. |
 | `--data-dir DIR` | Where settings, instances and model lists are kept. Default `/opt/gpu-shepherd`. |
-| `--install-driver` | Install the recommended NVIDIA driver if none works. Needs a reboot; run the installer again afterwards. |
+| `--install-driver` | Install the distro's NVIDIA driver if none works (see [Linux distributions](linux.md); not on RHEL-family systems, inside a container or on WSL2). Needs a reboot; run the installer again afterwards. |
 | `--skip-deps` | Install nothing; only write `compose.yaml` and start GPU Shepherd. |
 | `--preset NAME\|DIR` | On the first run, create a [preset](../gpushepherd/presets)'s instances: a folder name from `gpushepherd/presets`, or your own folder. |
 | `--no-preset` | Don't offer a preset. |
