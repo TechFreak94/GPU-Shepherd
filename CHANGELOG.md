@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.0 - 2026-10-26
+
+- Suggested models on the Models page and in the LLM server's install form: each says whether it fits your GPUs and RAM, and one click downloads it with its makers' settings (#27)
+- New model settings: thinking on/off, MTP, bf16 and q5_1 KV cache, multi-GPU split, unload when idle, keep loaded, load at start (#27)
+- Embeddings model slot for chatting with documents; Open WebUI and AnythingLLM use it (#27)
+- Starter preset now uses Qwen3.5 9B (reads images) and Qwen3 Embedding (#27)
+
 ## 0.12.12 - 2026-10-26
 
 - Open WebUI's dashboard card shows its name, Open WebUI, instead of "Chat UI" (also for instances installed before), with Chat UI as its tag. (#26)
