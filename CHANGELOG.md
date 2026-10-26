@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.1 - 2026-10-26
+
+- App updates: apps installed earlier can pick up settings added to them since, such as chatting with your documents through the model server's embeddings model. Review and apply them from the dashboard notice, the API or `gpu-shepherd app-updates` (#28)
+
 ## 0.13.0 - 2026-10-26
 
 - Suggested models on the Models page and in the LLM server's install form: each says whether it fits your GPUs and RAM, and one click downloads it with its makers' settings (#27)
