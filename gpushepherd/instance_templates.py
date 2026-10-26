@@ -156,7 +156,7 @@ TEMPLATES: tuple[Template, ...] = (
                       "It has no login until you set a password under Settings, Security.",
         needs="An LLM server to chat with", docs="https://docs.anythingllm.com/installation-docker/overview"),
     Template(
-        key="comfyui", tag="Image UI", badge="CUI", title="ComfyUI", group="Image and video",
+        key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
                 "Models in the models folder's comfyui/ subfolder"),
