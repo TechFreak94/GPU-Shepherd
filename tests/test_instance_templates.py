@@ -1,4 +1,4 @@
-"""Guided setup: the built-in templates and what they build."""
+"""The App Store's apps: the built-in templates and what they build."""
 import pytest
 
 from gpushepherd import instance_templates as tpl

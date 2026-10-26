@@ -1,9 +1,8 @@
 """The App Store's apps: built-in templates for installing an app as an instance.
 
-A template is a generic starting point (a chat or coding model server, ComfyUI, Open WebUI,
-Hermes Agent) that asks a few questions and fills in everything else. What it creates is an
-ordinary instance (and, for model servers, a first catalogue entry), so it can be edited field by
-field afterwards. Every app can also be installed by hand: the full form, filled in from the
+A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, Hermes Agent) that
+asks a few questions and fills in everything else. What it creates is an ordinary instance (and,
+for model servers, the models picked), so it can be edited field by field afterwards. Every app can also be installed by hand: the full form, filled in from the
 same defaults.
 
 This module is pure: the app passes in what it knows about the machine (GPUs, existing
@@ -300,7 +299,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
 
 
 def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
-    """The chat model server an app installs alongside itself when asked to (server = "new"),
+    """The LLM server an app installs alongside itself when asked to (server = "new"),
     built from the answers' models folder and model file, with its catalogue (and API key). Adds it
     to the machine, so the app's own build connects to it."""
     if str(a.get("server", "")) != NEW_SERVER:
