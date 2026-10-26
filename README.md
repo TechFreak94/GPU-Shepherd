@@ -6,7 +6,7 @@ gets both. Everything is configured from the browser - no compose files to edit.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-> Status: early (0.1). It works on one Docker host with NVIDIA GPUs. Expect rough edges and
+> Status: early (0.x). It works on one Docker host with NVIDIA GPUs. Expect rough edges and
 > breaking changes to the config format before 1.0.
 
 ## Why
@@ -28,7 +28,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
   ![App Store](docs/screenshots/app-store.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
-  forms. One compact card per instance with Start / Stop / Restart / Open / Logs, showing its
+  forms. One compact card per instance with Start / Stop / Restart / Open / Logs, a tag saying
+  what it is (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, or *App* for any other image), its
   state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
   **Advanced details** opens the image, folders, command and the rest. Every detail has a small ⓘ
   next to it: hover, tab to or tap it to see what the value means (GPU rule and priority, ports,
@@ -41,13 +42,6 @@ each instance says what it needs, and starting or stopping anything re-plans who
   - *Priority* - who keeps their GPUs when there are not enough to go around.
 - **Plans you confirm**: if starting something means moving or stopping something else, you see
   exactly what will happen first.
-- **Any container**: ports, folders, environment, command and autostart, edited in forms. The
-  dashboard shows each instance's state, GPUs, VRAM, CPU and RAM, and the machine's CPU, RAM and
-  GPUs.
-- **GPU policies** per instance: *fixed* (always these GPUs), *elastic* (at least N, grows into
-  free GPUs, makes room when needed) and a *priority* for when there aren't enough.
-- **Plans you confirm**: if starting something moves or stops something else, you see exactly what
-  will happen first.
 
   ![Confirmation](docs/screenshots/confirm.png)
 - **Nothing cut off half way**: before a container is stopped, GPU Shepherd waits for the chat
@@ -62,6 +56,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Command line and API**: every button and setting also works from the `gpu-shepherd` command
   (`gpu-shepherd start comfyui`, `apps install`, `models set`...) and a documented JSON API with a
   token, for scripts and Home Assistant. All three run the same code.
+- **Light or dark**: follows your device, or pick Light or Dark with the theme button at the top.
+
+  ![Dark theme](docs/screenshots/dashboard-dark.png)
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.

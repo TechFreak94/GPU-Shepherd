@@ -4,6 +4,14 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.8 - 2026-10-26
+
+- Docs, code comments and screenshots brought up to date with the App Store, the LLM server app and theme selection. (#22)
+
+## 0.12.7 - 2026-10-26
+
+- Dashboard cards say what each instance is: Model Server, Chat UI, Image UI, Agent UI or App (#21)
+
 ## 0.12.6 - 2026-10-25
 
 - Pick the dashboard theme yourself (System, Light or Dark) with the new button at the top of every page or under Settings › Appearance. It's remembered per browser. (#20)

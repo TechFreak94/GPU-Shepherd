@@ -1,9 +1,8 @@
 """The App Store's apps: built-in templates for installing an app as an instance.
 
-A template is a generic starting point (a chat or coding model server, ComfyUI, Open WebUI,
-Hermes Agent) that asks a few questions and fills in everything else. What it creates is an
-ordinary instance (and, for model servers, a first catalogue entry), so it can be edited field by
-field afterwards. Every app can also be installed by hand: the full form, filled in from the
+A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, Hermes Agent) that
+asks a few questions and fills in everything else. What it creates is an ordinary instance (and,
+for model servers, the models picked), so it can be edited field by field afterwards. Every app can also be installed by hand: the full form, filled in from the
 same defaults.
 
 This module is pure: the app passes in what it knows about the machine (GPUs, existing
@@ -67,11 +66,12 @@ class Template:
     needs: str = ""
     docs: str = ""
     badge: str = ""                            # a few characters for its App Store icon
+    tag: str = ""                              # what kind of instance it is, on its dashboard card
 
 
 TEMPLATES: tuple[Template, ...] = (
     Template(
-        key="llm-server", badge="LLM", title="LLM server", group="Model servers",
+        key="llm-server", tag="Model Server", badge="LLM", title="LLM server", group="Model servers",
         blurb="An OpenAI-compatible model server that loads whichever model a client asks for: chat, coding or both.",
         points=("llama-swap + llama.cpp", "Uses every free GPU and gives them back when something else needs one",
                 "Pick a chat model and a coding model now, or add models later"),
@@ -87,7 +87,7 @@ TEMPLATES: tuple[Template, ...] = (
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
         docs="https://github.com/mostlygeek/llama-swap"),
     Template(
-        key="open-webui", badge="OW", title="Open WebUI", group="Chat and agents",
+        key="open-webui", tag="Chat UI", badge="OW", title="Open WebUI", group="Chat and agents",
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
         points=("No GPU needed", "Connects to a model server for you, API key included",
                 "Optional: make images with ComfyUI"),
@@ -97,7 +97,7 @@ TEMPLATES: tuple[Template, ...] = (
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
         needs="An LLM server to chat with", docs="https://docs.openwebui.com"),
     Template(
-        key="hermes", badge="H", title="Hermes Agent", group="Chat and agents",
+        key="hermes", tag="Agent UI", badge="H", title="Hermes Agent", group="Chat and agents",
         blurb="An AI agent by Nous Research with memory, skills and scheduled tasks, thinking with your own model server.",
         points=("No GPU needed", "Connects to a model server for you, API key included",
                 "Web dashboard with its own login; optional Home Assistant connection"),
@@ -109,7 +109,7 @@ TEMPLATES: tuple[Template, ...] = (
         needs="A model server whose model can call tools (Qwen3 models can)",
         docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
     Template(
-        key="comfyui", badge="CUI", title="ComfyUI", group="Image and video",
+        key="comfyui", tag="Image UI", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
                 "Models in the models folder's comfyui/ subfolder"),
@@ -150,6 +150,14 @@ def matches(t: Template, inst: Instance) -> bool:
     if inst.app:
         return RENAMED.get(inst.app, inst.app) == t.key
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
+
+
+OTHER_TAG = "App"        # an instance that isn't from the App Store
+
+
+def tag_for(inst: Instance) -> str:
+    """The kind tag on an instance's dashboard card: from its App Store app, else generic."""
+    return next((t.tag for t in TEMPLATES if matches(t, inst)), OTHER_TAG)
 
 
 def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
@@ -313,7 +321,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
 
 
 def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
-    """The chat model server an app installs alongside itself when asked to (server = "new"),
+    """The LLM server an app installs alongside itself when asked to (server = "new"),
     built from the answers' models folder and model file, with its catalogue (and API key). Adds it
     to the machine, so the app's own build connects to it."""
     if str(a.get("server", "")) != NEW_SERVER:

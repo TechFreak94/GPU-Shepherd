@@ -1,4 +1,4 @@
-"""Guided setup: the built-in templates and what they build."""
+"""The App Store's apps: the built-in templates and what they build."""
 import pytest
 
 from gpushepherd import instance_templates as tpl
@@ -159,3 +159,11 @@ def test_installed_counts_older_instances():
            "d": Instance(id="d", name="D", image="x", app="hermes")}
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"]}
+
+
+def test_kind_tags():
+    assert tpl.tag_for(Instance(id="a", name="A", image="x", kind="llama-swap")) == "Model Server"
+    assert tpl.tag_for(Instance(id="b", name="B", image="ghcr.io/open-webui/open-webui:v0.6")) == "Chat UI"
+    assert tpl.tag_for(Instance(id="c", name="C", image="x", app="hermes")) == "Agent UI"
+    assert tpl.tag_for(Instance(id="d", name="D", image="nginx:latest")) == "App"
+    assert all(t.tag for t in tpl.TEMPLATES)

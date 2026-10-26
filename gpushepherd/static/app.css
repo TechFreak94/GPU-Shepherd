@@ -63,6 +63,7 @@ display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap
 .on{color:var(--ok)}.off{color:var(--muted)}.busy-t{color:var(--warn)}.bad{color:var(--bad)}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:4px;background:var(--bar);color:var(--muted);margin-left:6px;vertical-align:middle;cursor:default}
 .tag.warn{color:var(--warn)}.tag.accent{color:var(--accent)}
+.tag.kind{font-weight:600}.tag.kind.server{color:var(--accent);background:var(--hl)}.tag.kind.ui{color:var(--ok);background:var(--ok-soft)}
 .btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 /* anything clickable looks raised and reacts to the pointer */
 button,.btn{font:inherit;font-size:13px;font-weight:550;padding:6px 13px;border-radius:7px;border:1px solid var(--btn-line);
@@ -152,11 +153,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .toast.error{background:var(--bad);color:#fff}.toast.warn{background:var(--warn);color:#fff}
 .login{max-width:380px;margin:9vh auto 0}
 .changes{margin:0 0 12px;padding-left:18px;font-size:13px;max-height:280px;overflow:auto}.changes li{margin:2px 0}
-/* templates and guided setup */
-a.card.template{display:flex;flex-direction:column;gap:6px;color:var(--fg);text-decoration:none;transition:border-color .12s,box-shadow .12s}
-main a.card.template:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--hl);color:var(--fg);text-decoration:none}
-a.card.template .btn{margin-top:auto;align-self:flex-start}
-a.card.template .sub{margin:0}
+/* App Store install forms */
 .points{margin:0 0 4px;padding-left:18px;font-size:13px}
 form.guided{counter-reset:step}
 .step::before{counter-increment:step;content:counter(step)}

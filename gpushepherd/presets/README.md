@@ -18,7 +18,7 @@ Copy a preset folder and change it. Everything except `instances/` is optional:
 ```
 my-preset/
   preset.yaml       name, description, needs, download_gb - one "key: value" per line, shown by the installer
-  instances/*.yaml  one file per instance, the same format GPU Shepherd saves (Instances page > Edit)
+  instances/*.yaml  one file per instance, the same format GPU Shepherd saves (the dashboard's Edit button)
   catalogs/*.yaml   model lists for llama-swap instances (Models page)
   appdata/...       starting files for the instances' folders, such as config files
   downloads.txt     model files to download (see below)

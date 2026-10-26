@@ -27,7 +27,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
 | - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
-| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count. Changing it needs no restart. |
+| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*; *App* for anything else). Changing it needs no restart. |
 
 ### GPUs
 
@@ -70,7 +70,7 @@ command there.
 
 | Field | YAML | What it does |
 |---|---|---|
-| Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances created by templates and presets start with this off. |
+| Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances installed from the App Store or a preset start with this off. |
 | "Open" button port | `open_port` | Host port the Open button links to. Empty = the first port. |
 | "Open" button path | `open_path` | Path after the address, e.g. `/ui`. |
 | Shared memory | `shm_size` | Size of `/dev/shm`, e.g. `1g`. PyTorch apps with several workers often need more than Docker's 64 MB. |

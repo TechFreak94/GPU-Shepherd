@@ -5,7 +5,7 @@ edit in the UI (catalogs/<id>.yaml) every time the container is (re)created. The
 only sees the GPUs it was given, so no CUDA_VISIBLE_DEVICES juggling is needed.
 
 "Auto aliases" are model names that resolve to different models depending on how many GPUs
-the server currently has - e.g. "auto" = a dense model with 2 GPUs, a MoE model with 1.
+the server currently has - e.g. "coder" = a big MoE model with 2 GPUs, a smaller one with 1.
 """
 from __future__ import annotations
 
