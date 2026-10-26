@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.2 - 2026-10-26
+
+- LibreChat's database now stops when LibreChat stops (and an instance's *Starts with* instances stop with it unless something else running needs them). (#29)
+
 ## 0.13.1 - 2026-10-26
 
 - App updates: apps installed earlier can pick up settings added to them since, such as chatting with your documents through the model server's embeddings model. Review and apply them from the dashboard notice, the API or `gpu-shepherd app-updates` (#28)
