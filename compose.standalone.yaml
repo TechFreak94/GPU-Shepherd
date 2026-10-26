@@ -7,12 +7,20 @@
 #   sudo docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
 #
 # Open http://<server>:8090 and log in as "admin" (the password is also saved in
-# INITIAL_PASSWORD.txt in the data folder). To change the folders, port or version, put them in a
-# .env file next to this one instead of editing it, for example:
+# INITIAL_PASSWORD.txt in the data folder). On the first start it sets up the Starter preset (an
+# LLM server, ComfyUI and Open WebUI; nothing starts until you press Start) and downloads its
+# models (about 15 GB) in the background. Addresses and logins: PRESET_NOTES.txt in the data folder.
+#
+# To change any of this, put it in a .env file next to this one instead of editing it, for example:
 #
 #   SHEPHERD_DATA_DIR=/srv/gpu-shepherd
+#   SHEPHERD_MODELS_DIR=/srv/models   # default: a models folder inside the data folder
 #   SHEPHERD_PORT=8091
-#   SHEPHERD_VERSION=0.13.4        # a release to stay on; "latest" (the default) follows releases
+#   SHEPHERD_PRESET=none              # start empty instead of with the Starter preset
+#   SHEPHERD_DOWNLOAD_MODELS=0        # create the preset, but don't download its models
+#   SHEPHERD_VERSION=0.13.4           # a release to stay on; "latest" (the default) follows releases
+#
+# The preset and its downloads only happen on the very first start, into an empty data folder.
 #
 # Update:   sudo docker compose pull && sudo docker compose up -d
 # Go back:  set SHEPHERD_VERSION to the release you had, then  sudo docker compose up -d
@@ -30,6 +38,9 @@ services:
       - "${SHEPHERD_PORT:-8090}:8090"
     environment:
       SHEPHERD_DATA_DIR: ${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}
+      SHEPHERD_MODELS_DIR: ${SHEPHERD_MODELS_DIR:-${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}/models}
+      SHEPHERD_PRESET: ${SHEPHERD_PRESET:-starter}
+      SHEPHERD_DOWNLOAD_MODELS: ${SHEPHERD_DOWNLOAD_MODELS:-1}
       NVIDIA_DRIVER_CAPABILITIES: utility       # lets GPU Shepherd run nvidia-smi
       # SHEPHERD_ADMIN_PASSWORD: pick-a-password # otherwise one is generated on first start
     volumes:
@@ -38,8 +49,10 @@ services:
       # The data folder MUST be mounted at the same path inside and outside: GPU Shepherd hands
       # paths inside it to Docker for the containers it creates (same rule as Dockge's stacks dir).
       - ${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}:${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}
-      # Optional: folders whose model files you want to pick from in the UI - also same path.
-      # - /srv/models:/srv/models:ro
+      # The models folder, also at the same path; downloads go here.
+      - ${SHEPHERD_MODELS_DIR:-${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}/models}:${SHEPHERD_MODELS_DIR:-${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}/models}
+      # Optional: more folders whose model files you want to pick from in the UI - same path too.
+      # - /srv/more-models:/srv/more-models:ro
     deploy:
       resources:
         reservations:

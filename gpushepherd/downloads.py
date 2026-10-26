@@ -53,8 +53,9 @@ class Status:
 
 def script(s: Suggestion) -> str:
     """Fetch each missing file to <file>.part and rename it once complete."""
-    lines = ["set -e", f"mkdir -p {shlex.quote(f'{FOLDER}/{s.key}')}"]
+    lines = ["set -e"]
     for f in s.files:
+        lines.append(f"mkdir -p {shlex.quote(os.path.dirname(f'{FOLDER}/{s.path(f)}'))}")
         dest = shlex.quote(f"{FOLDER}/{s.path(f)}")
         part = shlex.quote(f"{FOLDER}/{s.path(f)}.part")
         lines.append(f"if [ ! -s {dest} ]; then echo {shlex.quote('Downloading ' + f.name)}; "

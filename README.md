@@ -147,7 +147,10 @@ sudo docker compose up -d
 sudo docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
 ```
 
-Folders, port and version go in a `.env` file next to it (see the comments at its top). Update
+On the first start it sets up the Starter [preset](gpushepherd/presets), the same default
+`install.sh` offers, and downloads its models (about 15 GB) in the background; nothing starts until
+you press Start. Folders, port, version, preset (`none` to start empty) and the download go in a
+`.env` file next to it (see the comments at its top). Update
 with `sudo docker compose pull && sudo docker compose up -d`. This way has no `update.sh`, so no
 **Update** button, daily update check or automatic rollback; to go back, set `SHEPHERD_VERSION`
 to the release you had. Without `install.sh`, install the driver and the NVIDIA Container
