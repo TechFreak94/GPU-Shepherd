@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.3 - 2026-10-26
+
+- Tag ComfyUI as Image Server (#30)
+
 ## 0.13.2 - 2026-10-26
 
 - LibreChat's database now stops when LibreChat stops (and an instance's *Starts with* instances stop with it unless something else running needs them). (#29)
