@@ -729,3 +729,20 @@ def test_install_form_offers_suggested_models(stack):
     assert 'data-pick-file="/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q8_0.gguf" data-pick-target="embed_file"' in form
     webui = client.get("/apps/open-webui").text            # its bundled server: chat models only
     assert "/models/qwen3.5-9b/" in webui and "qwen3-embedding" not in webui and "Qwen3 Coder Next" not in webui
+
+
+def test_app_updates_notice_and_dialog(stack):
+    _, client, _, data = stack
+    login(client)
+    assert "1 app update:" in client.get("/ui/dashboard").text       # the LLM server's embeddings model
+    dlg = client.get("/ui/app-updates").text
+    assert "Add an embeddings model" in dlg and "/ui/app-updates/llm/embed-model/apply" in dlg
+    r = client.post("/ui/app-updates/llm/embed-model/apply", headers=HX)
+    assert "Added qwen3-embedding-0.6b" in r.headers["HX-Trigger"]
+    assert "documents" in r.text and "webui" in r.text               # now Open WebUI can use it
+    key = r.text.split("/ui/app-updates/webui/")[1].split("/")[0]
+    r = client.post(f"/ui/app-updates/webui/{key}/apply", headers=HX)
+    assert "Admin Panel" in r.headers["HX-Trigger"] and "up to date" in r.text
+    env = yaml.safe_load((data / "instances" / "webui.yaml").read_text())["env"]
+    assert env["RAG_EMBEDDING_MODEL"] == "embed" and env["DEFAULT_MODELS"] == "chat"
+    assert "app update" not in client.get("/ui/dashboard").text

@@ -3,6 +3,12 @@
 <span class="has-tip" data-tip="{{ key }}"><button type="button" class="tip-btn info" aria-label="About {{ label }}" aria-describedby="tip-{{ key }}" aria-expanded="false">i</button><span class="tip" role="tooltip" id="tip-{{ key }}">{{ caller() }}</span></span>
 {%- endmacro %}
 {% include "partials/update_banner.html" %}
+{% if app_updates %}
+<div class="notice update"><div><strong>{{ app_updates }} app update{{ "s" if app_updates != 1 }}:</strong>
+  <span class="muted small">apps you installed earlier can take settings added to them since, such as chatting with your documents</span></div>
+  <button class="small" hx-get="/ui/app-updates" hx-target="#modal-body" title="See what each update changes, then apply or skip it">Review ›</button>
+</div>
+{% endif %}
 {% if problems %}
 <div class="notice error">Some instance files could not be read:
   <ul>{% for p in problems %}<li class="mono">{{ p }}</li>{% endfor %}</ul>

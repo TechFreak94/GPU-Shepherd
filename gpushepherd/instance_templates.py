@@ -525,6 +525,30 @@ def _anythingllm_env(url: str, info: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def app_env(t: Template, server: str, m: Machine) -> dict[str, str]:
+    """The environment an app installed today gets from GPU Shepherd for a model server, leaving
+    out what its install form asked for (logins, Home Assistant, ComfyUI) or made up (secrets).
+    App updates compare an installed instance against this."""
+    env = dict(t.env)
+    a = {"server": server if server in m.servers and server in m.instances else ""}
+    if t.connects == "openwebui":
+        env |= _openwebui(a, m)
+    elif t.connects == "hermes":
+        env |= _hermes(a, m)
+    elif t.connects == "librechat" and a["server"]:
+        env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
+    return env
+
+
+def connected_server(inst: Instance, m: Machine, settings: str = "") -> str:
+    """The model server an app instance talks to, found by its address in the instance's environment
+    or in its own settings file (AnythingLLM keeps it there)."""
+    for server in m.servers:
+        if server in m.instances and any(_server_url(server, m) in v for v in [*inst.env.values(), settings]):
+            return server
+    return ""
+
+
 def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
     if choice == "none":
         return GpuPolicy(mode="none", priority=priority)

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import auth, host, instance_templates as tpl, model_library, updates
+from . import app_updates, auth, host, instance_templates as tpl, model_library, updates
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Store, VolumeMap,
                      friendly_errors)
 from .connectors import llamaswap
@@ -344,6 +344,69 @@ class Shepherd:
                     os.chown(path, *t.data_owner)
             except OSError as err:
                 log.warning("could not write %s for %s: %s", path, inst.id, err)
+
+    # ------------------------------------------------------------------ app updates
+    def _settings_file(self, inst: Instance) -> Path | None:
+        """AnythingLLM's own settings file on this machine, when GPU Shepherd can see it."""
+        inside = dict(tpl.get("anythingllm").files).get(app_updates.ANYTHINGLLM_FILE)
+        v = next((v for v in inst.volumes if v.container == inside), None)
+        path = Path(v.host) if v else None
+        return path if path and path.is_relative_to(self.store.root) and path.is_file() else None
+
+    def app_updates(self) -> list[app_updates.Update]:
+        """What installed apps are missing of what their app sets up today, model servers first
+        (an embeddings model there is what the chat apps' updates then point at)."""
+        m = self.machine()
+        out = []
+        for inst in sorted(m.instances.values(), key=lambda i: (i.kind != "llama-swap", i.name.lower())):
+            cat = self.store.catalog(inst.id) if inst.kind == "llama-swap" else None
+            path = self._settings_file(inst) if inst.app == "anythingllm" else None
+            try:
+                text = path.read_text(encoding="utf-8") if path else None
+            except OSError:
+                text = None
+            out += app_updates.for_instance(inst, m, cat, text)
+        return out
+
+    def _app_update(self, iid: str, key: str) -> app_updates.Update:
+        self.instance(iid)
+        u = next((u for u in self.app_updates() if u.iid == iid and u.key == key), None)
+        if not u:
+            raise Problem(f"no update '{key}' for {iid} (already applied or skipped?)", "info", 404)
+        return u
+
+    @checked
+    def apply_app_update(self, iid: str, key: str) -> str:
+        """Apply one app update. Nothing restarts: a running instance shows it needs a restart."""
+        u = self._app_update(iid, key)
+        inst = self.store.instance(iid)
+        if u.kind == "embed-model":
+            return self.add_suggestion(iid, app_updates.EMBED_MODEL)
+        if u.kind == "model":
+            msg = self.save_model(iid, u.model)
+        elif u.kind == "file":
+            path = self._settings_file(inst)
+            if not path:
+                raise Problem(f"can't find {inst.name}'s {app_updates.ANYTHINGLLM_FILE} any more", status=409)
+            path.write_text(u.file_text, encoding="utf-8")
+            msg = f"Updated {inst.name}'s {app_updates.ANYTHINGLLM_FILE}."
+        else:
+            inst.env = inst.env | u.env
+            self.store.save_instance(inst)
+            msg = f"Updated {inst.name}'s settings."
+        st = self.backend.states().get(iid)
+        if st and st.running and not msg.endswith("to use it."):
+            msg += " Restart it to use them."
+        return msg + (" " + " ".join(u.manual) if u.manual else "")
+
+    @checked
+    def skip_app_update(self, iid: str, key: str) -> str:
+        """Don't offer this update again for this instance."""
+        u = self._app_update(iid, key)
+        inst = self.store.instance(iid)
+        inst.skipped_updates = sorted(set(inst.skipped_updates) | {u.key})
+        self.store.save_instance(inst)
+        return f"Skipped \"{u.title}\" for {inst.name}."
 
     # ------------------------------------------------------------------ model catalogue
     @checked

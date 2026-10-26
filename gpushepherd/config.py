@@ -128,6 +128,7 @@ class Instance(BaseModel):
     drain: DrainPolicy = DrainPolicy()  # wait for running work before stopping
     app: str = ""                     # the App Store app it was installed from, if any
     requires: list[str] = []          # instances that start with it (e.g. its database)
+    skipped_updates: list[str] = []   # app updates the user chose not to apply (see app_updates.py)
     # the name in its file when the app shows its App Store name instead (older "Chat UI" names);
     # restart checks use it, so the better name alone never asks for a restart
     _file_name: str | None = PrivateAttr(default=None)
