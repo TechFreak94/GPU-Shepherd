@@ -137,6 +137,22 @@ The data folder must be mounted at the **same path** inside and outside the cont
 Dockge's stacks folder), because GPU Shepherd hands paths in it to Docker for the containers it
 creates. To pick model files in the UI, mount your model folders the same way (read-only is fine).
 
+### Docker Compose only, no clone
+
+Same requirements, nothing to build: [compose.standalone.yaml](compose.standalone.yaml) runs the
+image published with every release. Save it as `compose.yaml` in an empty folder, then:
+
+```bash
+sudo docker compose up -d
+sudo docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
+```
+
+Folders, port and version go in a `.env` file next to it (see the comments at its top). Update
+with `sudo docker compose pull && sudo docker compose up -d`. This way has no `update.sh`, so no
+**Update** button, daily update check or automatic rollback; to go back, set `SHEPHERD_VERSION`
+to the release you had. Without `install.sh`, install the driver and the NVIDIA Container
+Toolkit yourself.
+
 ### First login
 
 Open `http://<server>:8090` and log in as `admin` with the password the installer printed (also in

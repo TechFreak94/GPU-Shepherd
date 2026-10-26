@@ -52,6 +52,7 @@
 <div class="card" id="updates" hx-get="/ui/update/card" hx-trigger="every 10s, refresh from:body">
   {% include "partials/update_card.html" %}
 </div>
+{% if not u.image %}{# the published image is pulled with docker, not downloaded by update.sh #}
 <div class="card" id="credentials">
   <strong>Private repository</strong>
   <p class="small" style="margin-top:4px">{% if u.credentials %}Updates download as <strong>{{ u.credentials }}</strong>, with a saved GitHub token.
@@ -72,6 +73,7 @@
     and <span class="mono">--clear-token</span> to remove it.</p>
   {% endif %}
 </div>
+{% endif %}
 
 <h3>About</h3>
 <div class="card small">

@@ -11,6 +11,9 @@ path inside and outside the container:
   changelog.md CHANGELOG.md of the newest version on the remote, saved at every check
   credentials  written here (0600) with a GitHub user name and token, or "clear"; update.sh moves
                it into the clone's .git folder at once and never writes the token anywhere else
+
+The published image (compose.standalone.yaml, SHEPHERD_INSTALL=image) has no clone and no
+update.sh: it is updated with `docker compose pull`, and the dashboard only says so.
 """
 from __future__ import annotations
 
@@ -63,6 +66,7 @@ class UpdateStatus:
     pending_stale: bool = False
     stuck: bool = False                             # "checking"/"updating" but silent for STUCK seconds
     age: float = 0.0                                # seconds since update.sh last wrote the status
+    image: bool = field(default_factory=lambda: os.environ.get("SHEPHERD_INSTALL") == "image")
 
     @property
     def available(self) -> bool:
@@ -126,6 +130,8 @@ class UpdateStatus:
 
     @property
     def command(self) -> str:
+        if self.image:
+            return "sudo docker compose pull && sudo docker compose up -d"
         return f"sudo {self.repo or '<your clone>'}/update.sh"
 
     @property

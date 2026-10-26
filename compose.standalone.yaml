@@ -1,0 +1,49 @@
+# GPU Shepherd without cloning the repository: runs the published image, nothing to build.
+# Needs Docker with the Compose plugin, the NVIDIA driver and the NVIDIA Container Toolkit.
+#
+#   mkdir gpu-shepherd && cd gpu-shepherd
+#   save this file there as compose.yaml
+#   sudo docker compose up -d
+#   sudo docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
+#
+# Open http://<server>:8090 and log in as "admin" (the password is also saved in
+# INITIAL_PASSWORD.txt in the data folder). To change the folders, port or version, put them in a
+# .env file next to this one instead of editing it, for example:
+#
+#   SHEPHERD_DATA_DIR=/srv/gpu-shepherd
+#   SHEPHERD_PORT=8091
+#   SHEPHERD_VERSION=0.13.4        # a release to stay on; "latest" (the default) follows releases
+#
+# Update:   sudo docker compose pull && sudo docker compose up -d
+# Go back:  set SHEPHERD_VERSION to the release you had, then  sudo docker compose up -d
+# Your instances keep running while GPU Shepherd restarts. The dashboard's Update button and the
+# daily update check need a clone with install.sh / update.sh; this way you update with the above.
+services:
+  gpu-shepherd:
+    image: ghcr.io/techfreak94/gpu-shepherd:${SHEPHERD_VERSION:-latest}
+    container_name: gpu-shepherd
+    restart: unless-stopped
+    # Where Docker uses SELinux (Fedora's moby-engine, or selinux-enabled set by hand), GPU Shepherd
+    # can only reach the Docker socket with SELinux labels off for it: uncomment this.
+    # security_opt: [label=disable]
+    ports:
+      - "${SHEPHERD_PORT:-8090}:8090"
+    environment:
+      SHEPHERD_DATA_DIR: ${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}
+      NVIDIA_DRIVER_CAPABILITIES: utility       # lets GPU Shepherd run nvidia-smi
+      # SHEPHERD_ADMIN_PASSWORD: pick-a-password # otherwise one is generated on first start
+    volumes:
+      # Controls Docker. This is root-equivalent: keep GPU Shepherd on a trusted network.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The data folder MUST be mounted at the same path inside and outside: GPU Shepherd hands
+      # paths inside it to Docker for the containers it creates (same rule as Dockge's stacks dir).
+      - ${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}:${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}
+      # Optional: folders whose model files you want to pick from in the UI - also same path.
+      # - /srv/models:/srv/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]   # only used to read GPU stats; no GPU memory is taken

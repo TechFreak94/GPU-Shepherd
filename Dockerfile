@@ -17,7 +17,11 @@ RUN pip install --no-cache-dir . && rm -rf /src
 COPY --from=buildinfo /build.json /usr/share/gpu-shepherd/build.json
 COPY CHANGELOG.md /usr/share/gpu-shepherd/CHANGELOG.md
 
+# "image" for the image the release workflow publishes (compose.standalone.yaml): it is updated
+# with docker compose pull, so the dashboard points there instead of at update.sh
+ARG SHEPHERD_INSTALL=clone
 ENV SHEPHERD_DATA_DIR=/opt/gpu-shepherd \
+    SHEPHERD_INSTALL=${SHEPHERD_INSTALL} \
     PYTHONUNBUFFERED=1
 WORKDIR /
 EXPOSE 8090

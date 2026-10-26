@@ -146,6 +146,17 @@ def test_update_dialog_and_settings(ui):
     assert "Check for updates" in client.get("/ui/update/card").text
 
 
+def test_published_image_points_to_docker_compose_pull(ui, monkeypatch):
+    client, root = ui
+    monkeypatch.setenv("SHEPHERD_INSTALL", "image")
+    html = client.get("/settings").text
+    assert "runs the published image" in html and "docker compose pull" in html
+    assert "update.sh" not in html and "Private repository" not in html
+    assert "Check for updates" not in client.get("/ui/update").text
+    r = client.post("/ui/update/check", headers=HX)
+    assert r.status_code == 204 and "docker compose pull" in r.headers["HX-Trigger"]
+
+
 def test_update_request_needs_the_service(ui):
     client, root = ui
     write_status(root, behind=1, dashboard_updates=False)

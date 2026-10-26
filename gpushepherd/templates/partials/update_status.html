@@ -23,7 +23,11 @@
 <ul class="changes">{% for c in u.commits %}<li><span class="mono muted">{{ c.date }}</span> {{ c.subject }}</li>{% endfor %}</ul>
 {% endif %}
 {% if u.rebuild_needed %}<p class="small">The clone is on <span class="mono">{{ u.current[:7] }}</span> but this image was built from <span class="mono">{{ u.running.commit[:7] }}</span>. Rebuild with <span class="mono">{{ u.command }} --rebuild</span>{% if u.dashboard_updates %} or the button below{% endif %}.</p>{% endif %}
-{% if not u.checked %}
+{% if u.image and not u.dashboard_updates %}
+<p class="small">This GPU Shepherd runs the published image. To update, run <span class="mono">{{ u.command }}</span> on the server,
+  in the folder with its compose.yaml. To go back, set <span class="mono">SHEPHERD_VERSION</span> in the .env file there to the release you had and run
+  <span class="mono">sudo docker compose up -d</span>. The <strong>Changelog</strong> button lists every release.</p>
+{% elif not u.checked %}
 <p class="small">GPU Shepherd hasn't checked for updates yet. On the server, in the folder you installed from, run
   <span class="mono">sudo ./update.sh</span> to update now, or <span class="mono">sudo ./update.sh --enable-dashboard-updates</span>
   so it checks daily and you can update from here.</p>
