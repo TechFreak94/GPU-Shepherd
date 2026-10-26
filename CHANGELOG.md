@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.10 - 2026-10-26
+
+- Dashboard screenshots in the README show the new card tags. (#24)
+
 ## 0.12.9 - 2026-10-26
 
 - New: everything the dashboard does also works from the `gpu-shepherd` command, e.g. `gpu-shepherd start comfyui`, `apps install`, `models set`, `settings set` and `update check` (see docs/cli.md). (#23)
