@@ -64,3 +64,22 @@ def test_catalog_consistency():
         Catalog(instance_id="x", models=[m, CatalogModel(id="b", file="/m/b.gguf", aliases=["a"])])
     with pytest.raises(ValidationError):
         CatalogModel(id="a", file="relative.gguf")
+
+
+def test_unreadable_settings_go_back_to_the_previous_copy(tmp_path):
+    store = Store(tmp_path)
+    store.save_settings(store.settings())
+    store.save_settings(store.settings().model_copy(update={"network": "kept"}))   # leaves settings.yaml.prev
+    store.settings_path.write_text("network: [oops\n")
+    note = store.recover_settings()
+    assert "went back" in note and "settings.yaml.broken" in note
+    assert store.settings().network == "gpushepherd"          # the copy from before the last save
+    assert (tmp_path / "settings.yaml.broken").read_text() == "network: [oops\n"
+    assert store.recover_settings() == ""
+
+
+def test_unreadable_settings_without_a_copy_say_what_to_do(tmp_path):
+    store = Store(tmp_path)
+    store.settings_path.write_text("network: [oops\n")
+    with pytest.raises(ConfigError, match="restore-settings"):
+        store.recover_settings()

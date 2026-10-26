@@ -95,19 +95,60 @@ def _gpus_from_label(text: str) -> list[int]:
     return [int(x) for x in text.split(",") if x.strip().isdigit()]
 
 
+# Folders Docker refuses to relabel for SELinux (or that must keep their own labels): these are
+# mounted without :z. Paths under the pseudo-filesystems are never relabeled either.
+_NO_RELABEL = {"/", "/bin", "/boot", "/etc", "/home", "/lib", "/lib64", "/opt", "/root", "/sbin", "/srv",
+               "/tmp", "/usr", "/var", "/mnt", "/media"}
+_NO_RELABEL_UNDER = ("/dev/", "/proc/", "/run/", "/sys/", "/var/run/")
+
+
+def bind_spec(host: str, container: str, read_only: bool, selinux: bool = False) -> str:
+    """A Docker bind string. Where Docker labels containers for SELinux, :z lets every container
+    share the folder (otherwise SELinux blocks it), except for system folders."""
+    opts = "ro" if read_only else "rw"
+    path = host.rstrip("/") or "/"
+    if selinux and path not in _NO_RELABEL and not (path + "/").startswith(_NO_RELABEL_UNDER):
+        opts += ",z"
+    return f"{host}:{container}:{opts}"
+
+
 class DockerBackend:
     """Talks to the Docker Engine API (via the docker SDK) over the mounted socket."""
 
     def __init__(self):
-        import docker  # imported lazily so tests/demo mode do not need a daemon
-        from docker import errors as derr
+        from docker import errors as derr  # imported lazily so tests/demo mode do not need a daemon
         self._errors = derr
+        self._cpu_prev: dict[str, tuple[int, int]] = {}
         try:
-            self.client = docker.from_env(timeout=120)
-            self.api = self.client.api
+            self._connect()
+        except BackendError:
+            pass    # Docker is down or still starting: start anyway (the dashboard says so) and retry on use
+
+    def _connect(self) -> None:
+        import docker
+        try:
+            client = docker.from_env(timeout=120)
         except Exception as err:  # noqa: BLE001
             raise BackendError(f"cannot connect to Docker: {err}. Is /var/run/docker.sock mounted?") from err
-        self._cpu_prev: dict[str, tuple[int, int]] = {}
+        self.client, self.api = client, client.api
+
+    def __getattr__(self, name: str):
+        # only reached while not connected yet
+        if name in ("client", "api"):
+            self._connect()
+            return self.__dict__[name]
+        raise AttributeError(name)
+
+    @property
+    def selinux(self) -> bool:
+        """Whether Docker labels containers for SELinux (asked once, once Docker answers)."""
+        if "_selinux" not in self.__dict__:
+            try:
+                opts = self.client.info().get("SecurityOptions") or []
+            except Exception:  # noqa: BLE001
+                return False    # Docker is down: ask again next time
+            self._selinux = any("name=selinux" in o for o in opts)
+        return self._selinux
 
     def ping(self) -> str:
         try:
@@ -176,7 +217,7 @@ class DockerBackend:
         if spec.gpus:
             device_requests = [DeviceRequest(device_ids=[str(g) for g in spec.gpus], capabilities=[["gpu"]])]
         port_bindings = {f"{c}/{proto}": (ip, h) for ip, h, c, proto in spec.ports}
-        binds = [f"{h}:{c}:{'ro' if ro else 'rw'}" for h, c, ro in spec.volumes]
+        binds = [bind_spec(h, c, ro, self.selinux) for h, c, ro in spec.volumes]
         host_config = self.api.create_host_config(
             binds=binds, port_bindings=port_bindings, device_requests=device_requests,
             restart_policy={"Name": "unless-stopped"}, shm_size=spec.shm_size, mem_limit=spec.mem_limit,
@@ -270,7 +311,7 @@ class DockerBackend:
         after it exits, so its exit code and logs can be read; the next run of it replaces it."""
         self.remove(name)
         host_config = self.api.create_host_config(
-            binds=[f"{h}:{c}:{'ro' if ro else 'rw'}" for h, c, ro in volumes], restart_policy={"Name": "no"},
+            binds=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], restart_policy={"Name": "no"},
             init=True)
         try:
             created = self.api.create_container(image, command=["-c", script], entrypoint="sh", name=name,

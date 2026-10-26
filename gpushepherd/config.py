@@ -401,6 +401,28 @@ class Store:
             return s
         return _load(self.settings_path, Settings)
 
+    def recover_settings(self) -> str:
+        """Run at startup. When settings.yaml can't be read (a bad hand edit, a half-written disk),
+        put back the copy kept before its last save, so GPU Shepherd still starts instead of
+        crashing on every restart. The broken file is kept as settings.yaml.broken. Returns what
+        was done, for the dashboard, or "" when the file was fine."""
+        try:
+            self.settings()
+            return ""
+        except ConfigError as err:
+            prev = self.settings_path.with_name(self.settings_path.name + ".prev")
+            try:
+                _load(prev, Settings)
+            except (ConfigError, OSError):
+                raise ConfigError(f"{err}. There is no readable {prev.name} to go back to: fix the file, or put "
+                                  "back a backup with update.sh --restore-settings") from err
+            broken = self.settings_path.with_name(self.settings_path.name + ".broken")
+            os.replace(self.settings_path, broken)
+            self.settings_path.write_bytes(prev.read_bytes())
+            os.chmod(self.settings_path, 0o600)
+            return (f"{err}. GPU Shepherd went back to the settings from before their last change; "
+                    f"the unreadable file is kept as {broken.name}.")
+
     def save_settings(self, s: Settings) -> None:
         _atomic_write(self.settings_path, _dump(s, "# GPU Shepherd settings (contains secrets)\n"), 0o600)
 

@@ -3,13 +3,14 @@ docker-py APIClient builds the payloads, and the network calls are intercepted."
 import docker
 from docker import errors as derr
 
-from gpushepherd.backend import LABEL_CONFIG, LABEL_GPUS, LABEL_INSTANCE, ContainerSpec, DockerBackend
+from gpushepherd.backend import LABEL_CONFIG, LABEL_GPUS, LABEL_INSTANCE, ContainerSpec, DockerBackend, bind_spec
 
 
 def make_backend():
     b = DockerBackend.__new__(DockerBackend)
     b._errors = derr
     b.api = docker.APIClient(base_url="unix:///nonexistent.sock", version="1.44")
+    b._selinux = False
     b.calls = []
     b.api.create_container = lambda image, **kw: b.calls.append(("create", image, kw)) or {"Id": "abc"}
     b.api.start = lambda cid: b.calls.append(("start", cid))
@@ -71,3 +72,35 @@ def test_stats_skip_containers_that_fail():
     b._cpu_prev = {}
     b.api.stats = lambda *a, **kw: (_ for _ in ()).throw(derr.NotFound("gone"))
     assert b.stats(["shepherd-x"]) == {} and b.stats([]) == {}
+
+
+def test_starts_without_docker_and_retries_on_use(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "unix:///nonexistent.sock")
+    b = DockerBackend()                        # no exception: GPU Shepherd still starts
+    assert b.ping().startswith("Docker not reachable")
+
+
+def test_selinux_binds_get_z_except_system_folders():
+    assert bind_spec("/srv/models", "/models", True) == "/srv/models:/models:ro"
+    assert bind_spec("/srv/models", "/models", True, selinux=True) == "/srv/models:/models:ro,z"
+    assert bind_spec("/opt/gs/appdata/x", "/data", False, selinux=True) == "/opt/gs/appdata/x:/data:rw,z"
+    for system in ("/", "/home", "/home/", "/usr", "/etc", "/var/run/docker.sock", "/run/user/1000", "/dev/dri"):
+        assert ",z" not in bind_spec(system, "/x", False, selinux=True), system
+
+
+def test_selinux_docker_relabels_instance_mounts():
+    b = make_backend()
+    b._selinux = True
+    b.create_and_start(spec())
+    hc = b.calls[1][2]["host_config"]
+    assert "/srv/models:/models:ro,z" in hc["Binds"]
+
+
+def test_selinux_detected_from_docker_info():
+    b = DockerBackend.__new__(DockerBackend)
+    b.client = type("C", (), {"info": lambda self: {"SecurityOptions": ["name=seccomp,profile=builtin",
+                                                                       "name=selinux"]}})()
+    assert b.selinux is True
+    b2 = DockerBackend.__new__(DockerBackend)
+    b2.client = type("C", (), {"info": lambda self: {"SecurityOptions": ["name=seccomp,profile=builtin"]}})()
+    assert b2.selinux is False

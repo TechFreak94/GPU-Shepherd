@@ -127,7 +127,7 @@ if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1;
     exec sudo -- "$HERE/$(basename "$0")" "${ARGS[@]}"
 fi
 
-have git || { err "git is not installed (sudo apt install git)"; exit 1; }
+have git || { err "git is not installed (install it with your package manager: apt, dnf or pacman)"; exit 1; }
 [ -e "$HERE/.git" ] || { err "$HERE is not a git clone, so it can't be updated in place. Clone the
        repository again, copy your compose.yaml into the new folder and run install.sh there."; exit 1; }
 
@@ -276,7 +276,8 @@ fi
 # --------------------------------------------------------------------------- dashboard service
 
 if [ "$SERVICE" = enable ]; then
-    have systemctl || { err "systemd is needed for dashboard updates"; exit 1; }
+    { have systemctl && [ -d /run/systemd/system ]; } || { err "systemd is needed for dashboard updates (on WSL2:
+       set [boot] systemd=true in /etc/wsl.conf, then wsl --shutdown in Windows)"; exit 1; }
     [ -d "$DATA_DIR" ] || { err "$DATA_DIR does not exist yet; run install.sh first"; exit 1; }
     mkdir -p "$STATE_DIR"
     cat >"$UNIT_DIR/$UNIT.path" <<EOF
@@ -299,7 +300,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=$HERE/update.sh --from-dashboard
+# Through bash, so SELinux (Fedora, RHEL) lets systemd run it from a clone in a home folder.
+ExecStart=/bin/bash $HERE/update.sh --from-dashboard
 EOF
     cat >"$UNIT_DIR/$UNIT-check.service" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates.
@@ -310,7 +312,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=$HERE/update.sh --check --quiet
+ExecStart=/bin/bash $HERE/update.sh --check --quiet
 SuccessExitStatus=10
 EOF
     cat >"$UNIT_DIR/$UNIT-check.timer" <<EOF
@@ -384,14 +386,25 @@ fi
 
 # --------------------------------------------------------------------------- rebuild
 
-healthy() {   # wait up to 90 s for the web UI; true when it answers (or curl is missing)
+answers() {   # the web UI is up and its dashboard draws (older versions ignore ?full=1)
+    curl -fsS "http://127.0.0.1:$PORT/healthz?full=1" >/dev/null 2>&1
+}
+
+restarts() { docker inspect -f '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo 0; }
+
+healthy() {   # wait up to 90 s for the web UI, then make sure it stays up; true if so (or curl is missing)
+    local up=0 before
     have curl || return 0
     info "Waiting for the web UI"
     for _ in $(seq 1 90); do
-        curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && return 0
+        answers && { up=1; break; }
         sleep 1
     done
-    return 1
+    [ "$up" -eq 1 ] || return 1
+    # a version that answers once and then crashes would otherwise count as working
+    before=$(restarts)
+    sleep 15
+    [ "$(restarts)" = "$before" ] && answers
 }
 
 # Before anything changes, keep what is needed to get back: the image GPU Shepherd is running now
@@ -662,7 +675,12 @@ if [ "$stashed" -eq 1 ]; then
     fi
 fi
 
-# Hand over to the update.sh we just downloaded for the rest.
+# Hand over to the update.sh we just downloaded for the rest. It does the rebuild and any going
+# back, so if it can't even be read, go back to the old code now (nothing was rebuilt yet).
+if ! bash -n "$HERE/update.sh" 2>/dev/null || ! grep -q -- '--finish)' "$HERE/update.sh"; then
+    g reset --keep "$OLD" || true
+    fail "the new update.sh is broken, so the update was undone and nothing was rebuilt. GPU Shepherd keeps running $(g log -1 --format=%h HEAD); try again later."
+fi
 next=(--finish "$OLD")
 [ "$QUIET" -eq 0 ] || next+=(--quiet)
 exec "$HERE/update.sh" "${next[@]}"

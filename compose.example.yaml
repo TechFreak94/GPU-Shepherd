@@ -7,6 +7,9 @@ services:
     image: gpu-shepherd:local
     container_name: gpu-shepherd
     restart: unless-stopped
+    # Where Docker uses SELinux (Fedora's moby-engine, or selinux-enabled set by hand), GPU Shepherd
+    # can only reach the Docker socket with SELinux labels off for it; install.sh uncomments this.
+    # security_opt: [label=disable]
     ports:
       - "8090:8090"
     environment:

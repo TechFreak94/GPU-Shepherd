@@ -13,6 +13,7 @@ import gpushepherd.gpu as gpu_mod
 from gpushepherd import instance_templates as tpl
 from gpushepherd.app import DemoLlamaClient, create_app
 from gpushepherd.backend import FakeBackend
+from gpushepherd.config import Store
 
 EXAMPLE = Path(__file__).parent / "fixtures" / "stack"   # ComfyUI on GPU 0, elastic LLM, Hermes, Open WebUI
 HX = {"HX-Request": "true"}
@@ -747,3 +748,45 @@ def test_app_updates_notice_and_dialog(stack):
     env = yaml.safe_load((data / "instances" / "webui.yaml").read_text())["env"]
     assert env["RAG_EMBEDDING_MODEL"] == "embed" and env["DEFAULT_MODELS"] == "chat"
     assert "app update" not in client.get("/ui/dashboard").text
+
+
+def test_unreadable_settings_still_start(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHEPHERD_ADMIN_PASSWORD", "correct-horse")
+    store = Store(tmp_path)
+    create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)
+    store.save_settings(store.settings())                     # settings.yaml.prev now has the login
+    store.settings_path.write_text("admin_user: [oops\n")
+    client = TestClient(create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False))
+    login(client)
+    assert "settings.yaml.broken" in client.get("/").text
+
+
+def test_a_bad_model_list_does_not_break_the_dashboard(stack):
+    app, client, backend, data = stack
+    login(client)
+    (data / "catalogs" / "llm.yaml").write_text("models: [oops\n")
+    r = client.get("/")
+    assert r.status_code == 200 and "catalogs/llm.yaml: not valid YAML" in r.text
+
+
+def test_docker_going_away_shows_a_notice(stack):
+    app, client, backend, data = stack
+    login(client)
+
+    def gone():
+        raise RuntimeError("connection refused")
+    backend.states = gone
+    r = client.get("/")
+    assert r.status_code == 200 and "Docker is not reachable" in r.text
+    assert client.get("/healthz?full=1").status_code == 200
+
+
+def test_full_health_check_fails_when_the_dashboard_does(stack, monkeypatch):
+    app, client, backend, data = stack
+    assert client.get("/healthz?full=1").json()["ok"]
+
+    def broken():
+        raise RuntimeError("bug")
+    monkeypatch.setattr("gpushepherd.app.host_mod.query", broken)
+    assert client.get("/healthz?full=1").status_code == 500
+    assert client.get("/healthz").status_code == 200

@@ -39,9 +39,11 @@ class Engine:
         self.host_data_dir = Path(host_data_dir or os.environ.get("SHEPHERD_HOST_DATA_DIR") or store.root)
 
     # ------------------------------------------------------------------ state
-    def snapshot(self) -> Snapshot:
+    def snapshot(self, states: dict[str, ContainerState] | None = None) -> Snapshot:
+        """What is configured and running. `states` stands in for Docker's answer (the dashboard
+        passes {} while Docker can't be reached)."""
         instances, problems = self.store.instances()
-        states = self.backend.states()
+        states = self.backend.states() if states is None else states
         gpus, err = gpu_mod.query()
         alloc = {i: st.gpus for i, st in states.items() if st.running and i in instances}
         return Snapshot(instances, problems, states, gpus, err, alloc)
