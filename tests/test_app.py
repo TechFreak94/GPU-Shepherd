@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import gpushepherd
 import gpushepherd.gpu as gpu_mod
+from gpushepherd import instance_templates as tpl
 from gpushepherd.app import DemoLlamaClient, create_app
 from gpushepherd.backend import FakeBackend
 
@@ -589,6 +590,22 @@ def test_dashboard_kind_tags(stack):
     assert '<span class="tag kind ui">Image UI</span>' in card("comfyui")
     assert '<span class="tag kind ui">Agent UI</span>' in card("hermes")
     assert "model server</span>" not in dash
+
+
+def test_older_chat_ui_name_shows_as_open_webui(stack, monkeypatch):
+    """Open WebUI used to be installed as "Chat UI", the same as its tag: its card says Open WebUI,
+    and the better name alone does not ask for a restart."""
+    app, client, backend, data = stack
+    login(client)
+    assert "name: Chat UI" in (data / "instances" / "webui.yaml").read_text()
+    with monkeypatch.context() as old_version:         # started before names were fixed up
+        old_version.setattr(tpl, "app_name", lambda inst: inst.name)
+        act(client, app, "webui", "start")
+    dash = client.get("/ui/dashboard", headers=HX).text
+    card = dash.split('id="inst-webui"')[1].split("</article>")[0]
+    assert '<h2>Open WebUI<span class="tag kind ui">Chat UI</span>' in card
+    assert "not applied" not in card
+    assert client.get("/instances/webui/edit").text.count('value="Open WebUI"') == 1
 
 
 def test_librechat_installs_its_database_and_starts_with_it(stack):

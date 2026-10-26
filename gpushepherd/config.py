@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
@@ -128,6 +128,9 @@ class Instance(BaseModel):
     drain: DrainPolicy = DrainPolicy()  # wait for running work before stopping
     app: str = ""                     # the App Store app it was installed from, if any
     requires: list[str] = []          # instances that start with it (e.g. its database)
+    # the name in its file when the app shows its App Store name instead (older "Chat UI" names);
+    # restart checks use it, so the better name alone never asks for a restart
+    _file_name: str | None = PrivateAttr(default=None)
 
     @field_validator("id")
     @classmethod
@@ -342,6 +345,15 @@ def friendly_errors(err: ValidationError) -> str:
     return "; ".join(parts)
 
 
+def _named(inst: Instance) -> Instance:
+    """Show an App Store app's real name where its file only says what kind it is ("Chat UI")."""
+    from .instance_templates import app_name   # it builds on this module
+    name = app_name(inst)
+    if name != inst.name:
+        inst._file_name, inst.name = inst.name, name
+    return inst
+
+
 class Store:
     """Reads and writes the YAML files. Stateless: every call goes to disk."""
 
@@ -384,14 +396,14 @@ class Store:
             if inst.id != path.stem:
                 problems.append(f"{path.name}: id '{inst.id}' does not match the file name")
                 continue
-            found[inst.id] = inst
+            found[inst.id] = _named(inst)
         return found, problems
 
     def instance(self, iid: str) -> Instance:
         path = self.instance_path(iid)
         if not path.exists():
             raise ConfigError(f"no instance '{iid}'")
-        return _load(path, Instance)
+        return _named(_load(path, Instance))
 
     def save_instance(self, inst: Instance) -> None:
         others, _ = self.instances()

@@ -1,6 +1,6 @@
 # Open WebUI: chat with the LLM server's models, and make images through ComfyUI when it runs.
 id: webui
-name: Chat UI
+name: Open WebUI
 description: Open WebUI for chat and ComfyUI images
 kind: container
 image: ghcr.io/open-webui/open-webui:main

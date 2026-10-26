@@ -100,7 +100,7 @@ TEMPLATES: tuple[Template, ...] = (
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
         points=("No GPU needed", "Connects to a model server for you, API key included",
                 "Optional: make images with ComfyUI"),
-        default_id="webui", default_name="Chat UI", description="Open WebUI",
+        default_id="webui", default_name="Open WebUI", description="Chat with your model servers",
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
@@ -207,6 +207,23 @@ OTHER_TAG = "App"        # an instance that isn't from the App Store
 def tag_for(inst: Instance) -> str:
     """The kind tag on an instance's dashboard card: from its App Store app, else generic."""
     return next((t.tag for t in TEMPLATES if matches(t, inst)), OTHER_TAG)
+
+
+def app_name(inst: Instance) -> str:
+    """Its name, with the app's real name where it only repeats the kind tag.
+
+    Open WebUI used to be installed as "Chat UI" (then "Chat UI 2"...), which said the same as
+    its tag; those show as "Open WebUI" ("Open WebUI 2"). Any other name is the user's choice.
+    """
+    t = next((t for t in TEMPLATES if matches(t, inst)), None)
+    if t is None or t.title == t.tag:
+        return inst.name
+    if inst.name.casefold() == t.tag.casefold():
+        return t.title
+    head, _, suffix = inst.name.rpartition(" ")
+    if head.casefold() == t.tag.casefold() and suffix == inst.id.rsplit("-", 1)[-1]:
+        return f"{t.title} {suffix}"
+    return inst.name
 
 
 def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
