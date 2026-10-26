@@ -72,3 +72,37 @@ def reset_admin(store: Store) -> tuple[str, str]:
     store.save_settings(settings)
     _write_initial(store, settings.admin_user, password)
     return settings.admin_user, password
+
+
+# --------------------------------------------------------------------------- API token
+# The JSON API (api.py) and the `gpu-shepherd` command authenticate with one token, kept in the data
+# folder readable only by its owner: whoever can read it can already change everything there.
+
+def api_token_file(store: Store) -> Path:
+    return store.root / "api-token"
+
+
+def api_token(store: Store) -> str:
+    """The API token, made on first use."""
+    path = api_token_file(store)
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        token = ""
+    return token or new_api_token(store)
+
+
+def new_api_token(store: Store) -> str:
+    """Replace the API token; the old one stops working at once."""
+    token = "gs-" + secrets.token_urlsafe(32)
+    path = api_token_file(store)
+    tmp = path.with_name(".api-token.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(token + "\n")
+    tmp.replace(path)
+    return token
+
+
+def check_api_token(store: Store, presented: str) -> bool:
+    return bool(presented) and hmac.compare_digest(presented.encode(), api_token(store).encode())

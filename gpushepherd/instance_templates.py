@@ -255,6 +255,28 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
             "hass_url": "", "hass_token": ""}
 
 
+def answer_keys(t: Template) -> list[str]:
+    """The install answers that matter for an app (defaults() returns every possible one)."""
+    keys = ["name", "id", "port", "gpu"]
+    if t.models_mount or slots(t):
+        keys.append("models_dir")
+    if t.appdata:
+        keys.append("appdata_dir")
+    if t.connects:
+        keys.append("server")
+    if t.connects == "openwebui":
+        keys.append("comfyui")
+    for s in slots(t):
+        keys += [f"{s.key}_file", f"{s.key}_ctx"]
+    if slots(t):
+        keys.append("offload")
+    if t.login:
+        keys += ["login_user", "password"]
+    if t.connects == "hermes":
+        keys += ["hass_url", "hass_token"]
+    return keys + ["autostart"]
+
+
 def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel]]:
     """Turn the guided form's answers into an instance and, for model servers, the models picked."""
     iid = str(a.get("id", "")).strip()
