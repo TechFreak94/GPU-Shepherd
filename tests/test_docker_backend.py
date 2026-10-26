@@ -71,3 +71,9 @@ def test_stats_skip_containers_that_fail():
     b._cpu_prev = {}
     b.api.stats = lambda *a, **kw: (_ for _ in ()).throw(derr.NotFound("gone"))
     assert b.stats(["shepherd-x"]) == {} and b.stats([]) == {}
+
+
+def test_starts_without_docker_and_retries_on_use(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "unix:///nonexistent.sock")
+    b = DockerBackend()                        # no exception: GPU Shepherd still starts
+    assert b.ping().startswith("Docker not reachable")

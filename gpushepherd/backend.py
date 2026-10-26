@@ -99,15 +99,28 @@ class DockerBackend:
     """Talks to the Docker Engine API (via the docker SDK) over the mounted socket."""
 
     def __init__(self):
-        import docker  # imported lazily so tests/demo mode do not need a daemon
-        from docker import errors as derr
+        from docker import errors as derr  # imported lazily so tests/demo mode do not need a daemon
         self._errors = derr
+        self._cpu_prev: dict[str, tuple[int, int]] = {}
         try:
-            self.client = docker.from_env(timeout=120)
-            self.api = self.client.api
+            self._connect()
+        except BackendError:
+            pass    # Docker is down or still starting: start anyway (the dashboard says so) and retry on use
+
+    def _connect(self) -> None:
+        import docker
+        try:
+            client = docker.from_env(timeout=120)
         except Exception as err:  # noqa: BLE001
             raise BackendError(f"cannot connect to Docker: {err}. Is /var/run/docker.sock mounted?") from err
-        self._cpu_prev: dict[str, tuple[int, int]] = {}
+        self.client, self.api = client, client.api
+
+    def __getattr__(self, name: str):
+        # only reached while not connected yet
+        if name in ("client", "api"):
+            self._connect()
+            return self.__dict__[name]
+        raise AttributeError(name)
 
     def ping(self) -> str:
         try:

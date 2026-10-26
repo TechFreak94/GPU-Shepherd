@@ -384,14 +384,25 @@ fi
 
 # --------------------------------------------------------------------------- rebuild
 
-healthy() {   # wait up to 90 s for the web UI; true when it answers (or curl is missing)
+answers() {   # the web UI is up and its dashboard draws (older versions ignore ?full=1)
+    curl -fsS "http://127.0.0.1:$PORT/healthz?full=1" >/dev/null 2>&1
+}
+
+restarts() { docker inspect -f '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo 0; }
+
+healthy() {   # wait up to 90 s for the web UI, then make sure it stays up; true if so (or curl is missing)
+    local up=0 before
     have curl || return 0
     info "Waiting for the web UI"
     for _ in $(seq 1 90); do
-        curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && return 0
+        answers && { up=1; break; }
         sleep 1
     done
-    return 1
+    [ "$up" -eq 1 ] || return 1
+    # a version that answers once and then crashes would otherwise count as working
+    before=$(restarts)
+    sleep 15
+    [ "$(restarts)" = "$before" ] && answers
 }
 
 # Before anything changes, keep what is needed to get back: the image GPU Shepherd is running now
@@ -662,7 +673,12 @@ if [ "$stashed" -eq 1 ]; then
     fi
 fi
 
-# Hand over to the update.sh we just downloaded for the rest.
+# Hand over to the update.sh we just downloaded for the rest. It does the rebuild and any going
+# back, so if it can't even be read, go back to the old code now (nothing was rebuilt yet).
+if ! bash -n "$HERE/update.sh" 2>/dev/null || ! grep -q -- '--finish)' "$HERE/update.sh"; then
+    g reset --keep "$OLD" || true
+    fail "the new update.sh is broken, so the update was undone and nothing was rebuilt. GPU Shepherd keeps running $(g log -1 --format=%h HEAD); try again later."
+fi
 next=(--finish "$OLD")
 [ "$QUIET" -eq 0 ] || next+=(--quiet)
 exec "$HERE/update.sh" "${next[@]}"

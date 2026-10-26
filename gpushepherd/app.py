@@ -78,6 +78,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # demo mode has no real servers to ask, so everything counts as idle
     engine = Engine(store, backend, activity=(lambda _inst: drain.Activity(0)) if demo else None)
     jobs = JobRunner()
+    notices: list[str] = []                # shown with the dashboard's problems until a restart
+    recovered = store.recover_settings()
+    if recovered:
+        log.error("%s", recovered)
+        notices.append(recovered)
     try:
         backend.ensure_network(store.settings().network)
     except Exception as err:  # noqa: BLE001
@@ -169,7 +174,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return f"http://{name}:{port}{path if path.startswith('/') else '/' + path}"
 
     def dashboard_ctx(request: Request) -> dict:
-        snap = engine.snapshot()
+        problems, unknown = list(notices), False
+        try:
+            snap = engine.snapshot()
+        except Exception as err:  # noqa: BLE001 - Docker restarting or gone: say so instead of an error page
+            log.warning("dashboard: cannot read the containers: %s", err)
+            snap, unknown = engine.snapshot(states={}), True
+            problems.append(f"Docker is not reachable, so what is running is unknown: {err}")
+        problems += snap.problems
         machine = host_mod.query()
         running = [i for i, st in snap.states.items() if st.running and i in snap.instances]
         try:
@@ -183,8 +195,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             st = snap.states.get(inst.id)
             gpus = snap.allocations.get(inst.id, [])
             assigned = [gpu_by_index[g] for g in gpus if g in gpu_by_index]
+            cat, cat_error = None, ""
+            if inst.kind == "llama-swap":
+                try:
+                    cat = store.catalog(inst.id)
+                except ConfigError as err:     # one bad model list must not take the whole dashboard down
+                    cat_error = f"catalogs/{err}"
+                    problems.append(cat_error)
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
-                    "status": (st.status if st else "not created"),
+                    "status": (st.status if st else "unknown" if unknown else "not created"),
                     "container": engine.container_name(inst.id),
                     "gpus": gpus, "assigned": assigned,
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
@@ -192,12 +211,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     "ports": [{"port": p, "url": (u := base_url(request, p.host)), "label": u[7:].rstrip("/")}
                               for p in inst.ports],
                     "open_url": base_url(request, inst.open_url_port, inst.open_path) if inst.open_url_port else "",
-                    "pending": bool(st and st.running and st.config_hash and st.config_hash != engine.config_hash(inst)),
-                    "loaded": [], "models_error": "", "model_count": 0, "aliases": {}, "offload": {},
+                    "pending": bool(st and st.running and st.config_hash and not cat_error
+                                    and st.config_hash != engine.config_hash(inst)),
+                    "loaded": [], "models_error": cat_error, "model_count": 0, "aliases": {}, "offload": {},
                     "loading": sorted(app.state.loading.get(inst.id, set())),
                     "waiting": (jobs.current.waiting.get(inst.id) if jobs.current else None)}
-            if inst.kind == "llama-swap":
-                cat = store.catalog(inst.id)
+            if cat is not None:
                 card["model_count"] = len(cat.models)
                 if card["running"]:
                     card["aliases"] = llamaswap.resolved_aliases(cat, len(gpus))
@@ -219,7 +238,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                      if g.index in a and i in snap.instances]} for g in snap.gpus]
         mem_rows.sort(key=lambda r: -r["value"])
         cpu_rows.sort(key=lambda r: -(r["value"] or 0))
-        return {"cards": cards, "gpus": gpus, "gpu_error": snap.gpu_error, "problems": snap.problems,
+        return {"cards": cards, "gpus": gpus, "gpu_error": snap.gpu_error, "problems": problems,
                 "host": machine, "cpu_rows": cpu_rows, "mem_rows": mem_rows,
                 "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
                 "running_count": len(running), "instance_count": len(snap.instances),
@@ -258,8 +277,18 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     # ------------------------------------------------------------------ login
     @app.get("/healthz")
-    def healthz():
-        return {"ok": True, "version": __version__, "commit": build.get("commit", "")}
+    def healthz(request: Request, full: bool = False):
+        body = {"ok": True, "version": __version__, "commit": build.get("commit", "")}
+        if full:
+            # update.sh asks for this after an update: the dashboard must draw too, not just the server
+            # answer (a Docker outage is shown on the dashboard, so it doesn't fail this)
+            try:
+                page(request, "dashboard.html", **dashboard_ctx(request), docker=backend.ping(),
+                     user=store.settings().admin_user)
+            except Exception:  # noqa: BLE001
+                log.exception("health check: the dashboard does not draw")
+                return JSONResponse({**body, "ok": False}, status_code=500)
+        return body
 
     @app.get("/login", response_class=HTMLResponse)
     def login_form(request: Request):
