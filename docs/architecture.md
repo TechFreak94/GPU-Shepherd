@@ -45,12 +45,13 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
 1. `POST /ui/instances/<id>/start` (htmx), or `POST /api/v1/instances/<id>/start` from a script or
    `gpu-shepherd start <id>`. Both call `Shepherd.change()`.
 2. `engine.plan("start", id)` reads instances, running containers (with their GPU labels) and
-   GPUs, then calls `scheduler.plan()`.
+   GPUs, then calls `scheduler.plan()`, which also brings up whatever the instance `requires`
+   (LibreChat's database).
 3. If the plan stops or restarts other instances and was not confirmed, the server returns
    `partials/confirm.html` into the modal. "Continue" re-posts with `confirm=1`. (The API answers
    `409` with the plan instead; the command shows it and asks.)
 4. The job runner executes the plan: stop affected containers, then (re)create containers in
-   priority order. For llama-swap instances the config is rendered from the catalogue for the
+   priority order, with anything an instance requires before it. For llama-swap instances the config is rendered from the catalogue for the
    number of GPUs assigned, written under `generated/`, and mounted read-only.
 5. The dashboard polls `/ui/dashboard` every 4 seconds and shows the job's progress. Each poll
    also reads host CPU and memory from `/proc` (`host.py`; not namespaced, so it sees the whole

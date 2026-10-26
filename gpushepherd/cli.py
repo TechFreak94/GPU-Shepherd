@@ -311,6 +311,10 @@ def cmd_apps(args, c: Client) -> int:
                 print(f"  - {p}")
             if a["needs"]:
                 print(f"Needs: {a['needs']}")
+            if a.get("also_installs"):
+                print(f"Also installs: {', '.join(a['also_installs'])} (starts with it)")
+            if a.get("after_install"):
+                print(f"Afterwards: {a['after_install']}")
             print("\nInstall answers (change any with KEY=VALUE):")
             for k, v in a["answers"].items():
                 print(f"  {k}={'' if v is None else v}")

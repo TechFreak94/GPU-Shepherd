@@ -83,6 +83,7 @@ class Installed:
     inst: Instance
     models: list[CatalogModel]
     bundle: Instance | None = None      # the LLM server installed alongside it, if one was
+    companions: list[Instance] = field(default_factory=list)   # helpers installed with it (its database)
 
 
 @dataclass
@@ -163,11 +164,14 @@ class Shepherd:
         elif self.store.instance_path(inst.id).exists():
             raise ConfigError(f"an instance called '{inst.id}' already exists")
         self.store.save_instance(inst)
-        if inst.app and not editing:              # an App Store app installed by hand: make its folders too
+        if inst.app and not editing:              # an App Store app installed by hand: its folders and helpers too
             try:
-                self.make_app_folders(inst, tpl.get(inst.app), {})
+                t = tpl.get(inst.app)
             except ConfigError:
-                pass
+                t = None
+            if t:
+                self.add_companions(t, inst)
+                self.make_app_folders(inst, t, tpl.seed_files(t, {}, self.machine()))
         if inst.kind == "llama-swap":
             self.store.catalog(inst.id)           # create an empty catalogue with an API key
         st = self.backend.states().get(inst.id)
@@ -191,8 +195,11 @@ class Shepherd:
                 continue
             cat = self.store.catalog(inst.id)
             alias = next((a for a in ("chat", "coder") for m in cat.models if a in m.aliases or a == m.id), "")
+            model = next((m for m in cat.models if alias in m.aliases or alias == m.id),
+                         cat.models[0] if cat.models else None)
             servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
-                                "default_model": alias or (cat.models[0].id if cat.models else "")}
+                                "default_model": alias or (model.id if model else ""),
+                                "ctx": model.ctx_size if model else 0}
         return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in self.engine.snapshot().gpus],
                            instances=instances, servers=servers, model_sizes={})
 
@@ -258,22 +265,38 @@ class Shepherd:
             self.store.save_instance(bundle[0])
             self.store.save_catalog(bundle[1])
         self.store.save_instance(inst)
+        helpers = self.add_companions(t, inst)
         self.make_app_folders(inst, t, seeds)
         if inst.kind == "llama-swap":
             cat = self.store.catalog(inst.id)
             if models:
                 cat.models += models
                 self.store.save_catalog(Catalog.model_validate(cat.model_dump()))
-        return Installed(inst, models, bundle[0] if bundle else None)
+        return Installed(inst, models, bundle[0] if bundle else None, helpers)
+
+    def add_companions(self, t: tpl.Template, inst: Instance) -> list[Instance]:
+        """Save the helper instances an app requires (its database) that don't exist yet."""
+        made = []
+        for c in tpl.companions(t, inst):
+            if self.store.instance_path(c.id).exists():
+                continue
+            self.store.save_instance(c)
+            ct = tpl.get(c.app)
+            self.make_app_folders(c, ct, tpl.seed_files(ct, {}, self.machine()))
+            made.append(c)
+        return made
 
     def make_app_folders(self, inst: Instance, t: tpl.Template, seeds: dict[str, str]) -> None:
         """Make a new app's own folders (so Docker doesn't make them as root) and its first settings
         files. Only folders inside the data folder, which GPU Shepherd can see."""
         appdata = {sub: v.host for (sub, inside) in t.appdata for v in inst.volumes if v.container == inside}
+        files = {name: v.host for (name, inside) in t.files for v in inst.volumes if v.container == inside}
         for v in inst.volumes:
             host = Path(v.host)
             if v.read_only or not host.is_relative_to(self.store.root):
                 continue
+            if v.host in files.values():          # a settings file: its folder, then the file below
+                host = host.parent
             try:
                 host.mkdir(parents=True, exist_ok=True)
                 if t.data_owner and os.geteuid() == 0:
@@ -282,14 +305,17 @@ class Shepherd:
                 log.warning("could not prepare %s for %s: %s", host, inst.id, err)
         for rel, text in seeds.items():
             sub, _, name = rel.partition("/")
-            if sub not in appdata or not Path(appdata[sub]).is_dir():
+            if rel in files:
+                path = Path(files[rel])
+            elif sub in appdata:
+                path = Path(appdata[sub]) / name
+            else:
                 continue
-            path = Path(appdata[sub]) / name
-            if path.exists():
+            if path.exists() or not path.parent.is_dir() or not path.is_relative_to(self.store.root):
                 continue
             try:
                 path.write_text(text, encoding="utf-8")
-                path.chmod(0o600)                 # it holds the model server's API key
+                path.chmod(0o600)                 # it may hold the model server's API key
                 if t.data_owner and os.geteuid() == 0:
                     os.chown(path, *t.data_owner)
             except OSError as err:

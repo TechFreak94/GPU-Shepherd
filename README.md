@@ -20,7 +20,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 ## Features
 
 - **App Store**: install an LLM server (with a chat model, a coding model or both), Open WebUI,
-  Hermes Agent or ComfyUI.
+  LibreChat, AnythingLLM, Hermes Agent or ComfyUI. Apps that need a helper container get it too:
+  LibreChat comes with its MongoDB database, which starts whenever LibreChat does.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
   folders, connects chat and agent apps to your model server (or installs one alongside them) and
   decides whether a model needs system RAM. **Manual** opens every field instead, filled in with
@@ -29,7 +30,7 @@ each instance says what it needs, and starting or stopping anything re-plans who
   ![App Store](docs/screenshots/app-store.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
   forms. One compact card per instance with Start / Stop / Restart / Open / Logs, a tag saying
-  what it is (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, or *App* for any other image), its
+  what it is (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, *Database*, or *App* for any other image), its
   state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
   **Advanced details** opens the image, folders, command and the rest. Every detail has a small ⓘ
   next to it: hover, tab to or tap it to see what the value means (GPU rule and priority, ports,

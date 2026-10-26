@@ -127,6 +127,7 @@ class Instance(BaseModel):
     memory_limit: str | None = None   # e.g. "4g"
     drain: DrainPolicy = DrainPolicy()  # wait for running work before stopping
     app: str = ""                     # the App Store app it was installed from, if any
+    requires: list[str] = []          # instances that start with it (e.g. its database)
 
     @field_validator("id")
     @classmethod
@@ -157,6 +158,15 @@ class Instance(BaseModel):
         if len(hosts) != len(set(hosts)):
             raise ValueError("a host port is used twice")
         return self
+
+    @field_validator("requires")
+    @classmethod
+    def _requires(cls, v: list[str]) -> list[str]:
+        v = list(dict.fromkeys(x.strip() for x in v if x.strip()))
+        for x in v:
+            if not SLUG.match(x):
+                raise ValueError(f"'{x}' is not an instance ID")
+        return v
 
     @property
     def open_url_port(self) -> int | None:

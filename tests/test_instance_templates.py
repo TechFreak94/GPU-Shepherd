@@ -15,6 +15,9 @@ def test_templates_are_generic_and_valid():
     assert len(keys) == len(set(keys))
     m = machine()
     for t in tpl.TEMPLATES:
+        if t.hidden:                       # companions are built by their app (test_librechat)
+            assert t not in [x for _, g in tpl.groups() for x in g]
+            continue
         f = tpl.defaults(t, m, "/srv/models", "/opt/gpu-shepherd/appdata")
         assert f["server"] == (tpl.NEW_SERVER if t.connects else "")   # no server yet: offer to install one
         inst, _ = tpl.build(t, f | {"server": ""}, m)
@@ -158,7 +161,8 @@ def test_installed_counts_older_instances():
            "c": Instance(id="c", name="C", image="x", kind="llama-swap", app="llm-coder"),
            "d": Instance(id="d", name="D", image="x", app="hermes")}
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
-    assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"]}
+    assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
+                   "librechat": [], "anythingllm": []}
 
 
 def test_kind_tags():
@@ -166,4 +170,55 @@ def test_kind_tags():
     assert tpl.tag_for(Instance(id="b", name="B", image="ghcr.io/open-webui/open-webui:v0.6")) == "Chat UI"
     assert tpl.tag_for(Instance(id="c", name="C", image="x", app="hermes")) == "Agent UI"
     assert tpl.tag_for(Instance(id="d", name="D", image="nginx:latest")) == "App"
+    assert tpl.tag_for(Instance(id="e", name="E", image="mongo:8.0", app="librechat-mongodb")) == "Database"
     assert all(t.tag for t in tpl.TEMPLATES)
+
+
+def server_machine(**kw):
+    llm = Instance(id="llm", name="LLM", image="x", kind="llama-swap", ports=[PortMap(host=8090, container=8080)])
+    return machine(instances={"llm": llm} | kw,
+                   servers={"llm": {"api_key": "sk-abc", "name": "LLM", "default_model": "chat", "ctx": 32768}})
+
+
+def test_librechat():
+    m, t = server_machine(), tpl.get("librechat")
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["server"] == "llm" and "appdata_dir" in tpl.answer_keys(t)
+    inst, _ = tpl.build(t, f, m)
+    assert inst.requires == ["librechat-mongodb"] and inst.ports[0].container == 3080 and inst.gpu.mode == "none"
+    env = inst.env
+    assert env["MONGO_URI"] == "mongodb://librechat-mongodb:27017/LibreChat"
+    assert env["LLM_BASE_URL"] == "http://llm:8080/v1" and env["LLM_API_KEY"] == "sk-abc"
+    assert len(env["CREDS_KEY"]) == 64 and len(env["CREDS_IV"]) == 32 and env["JWT_SECRET"] != env["JWT_REFRESH_SECRET"]
+    assert env["SESSION_COOKIE_SECURE"] == "false" and env["ALLOW_REGISTRATION"] == "true"
+    vols = {v.container: v.host for v in inst.volumes}
+    assert vols["/app/librechat.yaml"] == "/a/librechat/librechat.yaml" and vols["/app/uploads"] == "/a/librechat/uploads"
+    assert tpl.appdata_dir(t, inst) == "/a/librechat"
+    (db,) = tpl.companions(t, inst)
+    assert db.id == "librechat-mongodb" and db.app == "librechat-mongodb" and db.gpu.mode == "none" and db.ports == []
+    assert db.image.startswith("mongo:") and {v.container: v.host for v in db.volumes} == {"/data/db": "/a/librechat/mongodb"}
+    seed = tpl.seed_files(t, f, m)
+    assert list(seed) == ["librechat.yaml"] and "${LLM_BASE_URL}" in seed["librechat.yaml"] and "sk-abc" not in seed["librechat.yaml"]
+    # no model server: still a database and a settings file, just no endpoint address
+    bare = tpl.build(t, f | {"server": ""}, m)[0]
+    assert "LLM_BASE_URL" not in bare.env and bare.requires == ["librechat-mongodb"]
+    taken = server_machine(**{"librechat-mongodb": Instance(id="librechat-mongodb", name="x", image="mongo")})
+    with pytest.raises(ConfigError, match="already exists"):
+        tpl.build(t, f, taken)
+    with pytest.raises(ConfigError, match="too long"):
+        tpl.build(t, f | {"id": "a" * 40}, m)
+
+
+def test_anythingllm():
+    m, t = server_machine(), tpl.get("anythingllm")
+    f = tpl.defaults(t, m, "/m", "/a")
+    inst, _ = tpl.build(t, f, m)
+    assert inst.ports[0].container == 3001 and inst.requires == [] and inst.env["STORAGE_DIR"] == "/app/server/storage"
+    assert "--no-sandbox" in inst.env["ANYTHINGLLM_CHROMIUM_ARGS"]
+    assert "GENERIC_OPEN_AI_API_KEY" not in inst.env            # the connection is in its own settings file
+    vols = {v.container: v.host for v in inst.volumes}
+    assert vols == {"/app/server/storage": "/a/anythingllm/storage", "/app/server/.env": "/a/anythingllm/server.env"}
+    env = tpl.seed_files(t, f, m)["server.env"]
+    assert "LLM_PROVIDER='generic-openai'" in env and "GENERIC_OPEN_AI_BASE_PATH='http://llm:8080/v1'" in env
+    assert "GENERIC_OPEN_AI_API_KEY='sk-abc'" in env and "GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT='32768'" in env
+    assert "LLM_PROVIDER" not in tpl.seed_files(t, f | {"server": ""}, m)["server.env"]

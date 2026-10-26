@@ -27,7 +27,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
 | - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
-| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*; *App* for anything else). Changing it needs no restart. |
+| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, *Database*; *App* for anything else). Changing it needs no restart. |
 
 ### GPUs
 
@@ -73,6 +73,7 @@ command there.
 | Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances installed from the App Store or a preset start with this off. |
 | "Open" button port | `open_port` | Host port the Open button links to. Empty = the first port. |
 | "Open" button path | `open_path` | Path after the address, e.g. `/ui`. |
+| Starts with | `requires` | IDs of instances it needs, such as its database. Starting it starts them first (and autostart brings them up too); stopping it leaves them running. Starting fails if one of them doesn't exist. Changing it needs no restart. |
 | Shared memory | `shm_size` | Size of `/dev/shm`, e.g. `1g`. PyTorch apps with several workers often need more than Docker's 64 MB. |
 | Run as user | `user` | `UID:GID` inside the container, e.g. `1000:1000`, so files it writes to your folders are yours. |
 | Memory limit | `memory_limit` | Caps the container's RAM, e.g. `16g`. Empty = no limit. |
@@ -232,9 +233,31 @@ servers, the models you picked), so every field above can be changed afterwards.
 | LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context) and a coding model named `coder` (64K context, lower temperature). Either is optional, and one file can be both. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one |
+| LibreChat | none | `librechat/librechat`, plus its database: a second instance `<id>-mongodb` (`mongo:8.0`, no port on the host, data in the app data folder's `mongodb/`) that it *starts with*. Fresh secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`), `MONGO_URI`, sign-ups on, cookies that work over plain http (`SESSION_COOKIE_SECURE=false`), and a `librechat.yaml` in its app data folder with one endpoint, *Local models*, whose address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment. Images, uploads and logs go to its app data folder. |
+| AnythingLLM | none | `mintplexlabs/anythingllm` with its storage in the app data folder, and a `server.env` there mounted as its settings file (`/app/server/.env`) that points it at the model server (`generic-openai`, the `chat` model and its context size), with built-in embeddings and vector store. Its web scraper runs without `SYS_ADMIN` (`ANYTHINGLLM_CHROMIUM_ARGS`) and telemetry is off. |
 | Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
 
-Open WebUI and Hermes Agent can also install a new LLM server alongside themselves
+![The App Store's chat and agent apps](screenshots/app-store-chat.png)
+
+![Installing LibreChat: its database comes with it](screenshots/librechat-install.png)
+
+After installing, a few apps need one step of their own, which the install page and the message
+afterwards repeat:
+
+- **LibreChat**: sign up and log in; the first account becomes its admin. Then set
+  `ALLOW_REGISTRATION=false` under Edit unless others should make accounts. To point it at another
+  model server, change `LLM_BASE_URL` and `LLM_API_KEY` under Edit and restart it. Deleting
+  LibreChat leaves its database instance; delete that too if you are done with it. File search
+  over uploaded documents needs LibreChat's RAG API, which is not installed.
+- **AnythingLLM**: make a workspace and chat. It has no login until you set a password under its
+  Settings, Security. AnythingLLM owns `server.env` after the first start (it rewrites it when you
+  change settings in its page), so change its model there rather than under Edit.
+
+The App Store doesn't offer LobeChat (its current version needs PostgreSQL, S3 file storage, an
+auth key set and a fixed public address before it starts) or Odysseus (its model servers can only
+be added inside the app); install those with *Any Docker image* or Docker Compose.
+
+Open WebUI, LibreChat, AnythingLLM and Hermes Agent can also install a new LLM server alongside themselves
 (*A new LLM server, installed with it*), with a chat model you pick from the models folder.
 It is offered first when there is no model server yet, and the install page says so, with an
 *Install an LLM server first* button: that installs the LLM server and then comes back to the app,

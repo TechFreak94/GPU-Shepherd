@@ -11,6 +11,7 @@ Pure functions, no Docker - easy to test. Rules:
    Running instances keep the GPUs they already have where possible (no needless restarts).
 5. A running instance that can no longer get its minimum is stopped ("preempted").
    A running instance whose GPU set changes is restarted with the new GPUs.
+6. Starting an instance also starts the instances it `requires` (an app's database), first.
 
 The UI shows the plan and asks for confirmation whenever anything other than the target
 would be stopped or restarted.
@@ -101,6 +102,12 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
         wanted.add(target)
     elif action == "stop" and target:
         wanted.discard(target)
+    missing = {r: i for i in sorted(wanted) for r in instances[i].requires if r not in instances}
+    if missing:
+        r, i = next(iter(missing.items()))
+        result.error = f"{instances[i].name} needs instance '{r}', which does not exist"
+        return result
+    wanted = with_requirements(instances, wanted)
 
     gpu_set = set(gpus)
     allocations, dropped, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target, previous)
@@ -111,11 +118,38 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
     result.allocations = allocations
     result.preempted = sorted(i for i in dropped if i in previous)
     result.to_stop = sorted(i for i in previous if i not in allocations)
-    result.to_start = [i for i in _priority_order(instances, allocations, target) if i not in previous]
+    result.to_start = [i for i in start_order(instances, allocations, target) if i not in previous]
     result.to_restart = [i for i in _priority_order(instances, allocations, target)
                          if i in previous and (allocations[i] != previous[i]
                                                or (action == "restart" and i == target))]
     return result
+
+
+def with_requirements(instances: dict[str, Instance], ids) -> set[str]:
+    """The instances plus everything they require, and what that requires."""
+    out, todo = set(), list(ids)
+    while todo:
+        i = todo.pop()
+        if i in out or i not in instances:
+            continue
+        out.add(i)
+        todo += instances[i].requires
+    return out
+
+
+def start_order(instances: dict[str, Instance], ids, target: str | None) -> list[str]:
+    """The order to start instances in: by priority, but anything an instance requires first."""
+    ids, out = set(ids), []
+
+    def add(i: str, path: tuple[str, ...] = ()) -> None:
+        if i in out or i not in ids or i in path:
+            return
+        for r in instances[i].requires:
+            add(r, path + (i,))
+        out.append(i)
+    for i in _priority_order(instances, ids, target):
+        add(i)
+    return out
 
 
 def _priority_order(instances: dict[str, Instance], ids, target: str | None) -> list[str]:

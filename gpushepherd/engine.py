@@ -11,7 +11,7 @@ from . import drain, gpu as gpu_mod
 from .backend import Backend, ContainerSpec, ContainerState
 from .config import Catalog, ConfigError, Instance, Store
 from .connectors import llamaswap
-from .scheduler import Plan, _priority_order, plan as make_plan
+from .scheduler import Plan, plan as make_plan, start_order
 
 
 @dataclass
@@ -50,8 +50,9 @@ class Engine:
         return self.store.settings().container_prefix + iid
 
     def config_hash(self, inst: Instance) -> str:
-        # the drain policy and the app it came from only matter to GPU Shepherd: no restart for those
-        data = inst.model_dump(mode="json", exclude={"drain", "app"})
+        # the drain policy, the app it came from and what starts with it only matter to GPU Shepherd:
+        # no restart for those
+        data = inst.model_dump(mode="json", exclude={"drain", "app", "requires"})
         if inst.kind == "llama-swap":
             data["_catalog"] = self.store.catalog(inst.id).model_dump(mode="json")
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:12]
@@ -84,7 +85,7 @@ class Engine:
         for line in p.describe(names):
             log("Plan: " + line)
         self.backend.ensure_network(settings.network)
-        starts = _priority_order(instances, set(p.to_restart) | set(p.to_start), p.target)
+        starts = start_order(instances, set(p.to_restart) | set(p.to_start), p.target)
 
         # download images BEFORE stopping anything, so a long first pull causes no downtime
         # and a failed pull leaves everything as it was
