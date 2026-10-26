@@ -1,7 +1,11 @@
 # Architecture
 
 ```
-browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
+browser ── htmx ──────────> app.py (FastAPI routes, Jinja templates) ──┐
+scripts ── JSON ──────────> api.py (/api/v1, API token) ───────────────┤
+gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
+                                                                       v
+                    service.py  Shepherd: every action and setting, checked; raises Problem
                       │
                       ├─ config.py     Store: pydantic models <-> YAML files in the data folder
                       ├─ engine.py     snapshot() of the world, plan(), execute(plan)
@@ -12,7 +16,7 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
                       ├─ instance_templates.py   the App Store's apps and what they build (pure)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
-                      ├─ auth.py       scrypt password hashing, first-run password
+                      ├─ auth.py       scrypt password hashing, first-run password, API token
                       ├─ updates.py    update status, steps and requests, shared with update.sh on the host
                       └─ changelog.py  reads CHANGELOG.md, compares versions
 ```
@@ -21,6 +25,12 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
 
 - **The UI is the editor.** Anything a user needs to change should have a form. YAML is the
   storage format, readable and diffable, not the primary interface.
+- **One implementation, three front ends.** Each action and setting is a method of
+  `service.Shepherd`. The dashboard's routes (`app.py`), the JSON API (`api.py`) and the commands
+  (`cli.py`, which only talks to the API) call it and differ only in how they show the result, so
+  a button and its command can't drift apart. Commands go through the running app rather than
+  editing files, because starts, stops and model loads depend on its job runner and its view of
+  what is running.
 - **Plan, show, then act.** `scheduler.plan()` is pure and fully unit-tested. The UI shows the
   plan when it touches anything besides the instance you clicked; `engine.execute()` carries it out.
 - **Containers are disposable.** GPU assignments are fixed at container creation (Docker device
@@ -32,11 +42,13 @@ browser ── htmx ──> app.py (FastAPI routes, Jinja templates)
 
 ## Request flow: clicking "Start"
 
-1. `POST /ui/instances/<id>/start` (htmx).
+1. `POST /ui/instances/<id>/start` (htmx), or `POST /api/v1/instances/<id>/start` from a script or
+   `gpu-shepherd start <id>`. Both call `Shepherd.change()`.
 2. `engine.plan("start", id)` reads instances, running containers (with their GPU labels) and
    GPUs, then calls `scheduler.plan()`.
 3. If the plan stops or restarts other instances and was not confirmed, the server returns
-   `partials/confirm.html` into the modal. "Continue" re-posts with `confirm=1`.
+   `partials/confirm.html` into the modal. "Continue" re-posts with `confirm=1`. (The API answers
+   `409` with the plan instead; the command shows it and asks.)
 4. The job runner executes the plan: stop affected containers, then (re)create containers in
    priority order. For llama-swap instances the config is rendered from the catalogue for the
    number of GPUs assigned, written under `generated/`, and mounted read-only.
@@ -56,7 +68,7 @@ and image. The wait polls every 2 s until the instance reports no work, its time
 (`on_timeout`: `stop` anyway or `cancel`), or the job's `skip` / `cancel` events are set by the
 dashboard's *Stop now* / *Cancel change* buttons (`POST /ui/jobs/<id>/skip|cancel`). A check that
 can't get an answer doesn't block. While it waits, `Job.waiting` holds what each instance is still
-doing; the dashboard and `/api/state` (`waiting_for`) show it. Cancelling raises `jobs.Cancelled`
+doing; the dashboard and `/api/v1/state` (`waiting_for`) show it. Cancelling raises `jobs.Cancelled`
 before anything was stopped, and the job ends as `cancelled`. The policy is left out of the
 config fingerprint, so changing it never asks for a restart.
 

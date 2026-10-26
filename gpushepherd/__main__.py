@@ -1,4 +1,5 @@
-"""`gpu-shepherd` command: runs the web UI."""
+"""`gpu-shepherd` command: runs the web UI, or with a command (status, start, apps, models...)
+manages the one that is running (cli.py)."""
 from __future__ import annotations
 
 import argparse
@@ -10,13 +11,16 @@ from pathlib import Path
 
 import uvicorn
 
-from . import __version__
+from . import __version__, cli
 
 PRESETS = Path(__file__).resolve().parent / "presets"
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="gpu-shepherd", description="GPU Shepherd web UI")
+    ap = argparse.ArgumentParser(
+        prog="gpu-shepherd", description="GPU Shepherd: without a command, runs the web UI; with one, manages the "
+        "GPU Shepherd that is running (the same things the dashboard does).",
+        epilog="Options go before the command. See docs/cli.md, or `gpu-shepherd COMMAND -h`.")
     ap.add_argument("--host", default=os.environ.get("SHEPHERD_HOST", "0.0.0.0"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("SHEPHERD_PORT", "8090")))
     ap.add_argument("--data-dir", default=os.environ.get("SHEPHERD_DATA_DIR", "/opt/gpu-shepherd"))
@@ -27,7 +31,16 @@ def main() -> None:
     ap.add_argument("--reset-password", action="store_true",
                     help="give the admin a new password, print it and exit (the running web UI uses it at once)")
     ap.add_argument("--version", action="version", version=f"gpu-shepherd {__version__}")
+    ap.add_argument("--url", default="", metavar="URL",
+                    help="commands: the GPU Shepherd to manage (default: http://127.0.0.1:PORT, or $SHEPHERD_URL)")
+    ap.add_argument("--token", default="", metavar="TOKEN",
+                    help="commands: its API token (default: $SHEPHERD_TOKEN, or the api-token file in the data folder)")
+    ap.add_argument("--json", action="store_true", help="commands: print the API's JSON answer")
+    sub = ap.add_subparsers(dest="command", metavar="COMMAND")
+    cli.add_commands(sub)
     args = ap.parse_args()
+    if args.command:
+        raise SystemExit(cli.run(args))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     data_dir = args.data_dir

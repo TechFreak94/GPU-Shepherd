@@ -37,6 +37,17 @@
   <div class="actions"><button class="primary" type="submit">Save</button></div>
 </form>
 
+<h3>API and command line</h3>
+<div class="card" id="api-token">
+  <p class="small" style="margin-top:0">Everything on these pages can also be done with the
+    <span class="mono">gpu-shepherd</span> command (on the server: <span class="mono">sudo docker exec gpu-shepherd gpu-shepherd status</span>)
+    or the JSON API at <span class="mono">/api/v1</span>. Both use this token, sent as <span class="mono">Authorization: Bearer &lt;token&gt;</span>.
+    The command on the server reads it from the data folder by itself. Whoever has it can change everything here, like the admin login.</p>
+  <details><summary>Show the API token</summary><p class="mono small" style="word-break:break-all">{{ api_token }}</p></details>
+  <div class="actions"><button type="button" hx-post="/settings/api-token"
+    hx-confirm="Make a new API token? Scripts using the old one stop working until you give them the new one.">Make a new token</button></div>
+</div>
+
 <h3>Updates</h3>
 <div class="card" id="updates" hx-get="/ui/update/card" hx-trigger="every 10s, refresh from:body">
   {% include "partials/update_card.html" %}

@@ -59,6 +59,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
   models larger than your GPUs still run, set per GPU count.
 
   ![Models](docs/screenshots/models.png)
+- **Command line and API**: every button and setting also works from the `gpu-shepherd` command
+  (`gpu-shepherd start comfyui`, `apps install`, `models set`...) and a documented JSON API with a
+  token, for scripts and Home Assistant. All three run the same code.
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
@@ -67,8 +70,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 - [Instance and model options](docs/advanced.md): every field in the editors and what it does
   (GPU policies, folders, before-stopping checks, GPU/RAM offload, auto names).
-- [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command,
-  `download-models.sh` and environment variables.
+- [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command and its
+  commands for everything the dashboard does, `download-models.sh` and environment variables.
+- [JSON API](docs/api.md): `/api/v1`, the API token, and every endpoint with examples.
 - [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
   the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
 - [Presets](gpushepherd/presets/README.md): ready-made sets of instances, and how to make your own.

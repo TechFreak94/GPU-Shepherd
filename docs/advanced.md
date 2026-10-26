@@ -7,6 +7,10 @@ choose *Manual configuration* (or *Customize every field*) while installing one,
 Instances are saved to `instances/<id>.yaml` in the data folder, model servers' model lists to
 `catalogs/<id>.yaml`. Changes take effect the next time the instance starts or restarts.
 
+Every option can also be set without the browser, by its YAML key: `gpu-shepherd set <id>
+gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and so on (see
+[Commands](cli.md#commands)), or through the [JSON API](api.md).
+
 - [Instances](#instances): basics, GPUs, network and storage, command, behaviour, before stopping
 - [Model servers](#model-servers): models, GPU and system RAM, auto names, server settings
 - [Settings](#settings)
@@ -212,6 +216,7 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | Publish ports on | `bind_address` | `0.0.0.0` = your whole network, `127.0.0.1` = this machine only. |
 | Docker network | `network` | The network every instance joins. |
 | Theme | - | System (follows your device), Light or Dark. Saved per browser in a `theme` cookie, not in `settings.yaml`. The theme button at the top of every page cycles through them. |
+| API token | - | For the [JSON API](api.md) and the `gpu-shepherd` commands. Kept in the `api-token` file in the data folder (mode 600), not in `settings.yaml`. *Make a new token* replaces it. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
 

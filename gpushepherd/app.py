@@ -1,13 +1,11 @@
 """Web UI (FastAPI + Jinja2 + htmx). Server-rendered pages; htmx swaps in fragments."""
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
-import threading
 import time
 from pathlib import Path
 
@@ -15,24 +13,24 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth, buildinfo, changelog, drain, host as host_mod, instance_templates as tpl, updates
+from . import __version__, api, auth, buildinfo, changelog, drain, host as host_mod, instance_templates as tpl, updates
 from .backend import Backend, DockerBackend, FakeBackend
-from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance,
-                     OffloadRule,
-                     Store, VolumeMap, format_command, format_env, format_ports, format_volumes, friendly_errors,
-                     parse_command, parse_env, parse_ports, parse_volumes)
+from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
+                     format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
+                     parse_volumes)
 from .connectors import llamaswap
 from .engine import Engine
-from .jobs import Busy, JobRunner
+from .jobs import JobRunner
 from .scheduler import gpu_text
+from .service import Problem, Shepherd, message, parse_auto_rules
 
 log = logging.getLogger("gpushepherd")
 HERE = Path(__file__).parent
 PUBLIC = ("/login", "/static/", "/healthz")
+API = "/api/"
 THEMES = ("light", "dark")  # no cookie = follow the system
 
 
@@ -87,6 +85,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         log.warning("First start: log in as '%s' with password '%s' (also in %s). Change it under Settings.",
                     store.settings().admin_user, generated, auth.initial_password_file(store))
     settings = store.settings()
+    api_token = auth.api_token(store)      # made now, so `gpu-shepherd` commands find it in the data folder
+    if demo:
+        log.warning("Demo mode: commands need --token %s (or SHEPHERD_TOKEN)", api_token)
 
     app = FastAPI(title="GPU Shepherd", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store, app.state.engine, app.state.jobs, app.state.demo = store, engine, jobs, demo
@@ -104,7 +105,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     class Guard(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
-            if not path.startswith(PUBLIC):
+            if path.startswith(API):
+                # scripts and the gpu-shepherd command: the API token; a logged-in browser may read
+                bearer = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+                if not auth.check_api_token(store, bearer) and not (
+                        request.method == "GET" and request.session.get("user")):
+                    return JSONResponse({"error": "log in, or send the API token as 'Authorization: Bearer <token>'"},
+                                        status_code=401)
+            elif not path.startswith(PUBLIC):
                 if not request.session.get("user"):
                     if path == "/" and request.query_params.get("login"):
                         # just logged in, yet the session cookie did not come back
@@ -146,6 +154,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         if demo:
             return DemoLlamaClient(store.catalog(iid))
         return engine.llama_client(iid)
+
+    # everything the dashboard changes goes through the same calls as the JSON API and the command
+    svc = Shepherd(store, engine, jobs, llama_client, loading=app.state.loading)
+    app.state.svc = svc
 
     def base_url(request: Request, port: int, path: str = "/") -> str:
         """The address an instance's port is reached at, from the browser's point of view."""
@@ -212,32 +224,27 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None),
                 "now": time.time(), "u": updates.status(store.root)}
 
+    def problem(err: Problem) -> Response:
+        return toast(Response(status_code=204), err.msg, err.kind)
+
     def run_plan(request: Request, action: str, iid: str, confirm: bool, back: str = "") -> Response:
-        names = {i.id: i.name for i in store.instances()[0].values()}
-        if jobs.busy:
-            return toast(Response(status_code=204), "Another change is still running - wait for it to finish.", "warn")
-        p = engine.plan(action, iid)
-        if p.error:
-            return toast(Response(status_code=204), p.error, "error")
-        if p.is_noop:
-            return toast(Response(status_code=204), f"{names.get(iid, iid)} is already {'stopped' if action == 'stop' else 'running'}.")
-        if p.side_effects and not confirm:
-            resp = page(request, "partials/confirm.html", plan=p, lines=p.describe(names), iid=iid, action=action,
-                        name=names.get(iid, iid), back=back)
+        try:
+            c = svc.change(action, iid, confirm)
+        except Problem as err:
+            return problem(err)
+        if c.noop:
+            return toast(Response(status_code=204), c.text)
+        if c.needs_confirm:
+            resp = page(request, "partials/confirm.html", plan=c.plan, lines=c.lines, iid=iid, action=action,
+                        name=c.name, back=back)
             resp.headers["HX-Retarget"] = "#modal-body"
             resp.headers["HX-Reswap"] = "innerHTML"
             resp.headers["HX-Trigger-After-Swap"] = "open-modal"
             return resp
-        verb = {"start": "Starting", "stop": "Stopping", "restart": "Restarting"}[action]
-        try:
-            jobs.submit(f"{verb} {names.get(iid, iid)}", lambda job: engine.execute(p, job, job))
-        except Busy as err:
-            return toast(Response(status_code=204), str(err), "warn")
         if back:
-            return Response(status_code=204, headers={"HX-Redirect": f"{back}?msg={verb} {names.get(iid, iid)}…"})
+            return Response(status_code=204, headers={"HX-Redirect": f"{back}?msg={c.text}"})
         resp = page(request, "partials/dashboard.html", **dashboard_ctx(request))
-        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": f"{verb} {names.get(iid, iid)}…", "kind": "info"},
-                                                 "close-modal": True})
+        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": c.text, "kind": "info"}, "close-modal": True})
         return resp
 
     # ------------------------------------------------------------------ login
@@ -297,34 +304,26 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/ui/instances/{iid}/logs", response_class=HTMLResponse)
     def instance_logs(request: Request, iid: str):
         inst = store.instance(iid)
-        text = backend.logs(engine.container_name(iid))
+        text = svc.logs(iid)
         return page(request, "partials/logs.html", title=f"Logs: {inst.name}", text=text,
                     refresh=f"/ui/instances/{iid}/logs")
 
     @app.get("/ui/jobs/{jid}", response_class=HTMLResponse)
     def job_detail(request: Request, jid: int):
-        job = next((j for j in jobs.recent() if j.id == jid), None)
-        if not job:
-            return PlainTextResponse("job not found", status_code=404)
+        try:
+            job = svc.job(jid)
+        except Problem as err:
+            return PlainTextResponse(err.msg, status_code=err.status)
         return page(request, "partials/logs.html", title=f"{job.title} ({job.status})", text="\n".join(job.lines),
                     refresh=f"/ui/jobs/{jid}" if job.status == "running" else "")
 
     @app.post("/ui/jobs/{jid}/{op}")
     def job_control(jid: int, op: str):
         """The buttons shown while a change waits for running work: stop now, or call it off."""
-        job = jobs.current
-        if op not in ("skip", "cancel"):
-            return PlainTextResponse("unknown operation", status_code=400)
-        if not job or job.id != jid:
-            return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}),
-                         "That change has already finished.")
-        if op == "cancel":
-            job.call_off()
-            msg = "Calling the change off: nothing is stopped."
-        else:
-            job.skip.set()
-            msg = "Stopping without waiting any longer."
-        log.info("job %s: %s pressed", jid, op)
+        try:
+            msg = svc.control_job(jid, op)
+        except Problem as err:
+            return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}), err.msg, err.kind)
         resp = Response(status_code=204)
         resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": "info"}, "refresh": True})
         return resp
@@ -358,46 +357,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             app_t = tpl.get(form.get("app") or "") if not editing else None
         except ConfigError:
             app_t = None
-        no_server = bool(app_t and app_t.connects) and not has_llm_server()
+        no_server = bool(app_t and app_t.connects) and not svc.has_llm_server()
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
                     no_server=no_server,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
     # ------------------------------------------------------------------ guided setup (templates)
-    def machine() -> tpl.Machine:
-        instances, _ = store.instances()
-        servers = {}
-        for inst in instances.values():
-            if inst.kind != "llama-swap":
-                continue
-            cat = store.catalog(inst.id)
-            alias = next((a for a in ("chat", "coder") for m in cat.models if a in m.aliases or a == m.id), "")
-            servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
-                                "default_model": alias or (cat.models[0].id if cat.models else "")}
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in engine.snapshot().gpus],
-                           instances=instances, servers=servers, model_sizes={})
-
-    def default_models_dir(instances: dict[str, Instance]) -> str:
-        """Where this machine keeps models: the folder another model server already uses, a common
-        place that exists, or a folder inside the data folder."""
-        for inst in instances.values():
-            for v in inst.volumes:
-                if inst.kind == "llama-swap" and v.container == tpl.MODELS_IN_CONTAINER:
-                    return v.host
-                if v.container.endswith("ComfyUI/models") and v.host.endswith("/comfyui"):
-                    return v.host.removesuffix("/comfyui")
-        for d in ("/srv/models", "/opt/models", "/data/models"):
-            if Path(d).is_dir():
-                return d
-        return str(engine.host_data_dir / "models")
-
-    def model_files(models_dir: str) -> tuple[list[dict], list[str]]:
-        probe = Instance(id="probe", name="probe", image="probe",
-                         volumes=[VolumeMap(host=models_dir, container=tpl.MODELS_IN_CONTAINER)])
-        return llamaswap.local_model_files(probe)
-
-    def has_llm_server() -> bool:
-        return any(i.kind == "llama-swap" for i in store.instances()[0].values())
+    machine, model_files = svc.machine, svc.model_files
 
     def next_app(key: str) -> tpl.Template | None:
         """The app to go on to after installing an LLM server for it (?then=)."""
@@ -422,9 +388,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
 
-    def appdata_root() -> str:
-        return str(engine.host_data_dir / "appdata")
-
     # ------------------------------------------------------------------ App Store
     @app.get("/apps", response_class=HTMLResponse)
     def app_store(request: Request):
@@ -441,15 +404,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return RedirectResponse(f"/apps?msg={err}", status_code=303)
         if t.key != key:                      # renamed app (the chat and coding servers are one LLM server now)
             return RedirectResponse(f"/apps/{t.key}" + ("?mode=manual" if mode == "manual" else ""), status_code=303)
-        m = machine()
-        f = tpl.defaults(t, m, default_models_dir(m.instances), appdata_root())
         if mode != "manual":
+            _, f, m = svc.app_defaults(key)
             return guided(request, t, f, m, then=next_app(then))
         # manual: the full form, filled in from the same defaults (a model server is picked, not made)
-        if f["server"] == tpl.NEW_SERVER:
-            f["server"] = ""
-        inst, _ = tpl.build(t, f, m)
-        return editor(request, form_from_instance(inst), editing=False)
+        return editor(request, form_from_instance(svc.app_instance(key)), editing=False)
 
     @app.get("/instances/new")
     def new_instance(kind: str = ""):
@@ -478,37 +437,24 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                               "hass_token", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
         then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None
-        m = machine()
-        if slot_fields and f["models_dir"]:
-            m.model_sizes = {x["container_path"]: x["size_gb"] for x in model_files(f["models_dir"])[0]}
-        try:
-            if raw.get("action") == "advanced":
-                answers = f | {"server": "" if f["server"] == tpl.NEW_SERVER else f["server"]}
-                inst, _ = tpl.build(t, answers, m)
+        if raw.get("action") == "advanced":
+            try:
+                inst = svc.app_instance(t.key, f)
+            except Problem as err:
+                resp = guided(request, t, f, machine(), error=err.msg, then=then)
+            else:
                 resp = editor(request, form_from_instance(inst), editing=False)
-                resp.headers["HX-Retarget"] = "#editor"
-                resp.headers["HX-Reselect"] = "#editor"
-                return resp
-            bundle = tpl.bundled_server(f, m, appdata_root()) if t.connects else None
-            answers = f | {"server": bundle[0].id} if bundle else f
-            inst, models = tpl.build(t, answers, m)
-            seeds = tpl.seed_files(t, answers, m)
-            if bundle:
-                store.save_instance(bundle[0])
-                store.save_catalog(bundle[1])
-            store.save_instance(inst)
-            make_app_folders(inst, t, seeds)
-            if inst.kind == "llama-swap":
-                cat = store.catalog(inst.id)
-                if models:
-                    cat.models += models
-                    store.save_catalog(Catalog.model_validate(cat.model_dump()))
-        except (ConfigError, ValueError) as err:
-            msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
-            resp = guided(request, t, f, machine(), error=msg, then=then)   # without a model server made on the way
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
+        try:
+            done = svc.install(t.key, f)
+        except Problem as err:
+            resp = guided(request, t, f, machine(), error=err.msg, then=then)   # without a model server made on the way
+            resp.headers["HX-Retarget"] = "#editor"
+            resp.headers["HX-Reselect"] = "#editor"
+            return resp
+        inst, models, bundle = done.inst, done.models, done.bundle
         if then:                              # installed for another app: go on to that one, now connected to it
             what = f" with {', '.join(x.id for x in models)}" if models else ""
             return Response(status_code=204, headers={
@@ -517,38 +463,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             what = f"with {', '.join(x.id for x in models)}" if models else "- add a model below"
             return Response(status_code=204, headers={
                 "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}. Press Start on the dashboard to run it."})
-        also = f" and {bundle[0].name}" if bundle else ""
+        also = f" and {bundle.name}" if bundle else ""
         return Response(status_code=204, headers={
             "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.#inst-{inst.id}"})
-
-    def make_app_folders(inst: Instance, t: tpl.Template, seeds: dict[str, str]) -> None:
-        """Make a new app's own folders (so Docker doesn't make them as root) and its first settings
-        files. Only folders inside the data folder, which GPU Shepherd can see."""
-        appdata = {sub: v.host for (sub, inside) in t.appdata for v in inst.volumes if v.container == inside}
-        for v in inst.volumes:
-            host = Path(v.host)
-            if v.read_only or not host.is_relative_to(store.root):
-                continue
-            try:
-                host.mkdir(parents=True, exist_ok=True)
-                if t.data_owner and os.geteuid() == 0:
-                    os.chown(host, *t.data_owner)
-            except OSError as err:
-                log.warning("could not prepare %s for %s: %s", host, inst.id, err)
-        for rel, text in seeds.items():
-            sub, _, name = rel.partition("/")
-            if sub not in appdata or not Path(appdata[sub]).is_dir():
-                continue
-            path = Path(appdata[sub]) / name
-            if path.exists():
-                continue
-            try:
-                path.write_text(text, encoding="utf-8")
-                path.chmod(0o600)                 # it holds the model server's API key
-                if t.data_owner and os.geteuid() == 0:
-                    os.chown(path, *t.data_owner)
-            except OSError as err:
-                log.warning("could not write %s for %s: %s", path, inst.id, err)
 
     @app.get("/instances/{iid}/edit", response_class=HTMLResponse)
     def edit_instance(request: Request, iid: str):
@@ -569,10 +486,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         f["autostart"] = raw.get("autostart") == "on"
         editing = f["editing"] == "1"
         try:
-            if editing:
-                store.instance(f["id"])       # must exist
-            elif store.instance_path(f["id"]).exists():
-                raise ConfigError(f"an instance called '{f['id']}' already exists")
             inst = Instance(
                 id=f["id"].strip(), name=f["name"].strip() or f["id"], description=f["description"].strip(),
                 kind=f["kind"] or "container", image=f["image"], command=parse_command(f["command"]),
@@ -589,48 +502,29 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
                                   path=f["drain_path"], key=f["drain_key"]),
                 app=str(f["app"]).strip())
-            store.save_instance(inst)
-            if inst.app and not editing:      # an App Store app installed by hand: make its folders too
-                try:
-                    make_app_folders(inst, tpl.get(inst.app), {})
-                except ConfigError:
-                    pass
-            if inst.kind == "llama-swap":
-                store.catalog(inst.id)        # create an empty catalogue with an API key
-        except (ConfigError, ValueError) as err:
-            msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
-            resp = editor(request, f, editing, error=msg)
+            msg = svc.save_instance(inst, editing)
+        except (Problem, ConfigError, ValueError) as err:
+            resp = editor(request, f, editing, error=err.msg if isinstance(err, Problem) else message(err))
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
-        st = backend.states().get(inst.id)
-        note = " Restart it to apply the changes." if st and st.running else ""
-        return Response(status_code=204, headers={"HX-Redirect": f"/?msg=Saved {inst.name}.{note}"})
+        return Response(status_code=204, headers={"HX-Redirect": f"/?msg={msg}"})
 
     @app.post("/instances/{iid}/delete")
     def delete_instance(iid: str):
         try:
-            inst = store.instance(iid)
-            jobs.submit(f"Deleting {inst.name}", lambda logf: engine.remove_instance(iid, logf), wait=True)
-        except (ConfigError, Busy) as err:
-            return toast(Response(status_code=204), str(err), "error")
-        return Response(status_code=204, headers={"HX-Redirect": f"/?msg=Deleted {inst.name}."})
+            msg = svc.delete_instance(iid)
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/?msg={msg}"})
 
     # ------------------------------------------------------------------ model catalogue
     def models_ctx(iid: str) -> dict:
-        inst = store.instance(iid)
-        if inst.kind != "llama-swap":
-            raise ConfigError(f"{inst.name} is not a model server")
-        cat = store.catalog(iid)
+        inst, cat = svc.server(iid)
         st = backend.states().get(iid)
         running = bool(st and st.running)
         gpu_count = len(st.gpus) if running else 0
-        loaded, err = {}, ""
-        if running:
-            try:
-                loaded = llama_client(iid).running({m.id for m in cat.models})
-            except Exception:  # noqa: BLE001
-                err = "The model server is not answering yet (it may still be starting)."
+        loaded, err = svc.loaded(iid, cat)
         files, notes = llamaswap.local_model_files(inst)
         preview_gpus = gpu_count or max(len(engine.snapshot().gpus), 1)
         threads = cat.threads or 8
@@ -645,8 +539,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def models_page(request: Request, iid: str):
         try:
             return page(request, "models.html", **models_ctx(iid))
-        except ConfigError as err:
-            return RedirectResponse(f"/?msg={err}", status_code=303)
+        except Problem as err:
+            return RedirectResponse(f"/?msg={err.msg}", status_code=303)
 
     @app.get("/instances/{iid}/models/edit", response_class=HTMLResponse)
     def model_form(request: Request, iid: str, model: str = ""):
@@ -698,7 +592,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.post("/instances/{iid}/models/save")
     async def save_model(request: Request, iid: str):
         raw = await request.form()
-        inst, cat = store.instance(iid), store.catalog(iid)
+        inst = store.instance(iid)
         original = str(raw.get("original_id", ""))
         f = {k: str(raw.get(k, "")) for k in ("id", "name", "description", "file", "ctx_size", "parallel",
                                                "sampling", "extra_args", "kv_cache", "mmproj", "aliases_text")}
@@ -712,117 +606,63 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                  mmproj=f["mmproj"].strip(),
                                  aliases=[a.strip() for a in f["aliases_text"].split(",") if a.strip()],
                                  offload=offload_rules(posted))
-            models = [m for m in cat.models if m.id != (original or model.id)]
-            if original and original != model.id:
-                for auto in cat.auto_aliases:        # follow a rename
-                    if auto.default_model == original:
-                        auto.default_model = model.id
-                    for r in auto.rules:
-                        if r.model == original:
-                            r.model = model.id
-            pos = next((n for n, m in enumerate(cat.models) if m.id == original), len(models))
-            models.insert(min(pos, len(models)), model)
-            cat = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in models],
-                                          "auto_aliases": [a.model_dump() for a in cat.auto_aliases]})
-            store.save_catalog(cat)
-        except (ValueError, ConfigError) as err:
-            msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
+            msg = svc.save_model(iid, model, original)
+        except (Problem, ValueError, ConfigError) as err:
             files, notes = llamaswap.local_model_files(inst)
             resp = page(request, "model_form.html", inst=inst, f=f, editing=bool(original), files=files,
-                        file_notes=notes, error=msg, original=original)
+                        file_notes=notes, error=err.msg if isinstance(err, Problem) else message(err), original=original)
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg=Saved {model.id}."})
+        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
 
     @app.post("/instances/{iid}/models/{mid}/delete")
     def delete_model(iid: str, mid: str):
-        cat = store.catalog(iid)
         try:
-            cat = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in cat.models if m.id != mid]})
-            store.save_catalog(cat)
-        except ValidationError as err:
-            return toast(Response(status_code=204), f"Cannot delete {mid}: {friendly_errors(err)}", "error")
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg=Deleted {mid}."})
+            msg = svc.delete_model(iid, mid)
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
 
     @app.post("/instances/{iid}/models/{mid}/{op}")
     def model_op(iid: str, mid: str, op: str):
         if op not in ("load", "unload"):
             return PlainTextResponse("unknown operation", status_code=400)
-        cat = store.catalog(iid)
-        if mid != "_all" and mid not in {m.id for m in cat.models}:
-            return toast(Response(status_code=204), f"unknown model {mid}", "error")
-        client = llama_client(iid)
-        if op == "unload":
-            # llama-swap cuts off the requests a model is answering when it is unloaded
-            act = engine.activity(store.instance(iid))
-            if act.busy:
-                return toast(Response(status_code=204),
-                             f"Still answering {act.detail}. Unloading now would cut that off: try again when it "
-                             "finishes, or use Stop on the dashboard, which waits for it.", "warn")
-            try:
-                client.unload(None if mid == "_all" else mid)
-            except Exception as err:  # noqa: BLE001
-                return toast(Response(status_code=204), str(err), "error")
-            return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}), "Model unloaded.")
-        busy = app.state.loading.setdefault(iid, set())
-        if mid in busy:
-            return toast(Response(status_code=204), f"{mid} is already loading.")
-
-        def worker():
-            busy.add(mid)
-            try:
-                client.load(mid)
-            except Exception as err:  # noqa: BLE001
-                log.warning("loading %s failed: %s", mid, err)
-            finally:
-                busy.discard(mid)
-        threading.Thread(target=worker, daemon=True).start()
-        return toast(Response(status_code=204), f"Loading {mid} - large models take a few minutes from disk.")
+        try:
+            if op == "unload":
+                return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}),
+                             svc.unload_model(iid, mid))
+            return toast(Response(status_code=204), svc.load_model(iid, mid))
+        except Problem as err:
+            return problem(err)
 
     @app.post("/instances/{iid}/catalog/settings")
     async def catalog_settings(request: Request, iid: str):
         raw = await request.form()
-        cat = store.catalog(iid)
         try:
-            cat.threads = int(raw.get("threads") or 0)
-            cat.llama_server = str(raw.get("llama_server", "")).strip()
-            cat.health_timeout = int(raw.get("health_timeout") or 900)
-            if raw.get("new_key") == "on":
-                cat.api_key = "sk-" + secrets.token_hex(20)
-            cat = Catalog.model_validate(cat.model_dump())
-            store.save_catalog(cat)
-        except (ValueError, ValidationError) as err:
-            msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
-            return toast(Response(status_code=204), msg, "error")
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg=Settings saved."})
+            msg = svc.server_settings(iid, threads=int(raw.get("threads") or 0),
+                                      llama_server=str(raw.get("llama_server", "")),
+                                      health_timeout=int(raw.get("health_timeout") or 900),
+                                      new_key=raw.get("new_key") == "on")
+        except ValueError:
+            return toast(Response(status_code=204), "Threads and the start-up wait are whole numbers.", "error")
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
 
     @app.post("/instances/{iid}/catalog/auto")
     async def catalog_auto(request: Request, iid: str):
         raw = await request.form()
-        cat = store.catalog(iid)
-        autos = []
         try:
-            for alias, default, rules in zip(raw.getlist("alias"), raw.getlist("default_model"), raw.getlist("rules")):
-                alias = str(alias).strip()
-                if not alias:
-                    continue
-                parsed = []
-                for part in re.split(r"[,\n]", str(rules)):
-                    part = part.strip()
-                    if not part:
-                        continue
-                    m = re.match(r"^(\d+)\s*\+?\s*(?:gpus?)?\s*[=:]\s*(\S+)$", part, re.I)
-                    if not m:
-                        raise ValueError(f"rule '{part}': write it as 2=model-id (2 or more GPUs use model-id)")
-                    parsed.append(AutoRule(min_gpus=int(m.group(1)), model=m.group(2)))
-                autos.append(AutoAlias(alias=alias, default_model=str(default), rules=parsed))
-            cat = Catalog.model_validate({**cat.model_dump(), "auto_aliases": [a.model_dump() for a in autos]})
-            store.save_catalog(cat)
-        except (ValueError, ValidationError) as err:
-            msg = friendly_errors(err) if isinstance(err, ValidationError) else str(err)
-            return toast(Response(status_code=204), msg, "error")
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg=Auto names saved."})
+            autos = [AutoAlias(alias=str(alias).strip(), default_model=str(default), rules=parse_auto_rules(rules))
+                     for alias, default, rules in zip(raw.getlist("alias"), raw.getlist("default_model"),
+                                                      raw.getlist("rules")) if str(alias).strip()]
+            msg = svc.set_auto_aliases(iid, autos)
+        except ValueError as err:
+            return toast(Response(status_code=204), message(err), "error")
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
 
     # ------------------------------------------------------------------ updates (done by update.sh on the host)
     def update_page(request: Request, confirm: bool = False) -> Response:
@@ -858,17 +698,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.post("/ui/update/credentials")
     async def update_credentials(request: Request):
         raw = await request.form()
-        u = updates.status(store.root)
-        if not u.dashboard_updates:
-            return toast(Response(status_code=204), f"Saving a token needs the update service. On the server run: {u.command} --set-token <user>", "warn")
-        if u.busy:
-            return toast(Response(status_code=204), "An update or check is running; try again when it is done.", "warn")
         try:
-            updates.request_credentials(store.root, str(raw.get("user", "")).strip(), str(raw.get("token", "")).strip(),
-                                        clear=raw.get("clear") == "1")
-        except ValueError as err:
-            return toast(Response(status_code=204), str(err), "error")
-        log.info("update: GitHub token %s from the dashboard", "removal requested" if raw.get("clear") == "1" else "handed to the host")
+            svc.update_credentials(str(raw.get("user", "")), str(raw.get("token", "")), clear=raw.get("clear") == "1")
+        except Problem as err:
+            return problem(err)
         resp = update_page(request)          # shows the check that follows, which proves the token works
         resp.headers["HX-Trigger"] = json.dumps({"refresh": True, "credentials-sent": True})
         return resp
@@ -877,17 +710,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def update_request(request: Request, action: str):
         if action not in updates.ACTIONS:
             return PlainTextResponse("unknown action", status_code=400)
-        u = updates.status(store.root)
-        if not u.dashboard_updates:
-            return toast(Response(status_code=204), f"Updating from the dashboard is off. On the server run: {u.command}", "warn")
-        if u.busy:
-            return toast(Response(status_code=204), "An update or check is already running.", "warn")
-        if action == "update" and jobs.busy:
-            return toast(Response(status_code=204), "Wait for the current change to finish, then update.", "warn")
-        if action == "update" and u.local_changes:
-            return toast(Response(status_code=204), f"Files in the clone were changed by hand. Run {u.command} --stash on the server.", "error")
-        updates.request(store.root, action)
-        log.info("update: %s requested from the dashboard", action)
+        try:
+            svc.request_update(action)
+        except Problem as err:
+            return problem(err)
         resp = update_page(request)          # the dialog, now showing the progress
         resp.headers["HX-Trigger"] = json.dumps({"refresh": True})
         return resp
@@ -897,58 +723,34 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def settings_page(request: Request):
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
-                    error="", u=updates.status(store.root))
+                    error="", u=updates.status(store.root), api_token=auth.api_token(store))
 
     @app.post("/settings/password")
     async def change_password(request: Request):
         raw = await request.form()
-        s = store.settings()
-        current, new, again = (str(raw.get(k, "")) for k in ("current", "new", "again"))
-        if not auth.verify_password(current, s.password_hash):
-            return toast(Response(status_code=204), "The current password is wrong.", "error")
-        if len(new) < 10:
-            return toast(Response(status_code=204), "Use at least 10 characters.", "error")
-        if new != again:
-            return toast(Response(status_code=204), "The new passwords do not match.", "error")
-        s.password_hash = auth.hash_password(new)
-        store.save_settings(s)
-        auth.initial_password_file(store).unlink(missing_ok=True)
-        return Response(status_code=204, headers={"HX-Redirect": "/settings?msg=Password changed."})
+        try:
+            msg = svc.change_password(*(str(raw.get(k, "")) for k in ("current", "new", "again")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/settings?msg={msg}"})
 
     @app.post("/settings/general")
     async def general_settings(request: Request):
         raw = await request.form()
-        s = store.settings()
-        bind, network = str(raw.get("bind_address", "")).strip(), str(raw.get("network", "")).strip()
         try:
-            ipaddress.ip_address(bind)
-        except ValueError:
-            return toast(Response(status_code=204), "Bind address must be an IP address, e.g. 0.0.0.0", "error")
-        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$", network):
-            return toast(Response(status_code=204), "Invalid Docker network name.", "error")
-        s.bind_address, s.network = bind, network
-        store.save_settings(s)
-        return Response(status_code=204, headers={"HX-Redirect": "/settings?msg=Saved. Restart instances to apply."})
+            msg = svc.set_containers(str(raw.get("bind_address", "")), str(raw.get("network", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/settings?msg={msg}"})
 
-    # ------------------------------------------------------------------ JSON for scripts
-    @app.get("/api/state")
-    def api_state():
-        snap = engine.snapshot()
-        machine = host_mod.query()
-        return JSONResponse({
-            "version": __version__,
-            "commit": build.get("commit", ""),
-            "update_available": updates.status(store.root).behind,
-            "gpus": [g.__dict__ | {"users": snap.gpu_users(g.index)} for g in snap.gpus],
-            "instances": {i: {"name": inst.name, "running": bool(snap.states.get(i) and snap.states[i].running),
-                              "gpus": snap.allocations.get(i, []), "policy": inst.gpu.model_dump()}
-                          for i, inst in snap.instances.items()},
-            "host": {"cpu_pct": machine.cpu_pct, "cpu_threads": machine.cpu_threads, "load": machine.load,
-                     "mem_total": machine.mem_total, "mem_used": machine.mem_used,
-                     "mem_available": machine.mem_available},
-            "job": jobs.current.title if jobs.current else None,
-            "waiting_for": dict(jobs.current.waiting) if jobs.current else {},
-        })
+    @app.post("/settings/api-token")
+    def api_token_new():
+        auth.new_api_token(store)
+        log.info("API token replaced from the dashboard")
+        return Response(status_code=204, headers={"HX-Redirect": "/settings?msg=New API token made. The old one no longer works."})
+
+    # ------------------------------------------------------------------ JSON API (api.py)
+    app.include_router(api.router(svc, build))
 
     # ------------------------------------------------------------------ autostart
     if autostart if autostart is not None else os.environ.get("SHEPHERD_AUTOSTART", "1") == "1":
