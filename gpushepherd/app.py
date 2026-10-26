@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, drain, host as host_mod, instance_templates as tpl, updates
+from . import __version__, api, auth, buildinfo, changelog, drain, host as host_mod, instance_templates as tpl, model_library, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -73,6 +73,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     store = Store(data_dir or os.environ.get("SHEPHERD_DATA_DIR", "/opt/gpu-shepherd"))
     if backend is None:
         backend = FakeBackend(slow=0.5) if demo else DockerBackend()
+        if demo:
+            backend.helper_seconds = 120          # demo downloads take a while, like real ones
     # demo mode has no real servers to ask, so everything counts as idle
     engine = Engine(store, backend, activity=(lambda _inst: drain.Activity(0)) if demo else None)
     jobs = JobRunner()
@@ -378,12 +380,21 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                then: tpl.Template | None = None):
         wants_files = bool(tpl.slots(t))
         files, notes = model_files(f["models_dir"]) if wants_files and f.get("models_dir") else ([], [])
+        have = {x["container_path"] for x in files}
+        files = [x for x in files if not x["name"].startswith(("mmproj", "mtp-"))]   # these go with a model
         gpus = engine.snapshot().gpus
         choices = [(k, v) for k, v in tpl.GPU_CHOICES.items()]
         choices[-1:-1] = [(f"pin:{g.index}", f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)")
                           for g in gpus] if len(gpus) > 1 else []
         comfy = [(i.id, i.name) for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"]
+        keys = {sl.key for sl in tpl.slots(t)}
+        suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
+                      f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in have)
+                     for s, fit in sorted(((s, model_library.fit(s, m.gpu_mem_gb, m.ram_gb))
+                                           for s in model_library.SUGGESTIONS if keys & set(s.uses)),
+                                          key=lambda x: x[1].rank)] if wants_files else []
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
+                    suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
                     servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
@@ -457,18 +468,19 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             resp.headers["HX-Reselect"] = "#editor"
             return resp
         inst, models, bundle = done.inst, done.models, done.bundle
+        fetching = f" Downloading {', '.join(done.downloads)}: progress is on its Models page." if done.downloads else ""
         if then:                              # installed for another app: go on to that one, now connected to it
             what = f" with {', '.join(x.id for x in models)}" if models else ""
             return Response(status_code=204, headers={
-                "HX-Redirect": f"/apps/{then.key}?msg=Installed {inst.name}{what}. Now set up {then.title}: it will use {inst.name}."})
+                "HX-Redirect": f"/apps/{then.key}?msg=Installed {inst.name}{what}.{fetching} Now set up {then.title}: it will use {inst.name}."})
         if inst.kind == "llama-swap":
             what = f"with {', '.join(x.id for x in models)}" if models else "- add a model below"
             return Response(status_code=204, headers={
-                "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}. Press Start on the dashboard to run it."})
+                "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}.{fetching} Press Start on the dashboard to run it."})
         also = "".join(f" and {x.name}" for x in [bundle, *done.companions] if x)
         after = f" {t.after_install}" if t.after_install else ""
         return Response(status_code=204, headers={
-            "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.{after}#inst-{inst.id}"})
+            "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.{after}{fetching}#inst-{inst.id}"})
 
     @app.get("/instances/{iid}/edit", response_class=HTMLResponse)
     def edit_instance(request: Request, iid: str):
@@ -536,7 +548,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads),
-                "pending": bool(running and st.config_hash != engine.config_hash(inst))}
+                "pending": bool(running and st.config_hash != engine.config_hash(inst)),
+                "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
 
     @app.get("/instances/{iid}/models", response_class=HTMLResponse)
     def models_page(request: Request, iid: str):
@@ -545,14 +558,37 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Problem as err:
             return RedirectResponse(f"/?msg={err.msg}", status_code=303)
 
+    @app.get("/instances/{iid}/suggestions", response_class=HTMLResponse)
+    def suggestions_part(request: Request, iid: str):
+        try:
+            inst, _ = svc.server(iid)
+            return page(request, "partials/suggestions.html", inst=inst, suggestions=svc.suggestions(iid),
+                        download_dir=svc.models_dir(inst))
+        except Problem as err:
+            return problem(err)
+
+    @app.post("/instances/{iid}/suggestions/{key}/{op}")
+    def suggestion_op(request: Request, iid: str, key: str, op: str):
+        try:
+            if op == "add":
+                msg = svc.add_suggestion(iid, key)
+                return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
+            if op == "download":
+                msg = svc.download_suggestion(iid, key)
+            elif op == "cancel":
+                msg = svc.cancel_download(iid, key)
+            else:
+                return PlainTextResponse("unknown operation", status_code=400)
+        except Problem as err:
+            return problem(err)
+        return toast(suggestions_part(request, iid), msg)
+
     @app.get("/instances/{iid}/models/edit", response_class=HTMLResponse)
     def model_form(request: Request, iid: str, model: str = ""):
         inst, cat = store.instance(iid), store.catalog(iid)
         m = next((x for x in cat.models if x.id == model), None)
         files, notes = llamaswap.local_model_files(inst)
-        f = m.model_dump() if m else {"id": "", "name": "", "description": "", "file": "", "ctx_size": 32768,
-                                     "parallel": 1, "sampling": "", "extra_args": "", "kv_cache": "f16",
-                                     "mmproj": "", "aliases": []}
+        f = m.model_dump() if m else CatalogModel(id="new", file="/models/new.gguf").model_dump() | {"id": "", "file": ""}
         f["aliases_text"] = ", ".join(f.get("aliases") or [])
         f["offload_rows"] = offload_rows({r.min_gpus: r for r in (m.offload if m else [])})
         return page(request, "model_form.html", inst=inst, f=f, editing=bool(m), files=files, file_notes=notes,
@@ -598,7 +634,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         inst = store.instance(iid)
         original = str(raw.get("original_id", ""))
         f = {k: str(raw.get(k, "")) for k in ("id", "name", "description", "file", "ctx_size", "parallel",
-                                               "sampling", "extra_args", "kv_cache", "mmproj", "aliases_text")}
+                                               "sampling", "extra_args", "kv_cache", "mmproj", "aliases_text",
+                                               "role", "thinking", "mtp", "mtp_draft", "split_mode", "tensor_split",
+                                               "ttl")}
+        f |= {k: raw.get(k) == "on" for k in ("keep_loaded", "preload")}
         posted = posted_offload(raw)
         f["offload_rows"] = offload_rows(posted)
         try:
@@ -608,7 +647,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                  extra_args=f["extra_args"], kv_cache=f["kv_cache"] or "f16",
                                  mmproj=f["mmproj"].strip(),
                                  aliases=[a.strip() for a in f["aliases_text"].split(",") if a.strip()],
-                                 offload=offload_rules(posted))
+                                 offload=offload_rules(posted), role=f["role"] or "chat",
+                                 thinking=f["thinking"] or "auto", mtp=int(f["mtp"] or 0), mtp_draft=f["mtp_draft"],
+                                 split_mode=f["split_mode"] or "layer", tensor_split=f["tensor_split"],
+                                 ttl=int(f["ttl"] or 0), keep_loaded=f["keep_loaded"], preload=f["preload"])
             msg = svc.save_model(iid, model, original)
         except (Problem, ValueError, ConfigError) as err:
             files, notes = llamaswap.local_model_files(inst)

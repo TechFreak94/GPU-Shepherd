@@ -81,13 +81,14 @@ GPU Shepherd makes one change at a time. Each start, stop, restart, delete and a
 |---|---|
 | `GET /api/v1/apps` | The apps: `key`, `title`, `group`, `blurb`, `needs`, `needs_llm_server`, `installed` (instance IDs), `also_installs` (helpers it comes with, e.g. LibreChat's database) and `after_install` (the step left to do in the app itself). |
 | `GET /api/v1/apps/{key}` | One app, the `answers` its install form starts with, and the `choices` for `gpu`, `offload`, `server`, `comfyui` and the model files. |
-| `POST /api/v1/apps/{key}/install` | Install it (`201`). The body holds only the answers that differ from the defaults, e.g. `{"gpu": "pin:1", "port": 8189}` or `{"chat_file": "Qwen3-8B-Q4_K_M.gguf"}`. For apps that use a model server, `"server": "new"` installs an LLM server with it. Answers `instance`, `models`, `llm_server` (the one installed with it) and `companions` (helper instances installed with it). |
+| `POST /api/v1/apps/{key}/install` | Install it (`201`). The body holds only the answers that differ from the defaults, e.g. `{"gpu": "pin:1", "port": 8189}` or `{"chat_file": "Qwen3-8B-Q4_K_M.gguf"}`. For apps that use a model server, `"server": "new"` installs an LLM server with it. Answers `instance`, `models`, `llm_server` (the one installed with it), `companions` (helper instances installed with it) and `downloads` (suggested models it started downloading). |
 | `POST /api/v1/apps/{key}/instance` | The instance an install would make, without saving it (*Manual*): change it and `PUT` it. |
 
 The answers are the install form's fields: `name`, `id`, `port`, `gpu` (`one`, `all`, `none` or
-`pin:N`), `models_dir`, `appdata_dir`, `server`, `comfyui`, `chat_file` / `chat_ctx` and
-`coder_file` / `coder_ctx` (model files, relative to the models folder or a path inside the
-container), `offload` (`auto`, `gpu`, `moe`), `login_user` / `password`, `hass_url` /
+`pin:N`), `models_dir`, `appdata_dir`, `server`, `comfyui`, `chat_file` / `chat_ctx`,
+`coder_file` / `coder_ctx` and `embed_file` / `embed_ctx` (model files, relative to the models
+folder or a path inside the container; a [suggested model](advanced.md#suggested-models)'s file is
+downloaded), `offload` (`auto`, `gpu`, `moe`), `login_user` / `password`, `hass_url` /
 `hass_token` and `autostart`. `GET /api/v1/apps/{key}` lists the ones each app uses.
 
 ## Model servers
@@ -99,6 +100,10 @@ For instances of kind `llama-swap`.
 | `GET /api/v1/instances/{id}/models` | `models`, `auto_aliases`, `settings` (`threads`, `llama_server`, `health_timeout`, `api_key`), `loaded` (model → state), `loading`, and the .gguf `files` it can see. |
 | `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto names follow. |
 | `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). |
+| `GET /api/v1/instances/{id}/suggestions` | The [suggested models](advanced.md#suggested-models), best fit first: `key`, `name`, `uses`, `fits` and `fit` (how it fits this machine), `state` (`ready`, `downloading`, `starting`, `failed`, `missing`), `status`, `pct`, `in_catalog`, and its `files` with their URLs. |
+| `POST /api/v1/instances/{id}/suggestions/{key}/add` | Add it with its makers' settings, downloading it if needed (`201`; `409` if the server has it). |
+| `POST /api/v1/instances/{id}/suggestions/{key}/download` | Download or resume its files in the background (`202`). |
+| `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. |
 | `POST /api/v1/instances/{id}/models/{model}/load` | Load it now, in the background (`202`). |
 | `POST /api/v1/instances/{id}/models/{model}/unload` | Unload it; `_all` as the model unloads every model. `409` while the server is answering. |
 | `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto name: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |

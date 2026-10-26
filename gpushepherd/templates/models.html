@@ -48,11 +48,16 @@
         </div></td>
       </tr>
     {% else %}
-      <tr><td colspan="6" class="muted">No models yet. Add one - pick a .gguf file from the model folder.</td></tr>
+      <tr><td colspan="6" class="muted">No models yet. Add a suggested model below, or add one from a .gguf file in the models folder.</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
+
+<h3>Suggested models</h3>
+<p class="small muted" style="margin-top:0">Models that work well with this server, best fit for this machine's GPUs and RAM first.
+  Adding one downloads it and fills in its makers' settings: sampling, thinking, image input and how it is split between GPUs and RAM.</p>
+{% include "partials/suggestions.html" %}
 
 <h3>Auto names</h3>
 <form class="card" hx-post="/instances/{{ inst.id }}/catalog/auto">

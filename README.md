@@ -19,7 +19,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
-- **App Store**: install an LLM server (with a chat model, a coding model or both), Open WebUI,
+- **App Store**: install an LLM server (with a chat model, a coding model, an embeddings model for
+  chatting with your documents, or any mix), Open WebUI,
   LibreChat, AnythingLLM, Hermes Agent or ComfyUI. Apps that need a helper container get it too:
   LibreChat comes with its MongoDB database, which starts whenever LibreChat does.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
@@ -51,6 +52,15 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Model servers** ([llama-swap](https://github.com/mostlygeek/llama-swap)): a model list editor
   that picks .gguf files from disk, load and unload buttons, and **auto names**: one model name,
   like `coder`, that points at the model that fits the GPUs the server has right now.
+- **Suggested models**: a short list of current chat, coding and embeddings models (Qwen3.5,
+  Qwen3.6, Qwen3.8, Gemma 4, Qwen3 Coder, Qwen3 Embedding), each saying whether it fits this
+  machine's GPUs and RAM. One click downloads it in the background and adds it with its makers'
+  settings: sampling, thinking on or off, image input, MTP and the GPU / RAM split.
+
+  ![Suggested models](docs/screenshots/suggested-models.png)
+- **Model settings**: thinking on or off, MTP (multi-token prediction, up to twice as fast),
+  KV cache size, how a model is split over several GPUs, unloading when idle, and an embeddings
+  model that stays loaded beside the chat model instead of swapping it out.
 - **GPU + system RAM**: keep part of a model (MoE expert layers or whole layers) in system RAM so
   models larger than your GPUs still run, set per GPU count.
 
@@ -68,7 +78,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 ## Documentation
 
 - [Instance and model options](docs/advanced.md): every field in the editors and what it does
-  (GPU policies, folders, before-stopping checks, GPU/RAM offload, auto names).
+  (GPU policies, folders, before-stopping checks, GPU/RAM offload, model settings, suggested
+  models, auto names).
 - [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command and its
   commands for everything the dashboard does, `download-models.sh` and environment variables.
 - [JSON API](docs/api.md): `/api/v1`, the API token, and every endpoint with examples.
@@ -215,7 +226,12 @@ aider --model openai/coder
 
 The expert-layer numbers are starting points for 8 GB cards: if a model fails to load, raise them;
 if GPU memory is left over, lower them for speed. See
-[GPU and system RAM](docs/advanced.md#gpu-and-system-ram).
+[GPU and system RAM](docs/advanced.md#gpu-and-system-ram). Models added from the
+[suggested models](docs/advanced.md#suggested-models) get these numbers worked out for your GPUs.
+
+On one 8 GB GPU, a model that fits it whole (Qwen3.5 9B) answers at roughly 50-70 tokens a second;
+a 30B-A3B coding model with its experts in RAM at roughly 15-30, with clearly better code. Both are
+in the suggested models.
 
 ## Configuration files
 
@@ -253,7 +269,7 @@ See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUT
 
 ## Roadmap
 
-- More model-server connectors: Ollama, vLLM, SGLang.
+- More model-server connectors: Ollama (for Home Assistant's own Assist), vLLM.
 - Shared GPUs: let several small instances share one GPU with memory budgets.
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).

@@ -197,9 +197,10 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         done = svc.install(key, await body(request) if await request.body() else {}, fill_defaults=True)
         also = "".join(f" and {x.name}" for x in [done.bundle, *done.companions] if x)
         after = f" {tpl.get(key).after_install}" if tpl.get(key).after_install else ""
-        return JSONResponse({"message": f"Installed {done.inst.name}{also}.{after}",
+        fetching = f" Downloading {', '.join(done.downloads)}." if done.downloads else ""
+        return JSONResponse({"message": f"Installed {done.inst.name}{also}.{fetching}{after}",
                              "instance": done.inst.model_dump(mode="json"),
-                             "models": [x.id for x in done.models],
+                             "models": [x.id for x in done.models], "downloads": done.downloads,
                              "llm_server": done.bundle.id if done.bundle else None,
                              "companions": [x.id for x in done.companions]}, status_code=201)
 
@@ -239,6 +240,22 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return JSONResponse({"message": svc.load_model(iid, mid)}, status_code=202)
         if op == "unload":
             return {"message": svc.unload_model(iid, mid)}
+        raise Problem("unknown operation", status=404)
+
+    @r.get("/api/v1/instances/{iid}/suggestions")
+    @handle
+    def get_suggestions(request: Request, iid: str):
+        return svc.suggestions(iid)
+
+    @r.post("/api/v1/instances/{iid}/suggestions/{key}/{op}")
+    @handle
+    def suggestion_op(request: Request, iid: str, key: str, op: str):
+        if op == "add":
+            return JSONResponse({"message": svc.add_suggestion(iid, key)}, status_code=201)
+        if op == "download":
+            return JSONResponse({"message": svc.download_suggestion(iid, key)}, status_code=202)
+        if op == "cancel":
+            return {"message": svc.cancel_download(iid, key)}
         raise Problem("unknown operation", status=404)
 
     @r.patch("/api/v1/instances/{iid}/server-settings")

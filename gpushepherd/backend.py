@@ -4,6 +4,8 @@ Every container GPU Shepherd creates carries labels:
     gpushepherd.instance   the instance id
     gpushepherd.gpus       comma-separated GPU indices it was given ("" = none)
     gpushepherd.config     fingerprint of the instance config it was created from
+Short-lived helper containers (model downloads) carry gpushepherd.helper instead, so they are
+never mistaken for an instance.
 GPU assignments are baked in at creation time, so moving an instance to other GPUs means
 re-creating its container (its data lives in volumes, so nothing is lost).
 """
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import socket
 import threading
 import time
@@ -21,6 +24,7 @@ from typing import Protocol
 LABEL_INSTANCE = "gpushepherd.instance"
 LABEL_GPUS = "gpushepherd.gpus"
 LABEL_CONFIG = "gpushepherd.config"
+LABEL_HELPER = "gpushepherd.helper"
 
 
 @dataclass
@@ -75,7 +79,16 @@ class Backend(Protocol):
     def logs(self, name: str, tail: int = 300) -> str: ...
     def stats(self, names: list[str]) -> dict[str, ContainerStats]: ...
     def probe(self, image: str, script: str) -> str: ...
+    def run_helper(self, name: str, image: str, script: str, volumes: list[tuple[str, str, bool]],
+                   user: str | None, kind: str) -> None: ...
+    def helpers(self, kind: str) -> dict[str, "HelperState"]: ...
     def ping(self) -> str: ...
+
+
+@dataclass
+class HelperState:
+    running: bool
+    exit_code: int | None = None        # once it has finished
 
 
 def _gpus_from_label(text: str) -> list[int]:
@@ -251,6 +264,30 @@ class DockerBackend:
         except Exception:  # noqa: BLE001
             return ""
 
+    def run_helper(self, name: str, image: str, script: str, volumes: list[tuple[str, str, bool]],
+                   user: str | None, kind: str) -> None:
+        """Start a helper container that runs `sh -c script` once, in the background. It is kept
+        after it exits, so its exit code and logs can be read; the next run of it replaces it."""
+        self.remove(name)
+        host_config = self.api.create_host_config(
+            binds=[f"{h}:{c}:{'ro' if ro else 'rw'}" for h, c, ro in volumes], restart_policy={"Name": "no"},
+            init=True)
+        try:
+            created = self.api.create_container(image, command=["-c", script], entrypoint="sh", name=name,
+                                                host_config=host_config, labels={LABEL_HELPER: kind}, user=user)
+            self.api.start(created["Id"])
+        except self._errors.APIError as err:
+            raise BackendError(err.explanation or str(err)) from err
+
+    def helpers(self, kind: str) -> dict[str, HelperState]:
+        out = {}
+        for c in self.api.containers(all=True, filters={"label": f"{LABEL_HELPER}={kind}"}):
+            name = (c.get("Names") or ["/?"])[0].lstrip("/")
+            code = re.match(r"Exited \((-?\d+)\)", c.get("Status", ""))
+            out[name] = HelperState(running=c.get("State") in ("running", "created", "restarting"),
+                                    exit_code=int(code.group(1)) if code else None)
+        return out
+
 
 def _ago(since: float) -> str:
     secs = max(int(time.time() - since), 0)
@@ -270,6 +307,9 @@ class FakeBackend:
         self.calls: list[str] = []
         self.slow = slow
         self.started: dict[str, float] = {}
+        self.helper_runs: dict[str, tuple[str, str, float]] = {}   # name -> (kind, script, started)
+        self.helper_seconds = 0.0
+        self.helper_exit = 0
         self._lock = threading.Lock()
 
     def ping(self) -> str:
@@ -310,6 +350,7 @@ class FakeBackend:
         with self._lock:
             self.containers.pop(name, None)
             self.running.pop(name, None)
+            self.helper_runs.pop(name, None)
         self.calls.append(f"remove {name}")
 
     def logs(self, name: str, tail: int = 300) -> str:
@@ -323,3 +364,20 @@ class FakeBackend:
 
     def probe(self, image: str, script: str) -> str:
         return "/app/llama-server\n"
+
+    def run_helper(self, name: str, image: str, script: str, volumes: list[tuple[str, str, bool]],
+                   user: str | None, kind: str) -> None:
+        with self._lock:
+            self.helper_runs[name] = (kind, script, time.time())
+        self.calls.append(f"helper {name}")
+
+    def helpers(self, kind: str) -> dict[str, HelperState]:
+        """Demo helpers run for helper_seconds, then exit 0 (or helper_exit)."""
+        with self._lock:
+            runs = dict(self.helper_runs)
+        out = {}
+        for name, (k, _, started) in runs.items():
+            if k == kind:
+                done = time.time() - started >= self.helper_seconds
+                out[name] = HelperState(running=not done, exit_code=self.helper_exit if done else None)
+        return out

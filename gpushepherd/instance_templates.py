@@ -20,6 +20,7 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import model_library
 from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule, PortMap, VolumeMap,
                      MODEL_ID, SLUG)
 
@@ -41,6 +42,7 @@ class ModelSlot:
     sampling: str = ""
     kv_cache: str = "q8_0"
     hint: str = ""
+    role: str = "chat"                 # embed: answers /v1/embeddings, kept loaded beside the others
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,11 @@ TEMPLATES: tuple[Template, ...] = (
                           hint="For chat apps such as Open WebUI and Hermes Agent."),
                 ModelSlot(key="coder", label="Coding model", alias="coder", ctx_size=65536,
                           sampling="--temp 0.3 --top-p 0.95",
-                          hint="For coding agents and editor plugins (Aider, Continue, OpenCode): long context, steadier sampling.")),
+                          hint="For coding agents and editor plugins (Aider, Continue, OpenCode): long context, steadier sampling."),
+                ModelSlot(key="embed", label="Embeddings model", alias="embed", ctx_size=8192, kv_cache="f16",
+                          role="embed",
+                          hint="For chatting with your documents (RAG) in Open WebUI, AnythingLLM and LibreChat. "
+                               "It stays loaded beside the other models, on the CPU.")),
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
         docs="https://github.com/mostlygeek/llama-swap"),
     Template(
@@ -310,6 +316,7 @@ class Machine:
     instances: dict[str, Instance]
     servers: dict[str, dict]           # llama-swap instance id -> {"api_key", "default_model"}
     model_sizes: dict[str, float]      # container path of a .gguf file -> size in GB
+    ram_gb: float = 0.0                # system RAM (0 = unknown)
 
 
 def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dict:
@@ -503,7 +510,13 @@ def _anythingllm_env(url: str, info: dict) -> str:
     which would win over the page on every start."""
     lines = ["# Written by GPU Shepherd when AnythingLLM was installed. AnythingLLM owns this file now:",
              "# change settings in its web page.",
-             "EMBEDDING_ENGINE='native'", "VECTOR_DB='lancedb'"]
+             "VECTOR_DB='lancedb'"]
+    if url and info.get("embed"):          # the model server's embeddings model, instead of AnythingLLM's own
+        lines += ["EMBEDDING_ENGINE='generic-openai'", f"EMBEDDING_BASE_PATH='{url}'",
+                  f"EMBEDDING_MODEL_PREF='{info['embed']}'", f"GENERIC_OPEN_AI_EMBEDDING_API_KEY='{info['api_key']}'",
+                  "EMBEDDING_MODEL_MAX_CHUNK_LENGTH='8192'"]
+    else:
+        lines.append("EMBEDDING_ENGINE='native'")
     if url:
         lines += ["LLM_PROVIDER='generic-openai'", f"GENERIC_OPEN_AI_BASE_PATH='{url}'",
                   f"GENERIC_OPEN_AI_API_KEY='{info['api_key']}'",
@@ -576,6 +589,9 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
         env |= {"OPENAI_API_BASE_URLS": _server_url(server, m), "OPENAI_API_KEYS": info["api_key"]}
         if info.get("default_model"):
             env["DEFAULT_MODELS"] = info["default_model"]
+        if info.get("embed"):                  # documents are embedded by the model server, not on Open WebUI's CPU
+            env |= {"RAG_EMBEDDING_ENGINE": "openai", "RAG_OPENAI_API_BASE_URL": _server_url(server, m),
+                    "RAG_OPENAI_API_KEY": info["api_key"], "RAG_EMBEDDING_MODEL": info["embed"]}
     comfy = str(a.get("comfyui", "")).strip()
     if comfy:
         if comfy not in m.instances:
@@ -613,8 +629,19 @@ def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
         ctx_size = int(ctx or slot.ctx_size)
         same = next((x for x in out if x.file == file), None)
         if same:
+            if same.role != slot.role:
+                raise ConfigError(f"{slot.label}: an embeddings model can't also chat; pick another file")
             same.aliases.append(slot.alias)
             same.ctx_size = max(same.ctx_size, ctx_size)
+            continue
+        known = model_library.for_file(file, MODELS_IN_CONTAINER)
+        if known and slot.role == known.role:     # a suggested model: its makers' settings
+            x = model_library.catalog_model(known, m.gpu_mem_gb, MODELS_IN_CONTAINER, ctx_size=ctx_size)
+            if choice == "gpu":
+                x.offload = [r for r in x.offload if r.gpu_layers is not None]
+            x.id = free_id(x.id, {y.id for y in out})
+            x.aliases = [slot.alias] if slot.alias != x.id else []
+            out.append(x)
             continue
         if choice == "moe":
             offload = [OffloadRule(min_gpus=1, cpu_moe=999)]
@@ -626,8 +653,11 @@ def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
         if not MODEL_ID.match(mid):
             mid = "model"
         mid = free_id(mid, {x.id for x in out})
+        if slot.role == "embed":                  # on the CPU, so it never takes GPU memory from the chat model
+            offload = [OffloadRule(min_gpus=1, gpu_layers=0)]
         out.append(CatalogModel(id=mid, name=Path(file).name.removesuffix(".gguf"), file=file, ctx_size=ctx_size,
                                 kv_cache=slot.kv_cache, sampling=slot.sampling, offload=offload,
+                                role=slot.role, keep_loaded=slot.role == "embed",
                                 aliases=[slot.alias] if slot.alias != mid else []))
     for x in out:
         x.aliases = [al for al in x.aliases if al != x.id]

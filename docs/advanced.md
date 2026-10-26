@@ -12,7 +12,8 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 [Commands](cli.md#commands)), or through the [JSON API](api.md).
 
 - [Instances](#instances): basics, GPUs, network and storage, command, behaviour, before stopping
-- [Model servers](#model-servers): models, GPU and system RAM, auto names, server settings
+- [Model servers](#model-servers): models, model behaviour, GPU and system RAM, suggested models,
+  auto names, server settings
 - [Settings](#settings)
 - [What App Store apps fill in](#what-app-store-apps-fill-in)
 
@@ -142,12 +143,26 @@ llama-swap config from that list, for the number of GPUs the server has each tim
 | Other names | `aliases` | More names for the same model. Each name can be used once per server. |
 | Context | `ctx_size` | Tokens, shared by all slots (`--ctx-size`). |
 | Parallel slots | `parallel` | Requests served at once; each gets context ÷ slots (`--parallel`). |
-| KV cache | `kv_cache` | `f16` (default), `q8_0` (half the memory) or `q4_0` (smallest) (`--cache-type-k/-v`). |
+| KV cache | `kv_cache` | Memory for the context (`--cache-type-k/-v`): `f16` (default), `bf16` (same size; try it if a model's answers turn to gibberish), `q8_0` (half the memory, a good choice from 32K tokens up), `q5_1` (a third) or `q4_0` (smallest). |
 | Sampling flags | `sampling` | e.g. `--temp 0.6 --top-p 0.95 --top-k 20`. Use the model card's values. |
 | Extra llama-server flags | `extra_args` | Anything else for `llama-server`, e.g. `--no-mmap`. |
 | Vision projector | `mmproj` | For vision models, the `mmproj` file. It is kept in system RAM so the GPUs hold more of the model. |
 
 Every model is started with `--jinja` (the model's own chat template).
+
+### Model behaviour
+
+![A model's behaviour settings](screenshots/model-settings.png)
+
+| Field | YAML (`models[]`) | What it does |
+|---|---|---|
+| Used for | `role` | `chat` (default: chat and coding), `embed` (answers `/v1/embeddings`, for chatting with documents; `--embeddings`) or `rerank` (answers `/v1/rerank`; `--reranking`). |
+| Thinking | `thinking` | `auto` (the model's default), `on` or `off`, for models that can reason before answering (Qwen3.5 and later, Gemma 4): `--chat-template-kwargs '{"enable_thinking": …}'`. Off answers straight away, which suits chat and home automation; on is better for coding and hard questions. Use the matching sampling: Qwen's makers give different values for each. |
+| MTP: tokens guessed ahead | `mtp` | Multi-token prediction: the model guesses this many tokens ahead and checks them in one step (`--spec-type draft-mtp --spec-draft-n-max N`). 1.4-2× faster for dense models trained for it, less for MoE models; costs about 1-2 GB more memory. `0` = off, `2` is a good start, at most 6. Needs a model with MTP layers (Unsloth's `…-MTP-GGUF` repositories, Gemma 4, Qwen3.8). |
+| MTP draft file | `mtp_draft` | For models that ship their MTP layers as a separate `mtp-….gguf` file (Gemma 4): its path (`--model-draft`). Empty when they are built into the model file. |
+| Unload when idle | `ttl` | Seconds without requests before llama-swap unloads the model, freeing its memory (llama-swap's `ttl`). `0` = stays loaded until another model is asked for. The server keeps its GPUs either way; only stopping it gives them back. |
+| Keep loaded beside other models | `keep_loaded` | Normally loading one model unloads the last. Models with this set go in a llama-swap group of their own that stays loaded (`groups`, `persistent`), so a small embeddings model can answer next to the chat model instead of swapping it out. Give it `gpu_layers: 0` so it runs on the CPU and takes no GPU memory. |
+| Load as soon as the server starts | `preload` | Loads the model when the server starts (llama-swap's `hooks.on_startup.preload`), so the first request doesn't wait. Pick one model that swaps, plus any kept-loaded ones. |
 
 ### GPU and system RAM
 
@@ -177,6 +192,48 @@ offload:
 
 Keeping a model in RAM needs room for it plus the OS and your other containers: below 32 GB of RAM,
 plan on models that fit in GPU memory.
+
+With two or more GPUs:
+
+| Field | YAML (`models[]`) | What it does |
+|---|---|---|
+| Split by | `split_mode` | `layer` (default; whole layers per GPU, best over PCIe), `row` (can be faster with fast links between GPUs) or `tensor` (newer, experimental) (`--split-mode`). |
+| Share per GPU | `tensor_split` | How much of the model each GPU holds, in GPU order, e.g. `8,12` for an 8 GB and a 12 GB card (`--tensor-split`). Empty = by each GPU's free memory. Used only when the server has at least as many GPUs as shares, and only the first shares when it has fewer. |
+
+### Suggested models
+
+The Models page lists a few current models that work well with the LLM server, best fit for this
+machine first. For each it says whether it fits: on how many GPUs, or for a mixture-of-experts
+model, with how much of it in system RAM (with every GPU, and with one). **Add** puts it in the
+model list with its makers' settings and downloads it if it isn't in the models folder yet.
+
+![Suggested models](screenshots/suggested-models.png)
+
+| Model | For | Download | Fits |
+|---|---|---|---|
+| [Qwen3.5 9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | chat, coding, images | 6.9 GB | one 8 GB GPU |
+| [Gemma 4 E4B](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) | chat, images, audio; MTP | 6.2 GB | one 8 GB GPU |
+| [Gemma 4 12B](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF) | chat, images, audio; MTP | 8.0 GB | a 12 GB GPU or two 8 GB GPUs |
+| [Qwen3.8 27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) | chat, coding, images | 14.1 GB | two 8 GB GPUs or one 16 GB GPU |
+| [Qwen3 Coder 30B-A3B](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) | coding (MoE) | 17.7 GB | one 8 GB GPU + about 13 GB of RAM |
+| [Qwen3.6 35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) | chat, coding, images (MoE) | 17.8 GB | two 8 GB GPUs + about 6 GB of RAM |
+| [Qwen3 Coder Next 80B-A3B](https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF) | coding (MoE) | 49.6 GB | two 8 GB GPUs + about 40 GB of RAM (64 GB machines) |
+| [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | embeddings for RAG | 0.6 GB | the CPU, kept loaded |
+
+Each model goes into its own subfolder of the models folder (`<models>/qwen3.5-9b/…`), with its
+vision projector and MTP draft file next to it. A download runs in a small helper container
+(`curlimages/curl`, named `shepherd-download-<model>`) that mounts the models folder read-write and
+writes the files as the folder's owner; GPU Shepherd itself only reads the folder. Downloads resume
+where they stopped, so **Stop** and starting again (or a restart of GPU Shepherd) loses nothing. The
+progress bar needs GPU Shepherd to see the models folder at the same path, as `install.sh` sets up.
+
+A model file picked in the LLM server's install form that is one of these gets the same settings,
+and is downloaded when you install.
+
+How a mixture-of-experts model is split is worked out from its size and layer count: with N GPUs,
+enough expert layers go to RAM to leave a quarter of the GPUs' memory for the context. On two 8 GB
+GPUs that is 14 of Qwen3.6 35B-A3B's 40 layers and 38 of Qwen3 Coder Next's 48. Tune them on the
+model's Edit page.
 
 ### Auto names
 
@@ -230,12 +287,14 @@ servers, the models you picked), so every field above can be changed afterwards.
 
 | Template | GPUs | Fills in |
 |---|---|---|
-| LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context) and a coding model named `coder` (64K context, lower temperature). Either is optional, and one file can be both. |
+| LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
-| Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one |
+| Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model. |
 | LibreChat | none | `librechat/librechat`, plus its database: a second instance `<id>-mongodb` (`mongo:8.0`, no port on the host, data in the app data folder's `mongodb/`) that it *starts with*. Fresh secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`), `MONGO_URI`, sign-ups on, cookies that work over plain http (`SESSION_COOKIE_SECURE=false`), and a `librechat.yaml` in its app data folder with one endpoint, *Local models*, whose address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment. Images, uploads and logs go to its app data folder. |
-| AnythingLLM | none | `mintplexlabs/anythingllm` with its storage in the app data folder, and a `server.env` there mounted as its settings file (`/app/server/.env`) that points it at the model server (`generic-openai`, the `chat` model and its context size), with built-in embeddings and vector store. Its web scraper runs without `SYS_ADMIN` (`ANYTHINGLLM_CHROMIUM_ARGS`) and telemetry is off. |
+| AnythingLLM | none | `mintplexlabs/anythingllm` with its storage in the app data folder, and a `server.env` there mounted as its settings file (`/app/server/.env`) that points it at the model server (`generic-openai`, the `chat` model and its context size), with built-in vector store and the server's embeddings model when it has one (`EMBEDDING_ENGINE='generic-openai'`), else AnythingLLM's own. Its web scraper runs without `SYS_ADMIN` (`ANYTHINGLLM_CHROMIUM_ARGS`) and telemetry is off. |
 | Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
+
+![Installing the LLM server: suggested models for each name, best fit first](screenshots/llm-install-models.png)
 
 ![The App Store's chat and agent apps](screenshots/app-store-chat.png)
 

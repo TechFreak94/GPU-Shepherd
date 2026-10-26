@@ -659,3 +659,73 @@ def test_anythingllm_settings_file(stack):
     assert (data / "appdata" / "anythingllm" / "storage").is_dir()
     act(client, app, "anythingllm", "start")
     assert "shepherd-anythingllm" in backend.containers
+
+
+def test_suggested_models_page(stack, tmp_path_factory):
+    app, client, backend, data = stack
+    login(client)
+    models = tmp_path_factory.mktemp("models")
+    inst = yaml.safe_load((data / "instances" / "llm.yaml").read_text())
+    inst["volumes"][0]["host"] = str(models)
+    (data / "instances" / "llm.yaml").write_text(yaml.safe_dump(inst))
+    page = client.get("/instances/llm/models").text
+    assert "Suggested models" in page and "Qwen3.5 9B" in page and "Fits on one GPU" in page
+    assert f"Downloads go to <span class=\"mono\">{models}</span>" in page
+    assert 'hx-post="/instances/llm/suggestions/qwen3.5-9b/add"' in page and "and downloads it (6.9 GB)" in page
+
+    backend.helper_seconds = 60                   # a download that keeps running
+    r = client.post("/instances/llm/suggestions/qwen3.5-9b/add", headers=HX)
+    assert r.status_code == 204 and "Added qwen3.5-9b; downloading it (6.9 GB)" in r.headers["HX-Redirect"]
+    cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
+    added = next(m for m in cat["models"] if m["id"] == "qwen3.5-9b")
+    assert added["file"] == "/models/qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf" and added["thinking"] == "off"
+    for _ in range(100):
+        if "shepherd-download-qwen3.5-9b" in backend.helper_runs:
+            break
+        time.sleep(0.01)
+    part = client.get("/instances/llm/suggestions", headers=HX).text
+    assert 'hx-trigger="every 3s"' in part and "Downloading" in part and "/suggestions/qwen3.5-9b/cancel" in part
+    assert "already on LLM server" in client.post("/instances/llm/suggestions/qwen3.5-9b/add", headers=HX).headers["HX-Trigger"]
+    r = client.post("/instances/llm/suggestions/qwen3.5-9b/cancel", headers=HX)
+    assert "Stopped downloading" in r.headers["HX-Trigger"] and "/suggestions/qwen3.5-9b/download" in r.text
+    assert "no suggested model" in client.post("/instances/llm/suggestions/nope/download", headers=HX).headers["HX-Trigger"]
+
+    # an embeddings model gets the "embed" name and stays loaded beside the others
+    client.post("/instances/llm/suggestions/qwen3-embedding-0.6b/add", headers=HX)
+    preview = client.get("/instances/llm/models").text
+    assert "kept-loaded" in preview and "--embeddings" in preview
+    cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
+    assert next(m for m in cat["models"] if m["role"] == "embed")["aliases"] == ["embed"]
+
+
+def test_model_form_new_settings(stack):
+    app, client, backend, data = stack
+    login(client)
+    form = client.get("/instances/llm/models/edit").text
+    for field in ('name="thinking"', 'name="mtp"', 'name="mtp_draft"', 'name="role"', 'name="split_mode"',
+                  'name="tensor_split"', 'name="ttl"', 'name="keep_loaded"', 'name="preload"', 'value="bf16"'):
+        assert field in form
+    r = client.post("/instances/llm/models/save", headers=HX, data={
+        "original_id": "", "id": "fast", "file": "/models/fast.gguf", "ctx_size": "32768", "parallel": "2",
+        "kv_cache": "q5_1", "thinking": "off", "mtp": "2", "mtp_draft": "/models/mtp-fast.gguf", "role": "chat",
+        "split_mode": "row", "tensor_split": "8,12", "ttl": "900", "preload": "on"})
+    assert r.status_code == 204
+    m = next(x for x in yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())["models"] if x["id"] == "fast")
+    assert (m["kv_cache"], m["thinking"], m["mtp"], m["split_mode"], m["tensor_split"], m["ttl"], m["preload"],
+            m["keep_loaded"]) == ("q5_1", "off", 2, "row", "8,12", 900, True, False)
+    edit = client.get("/instances/llm/models/edit?model=fast").text
+    assert 'name="mtp" min="0" max="6" value="2"' in edit and 'value="8,12"' in edit
+    bad = client.post("/instances/llm/models/save", headers=HX, data={
+        "original_id": "", "id": "x", "file": "/models/x.gguf", "ctx_size": "32768", "tensor_split": "half"})
+    assert "error-box" in bad.text and "share per GPU" in bad.text
+
+
+def test_install_form_offers_suggested_models(stack):
+    app, client, backend, data = stack
+    login(client)
+    form = client.get("/apps/llm-server").text
+    assert 'name="embed_file"' in form and "Embeddings model" in form
+    assert 'data-pick-file="/models/qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf" data-pick-target="chat_file"' in form
+    assert 'data-pick-file="/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q8_0.gguf" data-pick-target="embed_file"' in form
+    webui = client.get("/apps/open-webui").text            # its bundled server: chat models only
+    assert "/models/qwen3.5-9b/" in webui and "qwen3-embedding" not in webui and "Qwen3 Coder Next" not in webui
