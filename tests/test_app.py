@@ -587,7 +587,7 @@ def test_dashboard_kind_tags(stack):
     card = lambda iid: dash.split(f'id="inst-{iid}"')[1].split("</h2>")[0]
     assert '<span class="tag kind server">Model Server</span>' in card("llm")
     assert '<span class="tag kind ui">Chat UI</span>' in card("webui")
-    assert '<span class="tag kind ui">Image UI</span>' in card("comfyui")
+    assert '<span class="tag kind server">Image Server</span>' in card("comfyui")
     assert '<span class="tag kind ui">Agent UI</span>' in card("hermes")
     assert "model server</span>" not in dash
 
