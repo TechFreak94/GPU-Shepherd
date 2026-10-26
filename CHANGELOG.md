@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.11 - 2026-10-26
+
+- New in the App Store: LibreChat (with its own MongoDB database, which starts with it) and AnythingLLM, both connected to your LLM server. (#25)
+- New: an instance can list instances it *starts with* (`requires`); starting it starts them first. (#25)
+
 ## 0.12.10 - 2026-10-26
 
 - Dashboard screenshots in the README show the new card tags. (#24)
