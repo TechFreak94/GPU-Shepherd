@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.12 - 2026-10-26
+
+- Open WebUI's dashboard card shows its name, Open WebUI, instead of "Chat UI" (also for instances installed before), with Chat UI as its tag. (#26)
+
 ## 0.12.11 - 2026-10-26
 
 - New in the App Store: LibreChat (with its own MongoDB database, which starts with it) and AnythingLLM, both connected to your LLM server. (#25)
