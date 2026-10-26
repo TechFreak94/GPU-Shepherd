@@ -12,6 +12,7 @@ Pure functions, no Docker - easy to test. Rules:
 5. A running instance that can no longer get its minimum is stopped ("preempted").
    A running instance whose GPU set changes is restarted with the new GPUs.
 6. Starting an instance also starts the instances it `requires` (an app's database), first.
+   Stopping it stops them too, after it, unless something else still running requires them.
 
 The UI shows the plan and asks for confirmation whenever anything other than the target
 would be stopped or restarted.
@@ -102,6 +103,7 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
         wanted.add(target)
     elif action == "stop" and target:
         wanted.discard(target)
+        wanted -= with_requirements(instances, instances[target].requires)   # put back below if still needed
     missing = {r: i for i in sorted(wanted) for r in instances[i].requires if r not in instances}
     if missing:
         r, i = next(iter(missing.items()))
@@ -117,7 +119,8 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
 
     result.allocations = allocations
     result.preempted = sorted(i for i in dropped if i in previous)
-    result.to_stop = sorted(i for i in previous if i not in allocations)
+    # apps before what they require (LibreChat before its database)
+    result.to_stop = start_order(instances, [i for i in previous if i not in allocations], None)[::-1]
     result.to_start = [i for i in start_order(instances, allocations, target) if i not in previous]
     result.to_restart = [i for i in _priority_order(instances, allocations, target)
                          if i in previous and (allocations[i] != previous[i]

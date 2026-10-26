@@ -157,7 +157,10 @@ def test_starting_an_app_starts_what_it_requires_first():
     assert p.to_start == ["db", "chat"] and p.allocations == {"db": [], "chat": []} and not p.side_effects
     p = plan(TWO, s, {"db": []}, "start", "chat")          # already running: left alone
     assert p.to_start == ["chat"] and not p.to_restart
-    assert plan(TWO, s, {"db": [], "chat": []}, "stop", "chat").to_stop == ["chat"]   # stays up for others
+    assert plan(TWO, s, {"db": [], "chat": []}, "stop", "chat").to_stop == ["chat", "db"]   # app first, then its db
+    shared = s | {"chat2": inst("chat2").model_copy(update={"requires": ["db"]})}
+    p = plan(TWO, shared, {"db": [], "chat": [], "chat2": []}, "stop", "chat")
+    assert p.to_stop == ["chat"] and not p.side_effects          # chat2 still needs it
     auto = plan(TWO, s, {}, "rebalance", None, {"chat"})
     assert auto.to_start.index("db") < auto.to_start.index("chat")
 

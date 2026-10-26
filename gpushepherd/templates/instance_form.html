@@ -82,7 +82,7 @@
       </div>
       <div><label for="open_path">"Open" button path</label><input type="text" id="open_path" name="open_path" value="{{ f.open_path or '/' }}"></div>
       <div><label for="requires">Starts with</label><input type="text" id="requires" name="requires" value="{{ f.requires or '' }}" placeholder="librechat-mongodb">
-        <div class="hint">IDs of instances it needs, such as its database, separated by commas. Starting it starts them first.</div></div>
+        <div class="hint">IDs of instances it needs, such as its database, separated by commas. Starting it starts them first; stopping it stops them unless something else running needs them.</div></div>
     </div>
     <details style="margin-top:12px"><summary>Advanced</summary>
       <div class="fields" style="margin-top:10px">

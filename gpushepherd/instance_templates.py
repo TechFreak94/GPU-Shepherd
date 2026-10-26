@@ -127,7 +127,7 @@ TEMPLATES: tuple[Template, ...] = (
         key="librechat", tag="Chat UI", badge="LC", title="LibreChat", group="Chat and agents",
         blurb="A multi-user ChatGPT-style chat with agents, presets and conversation search, using your own model server.",
         points=("No GPU needed", "Connects to a model server for you, API key included",
-                "Installs its MongoDB database alongside, which starts with it"),
+                "Installs its MongoDB database alongside, which starts and stops with it"),
         default_id="librechat", default_name="LibreChat", description="LibreChat",
         image="librechat/librechat:latest", container_port=3080, host_port=3080, gpu="none",
         env={"HOST": "0.0.0.0", "PORT": "3080", "ALLOW_REGISTRATION": "true", "ALLOW_EMAIL_LOGIN": "true",
