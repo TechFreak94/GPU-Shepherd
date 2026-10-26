@@ -334,6 +334,32 @@ def cmd_apps(args, c: Client) -> int:
     raise Failed(f"unknown apps command '{action}'")
 
 
+def cmd_app_updates(args, c: Client) -> int:
+    if args.action in (None, "list"):
+        def show(rows):
+            for u in rows:
+                print(f"{u['instance']} {u['key']}: {u['title']}")
+                for line in u["changes"]:
+                    print(f"  - {line}")
+                for n in u["afterwards"]:
+                    print(f"  Afterwards: {n}")
+            if not rows:
+                print("Every installed app is up to date.")
+        out(args, c.get("/api/v1/app-updates"), show)
+        return 0
+    if args.action == "apply" and args.all:
+        done: set[tuple[str, str]] = set()
+        while todo := [u for u in c.get("/api/v1/app-updates") if (u["instance"], u["key"]) not in done]:
+            for u in todo:               # an embeddings model on the server brings the chat apps' updates next
+                done.add((u["instance"], u["key"]))
+                out(args, c.post(f"/api/v1/app-updates/{u['instance']}/{u['key']}/apply"))
+        return 0
+    if not (args.instance and args.key):
+        raise Failed(f"which update? e.g. gpu-shepherd app-updates {args.action} webui env-1a2b3c4d")
+    out(args, c.post(f"/api/v1/app-updates/{args.instance}/{args.key}/{args.action}"))
+    return 0
+
+
 def model_table(m: dict) -> None:
     loaded = m["loaded"]
     table([[x["id"], x["file"], x["ctx_size"], ", ".join(x["aliases"]) or "-",
@@ -520,7 +546,8 @@ def cmd_token(args, c: Client | None) -> int:
 
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
-            "apps": cmd_apps, "models": cmd_models, "jobs": cmd_jobs, "settings": cmd_settings,
+            "apps": cmd_apps, "app-updates": cmd_app_updates, "models": cmd_models, "jobs": cmd_jobs,
+            "settings": cmd_settings,
             "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
 
 
@@ -552,6 +579,13 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("list", "show", "install", "manual"))
     p.add_argument("key", nargs="?")
     p.add_argument("answers", nargs="*", metavar="KEY=VALUE")
+
+    p = sub.add_parser("app-updates", help="settings added to apps since they were installed: list, "
+                                           "apply INSTANCE KEY (or --all), skip INSTANCE KEY")
+    p.add_argument("action", nargs="?", choices=("list", "apply", "skip"))
+    p.add_argument("instance", nargs="?")
+    p.add_argument("key", nargs="?")
+    p.add_argument("--all", action="store_true", help="apply every update")
 
     p = sub.add_parser("models", help="a model server's models, auto names and settings")
     msub = p.add_subparsers(dest="action", required=True, metavar="ACTION")

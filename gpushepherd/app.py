@@ -224,7 +224,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
                 "running_count": len(running), "instance_count": len(snap.instances),
                 "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None),
-                "now": time.time(), "u": updates.status(store.root)}
+                "now": time.time(), "u": updates.status(store.root), "app_updates": app_update_count()}
+
+    def app_update_count() -> int:
+        try:
+            return len(svc.app_updates())
+        except Exception:  # noqa: BLE001 - the dashboard shows without the notice
+            log.exception("could not work out app updates")
+            return 0
 
     def problem(err: Problem) -> Response:
         return toast(Response(status_code=204), err.msg, err.kind)
@@ -327,7 +334,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Problem as err:
             return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}), err.msg, err.kind)
         resp = Response(status_code=204)
-        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": "info"}, "refresh": True})
+        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": "info"}})
         return resp
 
     # ------------------------------------------------------------------ instance editor
@@ -718,6 +725,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/ui/update", response_class=HTMLResponse)
     def update_dialog(request: Request, confirm: str = ""):
         return update_page(request, confirm == "1")
+
+    @app.get("/ui/app-updates", response_class=HTMLResponse)
+    def app_updates_dialog(request: Request):
+        return page(request, "partials/app_updates.html", updates=svc.app_updates(), names=svc.names())
+
+    @app.post("/ui/app-updates/{iid}/{key}/{op}")
+    def app_update_op(request: Request, iid: str, key: str, op: str):
+        if op not in ("apply", "skip"):
+            return PlainTextResponse("unknown operation", status_code=400)
+        try:
+            msg = svc.apply_app_update(iid, key) if op == "apply" else svc.skip_app_update(iid, key)
+        except Problem as err:
+            return toast(app_updates_dialog(request), err.msg, err.kind)
+        resp = app_updates_dialog(request)
+        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": "info"}})
+        return resp
 
     @app.get("/ui/changelog", response_class=HTMLResponse)
     def changelog_dialog(request: Request):

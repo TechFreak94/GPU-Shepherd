@@ -258,6 +258,21 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return {"message": svc.cancel_download(iid, key)}
         raise Problem("unknown operation", status=404)
 
+    @r.get("/api/v1/app-updates")
+    @handle
+    def get_app_updates(request: Request):
+        return [{"instance": u.iid, "key": u.key, "title": u.title, "changes": u.lines, "afterwards": u.manual}
+                for u in svc.app_updates()]
+
+    @r.post("/api/v1/app-updates/{iid}/{key}/{op}")
+    @handle
+    def app_update_op(request: Request, iid: str, key: str, op: str):
+        if op == "apply":
+            return {"message": svc.apply_app_update(iid, key)}
+        if op == "skip":
+            return {"message": svc.skip_app_update(iid, key)}
+        raise Problem("unknown operation", status=404)
+
     @r.patch("/api/v1/instances/{iid}/server-settings")
     @handle
     async def server_settings(request: Request, iid: str):

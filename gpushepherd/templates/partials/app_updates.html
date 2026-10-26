@@ -1,0 +1,21 @@
+{# The app updates dialog. updates = [app_updates.Update], names = {iid: name} #}
+<div class="dlg-head"><strong id="modal-title">App updates</strong>
+  <span class="btns"><button data-close-modal>Close</button></span></div>
+<div class="dlg-body" id="app-updates">
+  <p class="small muted" style="margin-top:0">Apps have new settings since these were installed. An update only adds what
+    is missing, so settings you changed stay as they are. Nothing restarts: a running app shows when it needs a restart.</p>
+  {% for u in updates %}
+  <div class="section">
+    <div class="small muted">{{ names.get(u.iid, u.iid) }}</div>
+    <strong>{{ u.title }}</strong>
+    <ul class="small">{% for line in u.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% for n in u.manual %}<div class="hint">Afterwards: {{ n }}</div>{% endfor %}
+    <div class="btns" style="margin-top:8px">
+      <button class="small primary" hx-post="/ui/app-updates/{{ u.iid }}/{{ u.key }}/apply" hx-target="#modal-body" title="Apply this update">Apply</button>
+      <button class="small" hx-post="/ui/app-updates/{{ u.iid }}/{{ u.key }}/skip" hx-target="#modal-body" title="Don't offer this update again">Skip</button>
+    </div>
+  </div>
+  {% else %}
+  <p>Every installed app is up to date with what its app sets up.</p>
+  {% endfor %}
+</div>
