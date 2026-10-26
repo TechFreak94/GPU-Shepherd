@@ -2,7 +2,7 @@
 # whichever model a client asks for. Elastic: it takes every GPU nobody else needs.
 id: llm
 name: LLM server
-description: llama-swap with Qwen3 8B (chat)
+description: llama-swap with Qwen3.5 9B (chat) and Qwen3 Embedding (documents)
 kind: llama-swap
 image: ghcr.io/mostlygeek/llama-swap:cuda
 ports:

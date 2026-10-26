@@ -14,6 +14,8 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       │     ├─ backend.py     DockerBackend (docker SDK) / FakeBackend
                       │     └─ connectors/llamaswap.py   render config, talk to llama-swap
                       ├─ instance_templates.py   the App Store's apps and what they build (pure)
+                      ├─ model_library.py   suggested models, whether they fit, their settings (pure)
+                      ├─ downloads.py  fetches suggested models in a helper container (curl)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
                       ├─ auth.py       scrypt password hashing, first-run password, API token
@@ -36,7 +38,8 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
 - **Containers are disposable.** GPU assignments are fixed at container creation (Docker device
   requests), so a change of GPUs means re-creating the container. All state lives in mounted
   folders. Containers carry labels: `gpushepherd.instance`, `gpushepherd.gpus`,
-  `gpushepherd.config` (a fingerprint used to show "restart to apply").
+  `gpushepherd.config` (a fingerprint used to show "restart to apply"). Short-lived helpers (model
+  downloads) carry `gpushepherd.helper` instead, so they are never taken for an instance.
 - **No build step.** Server-rendered HTML, htmx for partial updates, one small JS file, one CSS
   file. Contributors only need Python.
 

@@ -41,13 +41,38 @@
       <div><label for="parallel">Parallel slots</label><input type="number" id="parallel" name="parallel" min="1" max="64" value="{{ f.parallel }}">
         <div class="hint">Requests served at once; each gets context ÷ slots.</div></div>
       <div><label for="kv_cache">KV cache</label><select id="kv_cache" name="kv_cache">
-        {% for k, label in [("f16", "f16 (default)"), ("q8_0", "q8_0 - half the memory"), ("q4_0", "q4_0 - smallest")] %}
-        <option value="{{ k }}" {{ "selected" if f.kv_cache == k }}>{{ label }}</option>{% endfor %}</select></div>
+        {% for k, label in [("f16", "f16 (default)"), ("bf16", "bf16 - same size, try it if answers turn to gibberish"), ("q8_0", "q8_0 - half the memory"), ("q5_1", "q5_1 - a third of the memory"), ("q4_0", "q4_0 - smallest")] %}
+        <option value="{{ k }}" {{ "selected" if f.kv_cache == k }}>{{ label }}</option>{% endfor %}</select>
+        <div class="hint">Memory for the context. q8_0 is a good choice from 32K tokens up.</div></div>
       <div><label for="sampling">Sampling flags</label><input type="text" id="sampling" name="sampling" value="{{ f.sampling }}" placeholder="--temp 0.6 --top-p 0.95 --top-k 20">
         <div class="hint">Use the model card's recommended values.</div></div>
       <div><label for="extra_args">Extra llama-server flags</label><input type="text" id="extra_args" name="extra_args" value="{{ f.extra_args }}" placeholder="--no-mmap"></div>
-      <div><label for="mmproj">Vision projector (optional)</label><input type="text" id="mmproj" name="mmproj" value="{{ f.mmproj }}" placeholder="/models/mmproj-BF16.gguf"></div>
+      <div><label for="mmproj">Vision projector (optional)</label><input type="text" id="mmproj" name="mmproj" value="{{ f.mmproj }}" placeholder="/models/mmproj-BF16.gguf">
+        <div class="hint">Lets the model read images. It is kept in system RAM.</div></div>
     </div>
+  </div>
+  <div class="section">
+    <h3 style="margin-top:0">Behaviour</h3>
+    <div class="fields">
+      <div><label for="role">Used for</label><select id="role" name="role">
+        {% for k, label in [("chat", "Chat and coding"), ("embed", "Embeddings (documents for RAG)"), ("rerank", "Reranking (sorting search results)")] %}
+        <option value="{{ k }}" {{ "selected" if f.role == k }}>{{ label }}</option>{% endfor %}</select>
+        <div class="hint">Embedding and reranking models answer /v1/embeddings and /v1/rerank instead of chat.</div></div>
+      <div><label for="thinking">Thinking</label><select id="thinking" name="thinking">
+        {% for k, label in [("auto", "The model's default"), ("on", "On - reasons before answering"), ("off", "Off - answers straight away")] %}
+        <option value="{{ k }}" {{ "selected" if f.thinking == k }}>{{ label }}</option>{% endfor %}</select>
+        <div class="hint">For models that can think first (Qwen3.5 and later, Gemma 4). Off is faster for chat and home automation; on is better for coding and hard questions.</div></div>
+      <div><label for="mtp">MTP: tokens guessed ahead</label><input type="number" id="mtp" name="mtp" min="0" max="6" value="{{ f.mtp }}">
+        <div class="hint">Multi-token prediction: faster answers for models trained for it (1.4-2× for dense models, less for MoE). 0 = off; 2 is a good start. Uses about 1-2 GB more memory.</div></div>
+      <div><label for="mtp_draft">MTP draft file (optional)</label><input type="text" id="mtp_draft" name="mtp_draft" value="{{ f.mtp_draft }}" placeholder="/models/mtp-model.gguf">
+        <div class="hint">Only for models that ship it as a separate mtp-….gguf file (Gemma 4); others have it built in.</div></div>
+      <div><label for="ttl">Unload when idle (seconds)</label><input type="number" id="ttl" name="ttl" min="0" max="604800" value="{{ f.ttl }}">
+        <div class="hint">Frees its memory after this long without requests. 0 = stays loaded until another model is asked for.</div></div>
+    </div>
+    <label class="check" style="margin-top:10px"><input type="checkbox" name="keep_loaded" {{ "checked" if f.keep_loaded }}> Keep loaded beside other models</label>
+    <div class="hint">Normally loading one model unloads the last. A small embeddings model can stay loaded next to the chat model instead (give it 0 layers on the GPU below so it runs on the CPU).</div>
+    <label class="check" style="margin-top:8px"><input type="checkbox" name="preload" {{ "checked" if f.preload }}> Load as soon as the server starts</label>
+    <div class="hint">The first request doesn't wait for it to load. Pick one model to swap with, plus any kept-loaded ones.</div>
   </div>
   <div class="section">
     <h3 style="margin-top:0">GPU and system RAM</h3>
@@ -68,6 +93,13 @@
     </table>
     <div class="hint">For mixture-of-experts models (names like 35B-A3B), keep all layers on the GPU and move expert layers to RAM:
       raise the number until the model loads, then lower it for speed. For dense models, lower the layers on GPU instead.</div>
+    <div class="fields" style="margin-top:12px">
+      <div><label for="split_mode">With 2 or more GPUs, split by</label><select id="split_mode" name="split_mode">
+        {% for k, label in [("layer", "Layers (default, best for most machines)"), ("row", "Rows (can be faster with fast links between GPUs)"), ("tensor", "Tensors (newer, experimental)")] %}
+        <option value="{{ k }}" {{ "selected" if f.split_mode == k }}>{{ label }}</option>{% endfor %}</select></div>
+      <div><label for="tensor_split">Share per GPU (optional)</label><input type="text" id="tensor_split" name="tensor_split" value="{{ f.tensor_split }}" placeholder="8,12">
+        <div class="hint">How much of the model each GPU holds, in GPU order, e.g. 8,12 for an 8 GB and a 12 GB card. Empty = by each GPU's free memory.</div></div>
+    </div>
   </div>
   <div class="actions"><a class="btn" href="/instances/{{ inst.id }}/models">Cancel</a><button class="primary" type="submit">Save model</button></div>
 </form>

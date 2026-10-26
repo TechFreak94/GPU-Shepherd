@@ -17,12 +17,11 @@ from pathlib import Path
 import httpx
 import yaml
 
-from .config import ConfigError, parse_command, parse_env, parse_ports, parse_volumes
+from .config import CatalogModel, ConfigError, parse_command, parse_env, parse_ports, parse_volumes
 
 # instance fields set as text, as the dashboard's form takes them (lines separated by ";" here)
 TEXT_FIELDS = {"ports": parse_ports, "volumes": parse_volumes, "env": parse_env, "command": parse_command}
-NEW_MODEL = {"id": "", "name": "", "description": "", "file": "", "ctx_size": 32768, "parallel": 1, "sampling": "",
-             "extra_args": "", "kv_cache": "f16", "mmproj": "", "aliases": [], "offload": []}
+NEW_MODEL = CatalogModel(id="new", file="/models/new.gguf").model_dump(mode="json") | {"id": "", "file": ""}
 
 
 class Failed(Exception):
@@ -356,6 +355,13 @@ def cmd_models(args, c: Client) -> int:
         m = c.get(f"{base}/models")
         out(args, m["files"], lambda files: (table([[f["container_path"], f"{f['size_gb']} GB"] for f in files],
                                                    ["FILE", "SIZE"]), [print(n) for n in m["file_notes"]]))
+    elif a == "suggested":
+        out(args, c.get(f"{base}/suggestions"), lambda rows: table(
+            [[x["key"], x["name"], x["fit"], x["status"], "yes" if x["in_catalog"] else "-"] for x in rows],
+            ["KEY", "MODEL", "ON THIS MACHINE", "DOWNLOAD", "ADDED"]))
+    elif a in ("add-suggested", "download", "stop-download"):
+        op = {"add-suggested": "add", "download": "download", "stop-download": "cancel"}[a]
+        out(args, c.post(f"{base}/suggestions/{args.key}/{op}"))
     elif a == "show":
         m = next((x for x in c.get(f"{base}/models")["models"] if x["id"] == args.model), None)
         if not m:
@@ -557,6 +563,14 @@ def add_commands(sub) -> None:
         q = msub.add_parser(name, help=what)
         q.add_argument("server")
         q.add_argument("model")
+    msub.add_parser("suggested", help="suggested models: how each fits this machine, downloaded or not") \
+        .add_argument("server")
+    for name, what in (("add-suggested", "add a suggested model with its settings, downloading it if needed"),
+                       ("download", "download (or resume) a suggested model's files"),
+                       ("stop-download", "stop a download; starting it again resumes")):
+        q = msub.add_parser(name, help=what)
+        q.add_argument("server")
+        q.add_argument("key", help="its key, from `models suggested`")
     q = msub.add_parser("unload", help="unload a model, or every model")
     q.add_argument("server")
     q.add_argument("model", nargs="?")

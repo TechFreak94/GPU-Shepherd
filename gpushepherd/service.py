@@ -18,10 +18,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import auth, instance_templates as tpl, updates
+from . import auth, host, instance_templates as tpl, model_library, updates
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Store, VolumeMap,
                      friendly_errors)
 from .connectors import llamaswap
+from .downloads import Downloads
 from .engine import Engine
 from .jobs import Busy, Job, JobRunner
 from .scheduler import Plan
@@ -84,6 +85,7 @@ class Installed:
     models: list[CatalogModel]
     bundle: Instance | None = None      # the LLM server installed alongside it, if one was
     companions: list[Instance] = field(default_factory=list)   # helpers installed with it (its database)
+    downloads: list[str] = field(default_factory=list)       # suggested models it started downloading
 
 
 @dataclass
@@ -93,6 +95,11 @@ class Shepherd:
     jobs: JobRunner
     llama_client: object                # iid -> llama-swap client (a stand-in in demo mode)
     loading: dict[str, set[str]] = field(default_factory=dict)   # model server -> models loading
+    downloads: Downloads | None = None
+
+    def __post_init__(self):
+        if self.downloads is None:
+            self.downloads = Downloads(self.backend, self.store.settings().container_prefix)
 
     @property
     def backend(self):
@@ -194,14 +201,16 @@ class Shepherd:
             if inst.kind != "llama-swap":
                 continue
             cat = self.store.catalog(inst.id)
-            alias = next((a for a in ("chat", "coder") for m in cat.models if a in m.aliases or a == m.id), "")
-            model = next((m for m in cat.models if alias in m.aliases or alias == m.id),
-                         cat.models[0] if cat.models else None)
+            chat = [m for m in cat.models if m.role == "chat"]
+            alias = next((a for a in ("chat", "coder") for m in chat if a in m.aliases or a == m.id), "")
+            model = next((m for m in chat if alias in m.aliases or alias == m.id), chat[0] if chat else None)
+            embed = next((m for m in cat.models if m.role == "embed"), None)
             servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
                                 "default_model": alias or (model.id if model else ""),
-                                "ctx": model.ctx_size if model else 0}
+                                "ctx": model.ctx_size if model else 0,
+                                "embed": ("embed" if "embed" in embed.aliases else embed.id) if embed else ""}
         return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in self.engine.snapshot().gpus],
-                           instances=instances, servers=servers, model_sizes={})
+                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb())
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common
@@ -272,7 +281,22 @@ class Shepherd:
             if models:
                 cat.models += models
                 self.store.save_catalog(Catalog.model_validate(cat.model_dump()))
-        return Installed(inst, models, bundle[0] if bundle else None, helpers)
+        server = inst if inst.kind == "llama-swap" else bundle[0] if bundle else None
+        fetching = self.fetch_suggested(server, models if server is inst else bundle[1].models) if server else []
+        return Installed(inst, models, bundle[0] if bundle else None, helpers, fetching)
+
+    def fetch_suggested(self, server: Instance, models: list[CatalogModel]) -> list[str]:
+        """Start downloading the suggested models among `models` that aren't in the models folder yet."""
+        out, folder = [], self.models_dir(server)
+        for m in models:
+            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER)
+            if s and folder and self.downloads.status(s, folder).state != "ready":
+                try:
+                    self.downloads.start(s, folder)
+                    out.append(s.name)
+                except ValueError as err:
+                    log.warning("not downloading %s: %s", s.key, err)
+        return out
 
     def add_companions(self, t: tpl.Template, inst: Instance) -> list[Instance]:
         """Save the helper instances an app requires (its database) that don't exist yet."""
@@ -373,6 +397,73 @@ class Shepherd:
             raise Problem(f"Cannot delete {mid}: {friendly_errors(err)}", status=409) from err
         self.store.save_catalog(cat)
         return f"Deleted {mid}."
+
+    # ------------------------------------------------------------------ suggested models
+    @staticmethod
+    def models_dir(inst: Instance) -> str:
+        """The models folder on this machine that a model server sees at /models ("" if none)."""
+        return next((v.host for v in inst.volumes if v.container == tpl.MODELS_IN_CONTAINER), "")
+
+    def suggestions(self, iid: str) -> list[dict]:
+        """The suggested models, what runs best on this machine first, with whether each is
+        downloaded and already in this server's catalogue."""
+        inst, cat = self.server(iid)
+        m = self.machine()
+        folder = self.models_dir(inst)
+        files = {x.file for x in cat.models}
+        out = []
+        for s in model_library.SUGGESTIONS:
+            f = model_library.fit(s, m.gpu_mem_gb, m.ram_gb)
+            st = self.downloads.status(s, folder)
+            out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
+                        "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
+                        "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
+                        "pct": st.pct, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
+                        "files": [{"path": f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}", "url": x.url, "gb": x.gb}
+                                  for x in s.files]})
+        return sorted(out, key=lambda x: x.pop("rank"))
+
+    def _suggestion(self, key: str) -> model_library.Suggestion:
+        s = model_library.get(key)
+        if not s:
+            raise Problem(f"no suggested model '{key}'", status=404)
+        return s
+
+    def download_suggestion(self, iid: str, key: str) -> str:
+        inst, _ = self.server(iid)
+        s = self._suggestion(key)
+        folder = self.models_dir(inst)
+        if not folder:
+            raise Problem(f"{inst.name} has no models folder (a volume mounted at {tpl.MODELS_IN_CONTAINER}): "
+                          "add one under Edit first.")
+        if self.downloads.status(s, folder).state == "ready":
+            return f"{s.name} is already downloaded."
+        return self.downloads.start(s, folder)
+
+    def cancel_download(self, iid: str, key: str) -> str:
+        self.server(iid)
+        return self.downloads.cancel(self._suggestion(key))
+
+    @checked
+    def add_suggestion(self, iid: str, key: str) -> str:
+        """Add a suggested model to the catalogue with its makers' settings, and download it if it
+        isn't there yet. An embeddings model also gets the name "embed" when that is free."""
+        inst, cat = self.server(iid)
+        s = self._suggestion(key)
+        m = self.machine()
+        model = model_library.catalog_model(s, m.gpu_mem_gb, tpl.MODELS_IN_CONTAINER)
+        if any(x.file == model.file for x in cat.models):
+            raise Problem(f"{s.name} is already on {inst.name}.", "info", 409)
+        taken = {x.id for x in cat.models} | {a for x in cat.models for a in x.aliases} | \
+            {a.alias for a in cat.auto_aliases}
+        model.id = tpl.free_id(model.id, taken)
+        if s.role == "embed" and "embed" not in taken:
+            model.aliases = ["embed"]
+        self.save_model(iid, model)
+        fetching = self.fetch_suggested(inst, [model])
+        st = self.backend.states().get(iid)
+        note = " Restart the server to use it." if st and st.running else ""
+        return f"Added {model.id}" + (f"; downloading it ({s.download_gb:.1f} GB)." if fetching else ".") + note
 
     def load_model(self, iid: str, mid: str) -> str:
         """Load a model in the background (large ones take minutes from disk)."""

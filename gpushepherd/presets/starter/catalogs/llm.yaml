@@ -1,18 +1,35 @@
 # Model catalogue for the "llm" instance. Edit it in the UI (Models page), or add models there.
-#   https://huggingface.co/unsloth/Qwen3-8B-GGUF   Qwen3-8B-UD-Q4_K_XL.gguf   ~5 GB, fits one 8 GB GPU
+# These are two of the LLM server's suggested models (its Models page lists the rest), set up as GPU
+# Shepherd sets them up when you add them there:
+#   https://huggingface.co/unsloth/Qwen3.5-9B-GGUF   ~7 GB with its vision projector, fits one 8 GB GPU
+#   https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF   ~0.6 GB, runs on the CPU, stays loaded
 instance_id: llm
 api_key: sk-demo-0000000000000000000000000000000000000000
 threads: 0
 llama_server: ""
 health_timeout: 600
 models:
-  - id: qwen3-8b
-    name: Qwen3 8B (UD-Q4_K_XL)
-    description: General chat and light coding; fits entirely on one 8 GB GPU
-    file: /models/Qwen3-8B-UD-Q4_K_XL.gguf
+  - id: qwen3.5-9b
+    name: Qwen3.5 9B
+    description: All-round chat that reads images and calls tools; 256K context.
+    file: /models/qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf
+    mmproj: /models/qwen3.5-9b/mmproj-F16.gguf
     ctx_size: 32768
     parallel: 1
     kv_cache: q8_0
-    sampling: --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0
+    thinking: "off"
+    sampling: --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0.0 --presence-penalty 1.5
     aliases: [chat, coder]
+    preload: true
+  - id: qwen3-embedding-0.6b
+    name: Qwen3 Embedding 0.6B
+    description: Turns documents into vectors for chat-with-your-files (RAG) in Open WebUI, AnythingLLM and LibreChat.
+    file: /models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q8_0.gguf
+    ctx_size: 8192
+    role: embed
+    keep_loaded: true
+    extra_args: --pooling last --ubatch-size 8192
+    aliases: [embed]
+    offload:
+      - {min_gpus: 1, gpu_layers: 0}
 auto_aliases: []

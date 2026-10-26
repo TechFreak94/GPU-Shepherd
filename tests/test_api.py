@@ -257,3 +257,38 @@ def test_cli_token_and_errors(run, stack, monkeypatch):
     monkeypatch.setenv("SHEPHERD_TOKEN", "wrong")
     code, text = run("status")
     assert code == 1 and "token was refused" in text
+
+
+def test_suggestions_api_and_cli(run, stack):
+    app, client, backend, data = stack
+    rows = client.get("/api/v1/instances/llm/suggestions").json()
+    assert rows[0]["fits"] and {"key", "fit", "status", "files", "in_catalog"} <= set(rows[0])
+    assert all(f["url"].startswith("https://huggingface.co/") for r in rows for f in r["files"])
+    r = client.post("/api/v1/instances/llm/suggestions/gemma-4-e4b/add")
+    assert r.status_code == 201 and "Added gemma-4-e4b" in r.json()["message"]
+    assert client.post("/api/v1/instances/llm/suggestions/gemma-4-e4b/add").status_code == 409
+    assert client.post("/api/v1/instances/llm/suggestions/gemma-4-e4b/nope").status_code == 404
+    code, text = run("models", "suggested", "llm")
+    assert code == 0 and "qwen3.5-9b" in text and "ON THIS MACHINE" in text
+    code, text = run("models", "download", "llm", "qwen3-embedding-0.6b")
+    assert code == 0 and "Downloading Qwen3 Embedding" in text
+    assert run("models", "stop-download", "llm", "qwen3-embedding-0.6b")[0] == 0
+    code, text = run("models", "add-suggested", "llm", "qwen3-embedding-0.6b")
+    assert code == 0 and "Added qwen3-embedding-0.6b" in text
+    cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
+    assert {m["id"] for m in cat["models"]} >= {"gemma-4-e4b", "qwen3-embedding-0.6b"}
+
+
+def test_installing_with_a_suggested_model_downloads_it(stack, tmp_path_factory):
+    app, client, backend, data = stack
+    models = tmp_path_factory.mktemp("models")
+    r = client.post("/api/v1/apps/llm-server/install", json={
+        "id": "llm2", "port": 8091, "models_dir": str(models),
+        "chat_file": "/models/qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf"})
+    assert r.status_code == 201 and r.json()["downloads"] == ["Qwen3.5 9B"]
+    assert "Downloading Qwen3.5 9B" in r.json()["message"]
+    for _ in range(100):
+        if "shepherd-download-qwen3.5-9b" in backend.helper_runs:
+            break
+        time.sleep(0.01)
+    assert "shepherd-download-qwen3.5-9b" in backend.helper_runs

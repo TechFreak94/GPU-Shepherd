@@ -12,6 +12,19 @@
 </div>
 {% endif %}
 {% endmacro %}
+{% macro suggestion_picker(suggested, slots) %}
+{% if suggested %}
+<div class="hint" style="margin-top:10px">Suggested models, best fit for this machine first. One that isn't in the models folder yet is downloaded when you install, with its makers' settings filled in.</div>
+<div class="files suggested">
+  {% for s, fit, for_slots, have in suggested %}<div class="file-row">
+    <span><strong>{{ s.name }}</strong> <span class="small {{ 'muted' if fit.ok else 'warn-text' }}">{{ fit.text }}</span>
+      <span class="small muted">· {{ "in the models folder" if have else s.download_gb ~ " GB download" }}</span>
+      <div class="small muted">{{ s.blurb }}</div></span>
+    {% for sl in for_slots %}<button type="button" class="small" data-pick-file="{{ models_root }}/{{ s.path(s.model) }}" data-pick-target="{{ sl.key }}_file" title="Use as the {{ sl.label|lower }}">{{ "Use" if slots|length == 1 else sl.label.split()[0] }}</button>{% endfor %}
+  </div>{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
 {% macro slot_fields(slots, f, with_ctx) %}
 {% for sl in slots %}
 <div class="fields slot">
@@ -117,6 +130,7 @@
       </div>
       {{ slot_fields(slots, f, False) }}
       <div class="hint">Leave it empty to add models on its Models page.</div>
+      {{ suggestion_picker(suggested, slots) }}
       {{ file_picker(files, slots) }}
       {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
     </div>
@@ -137,8 +151,9 @@
   {% if t.models %}
   <div class="section">
     <h3 style="margin-top:0"><span class="step"></span>Models <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span></h3>
-    <div class="hint" style="margin:0 0 10px">Pick a .gguf file for each model this server should offer; one is enough, and the same file can do both. Leave both empty to add models on the Models page next.</div>
+    <div class="hint" style="margin:0 0 10px">Pick a model for each name this server should answer to; one is enough, and the same chat model can do chat and coding. Leave them empty to add models on the Models page next.</div>
     {{ slot_fields(slots, f, True) }}
+    {{ suggestion_picker(suggested, slots) }}
     {{ file_picker(files, slots) }}
     {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
     <div class="fields" style="margin-top:12px">

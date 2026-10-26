@@ -94,6 +94,14 @@ def _meminfo() -> dict[str, int]:
     return out
 
 
+def ram_gb() -> float:
+    """Installed system RAM in GB (0 if unknown), without query()'s CPU sample."""
+    try:
+        return _meminfo().get("MemTotal", 0) / 2**30
+    except OSError:
+        return 0.0
+
+
 def query() -> Host:
     global _prev
     h = Host()

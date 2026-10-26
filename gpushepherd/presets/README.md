@@ -7,7 +7,7 @@ folder and asks which one to use (or none); `--preset NAME` picks one up front, 
 
 | Preset | For | What it creates |
 |---|---|---|
-| [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3 8B), ComfyUI (SDXL), Open WebUI |
+| [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3.5 9B, Qwen3 Embedding), ComfyUI (SDXL), Open WebUI |
 
 Nothing in a preset starts by itself: the installer turns autostart off until you have tried it.
 

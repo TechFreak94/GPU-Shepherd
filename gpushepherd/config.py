@@ -197,10 +197,20 @@ class CatalogModel(BaseModel):
     parallel: int = Field(default=1, ge=1, le=64)
     sampling: str = ""                 # e.g. "--temp 0.6 --top-p 0.95 --top-k 20"
     extra_args: str = ""               # anything else for llama-server
-    kv_cache: Literal["f16", "q8_0", "q4_0"] = "f16"
+    kv_cache: Literal["f16", "bf16", "q8_0", "q5_1", "q4_0"] = "f16"
     mmproj: str = ""                   # vision projector path inside the container (optional)
     aliases: list[str] = []
     offload: list[OffloadRule] = []    # GPU / system RAM split, by how many GPUs the server has
+    # what the model is for: chat (and coding), or answering /v1/embeddings or /v1/rerank for RAG apps
+    role: Literal["chat", "embed", "rerank"] = "chat"
+    thinking: Literal["auto", "on", "off"] = "auto"   # reasoning before answering; auto = the model's default
+    mtp: int = Field(default=0, ge=0, le=6)  # multi-token prediction: tokens guessed ahead per step, 0 = off
+    mtp_draft: str = ""                # separate mtp-*.gguf file, for models that ship it beside the model
+    split_mode: Literal["layer", "row", "tensor"] = "layer"   # how a model is split over 2+ GPUs
+    tensor_split: str = ""             # share of the model per GPU with 2+ GPUs, e.g. "8,12"; "" = by memory
+    ttl: int = Field(default=0, ge=0, le=604_800)   # unload after this many idle seconds; 0 = stay loaded
+    keep_loaded: bool = False          # stays loaded beside other models instead of swapping them out
+    preload: bool = False              # loaded as soon as the server starts
 
     def offload_for(self, gpu_count: int) -> OffloadRule | None:
         """The rule with the highest min_gpus that gpu_count reaches, like AutoAlias.resolve()."""
@@ -240,6 +250,22 @@ class CatalogModel(BaseModel):
         v = v.strip()
         if not v.startswith("/"):
             raise ValueError("use the path inside the container, e.g. /models/model.gguf")
+        return v
+
+    @field_validator("mtp_draft")
+    @classmethod
+    def _draft(cls, v: str) -> str:
+        v = v.strip()
+        if v and not v.startswith("/"):
+            raise ValueError("MTP draft file: use the path inside the container, e.g. /models/mtp-model.gguf")
+        return v
+
+    @field_validator("tensor_split")
+    @classmethod
+    def _split(cls, v: str) -> str:
+        v = v.replace(" ", "").strip(",")
+        if v and not re.fullmatch(r"\d+(\.\d+)?(,\d+(\.\d+)?)+", v):
+            raise ValueError("GPU split: give a share per GPU separated by commas, e.g. 8,12")
         return v
 
 

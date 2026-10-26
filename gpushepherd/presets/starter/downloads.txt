@@ -1,7 +1,10 @@
 # Model files for this preset, fetched by presets/download-models.sh into the models folder.
 #   group <name> <default|optional> <size> <description>
 #   file  <group> <path under the models folder> <url> [fallback url ...]
-group chat  default ~5GB   Qwen3 8B, the LLM server's "chat" model (fits an 8 GB GPU)
+group chat  default ~7GB   Qwen3.5 9B and its vision projector, the LLM server's "chat" model (fits an 8 GB GPU)
+group embed default ~1GB   Qwen3 Embedding 0.6B, the LLM server's "embed" model for chatting with documents
 group image default ~7GB   Stable Diffusion XL base 1.0 for ComfyUI (checkpoints/)
-file chat  Qwen3-8B-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-UD-Q4_K_XL.gguf
+file chat  qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf
+file chat  qwen3.5-9b/mmproj-F16.gguf  https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf
+file embed qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q8_0.gguf  https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf
 file image comfyui/checkpoints/sd_xl_base_1.0.safetensors  https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors

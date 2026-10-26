@@ -133,6 +133,7 @@ input:focus,select:focus,textarea:focus,button:focus-visible,.btn:focus-visible,
 .file-row{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--line)}
 .file-row .mono{flex:1;min-width:0;overflow-wrap:anywhere}
 .file-row button{flex:none}
+.files.suggested{max-height:none}
 .fields.slot+.fields.slot{margin-top:10px}
 .autorow{display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;margin-bottom:8px}
 @media (max-width:640px){.autorow{grid-template-columns:1fr}}

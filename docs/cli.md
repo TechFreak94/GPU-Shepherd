@@ -148,12 +148,15 @@ theme is the one exception: it is a choice saved in each browser.
 | `delete ID` | Delete the instance and its container; folders on disk are kept. Asks first; `-y` doesn't. | Delete |
 | `apps` | The App Store's apps and what is installed from each. | App Store |
 | `apps show KEY` | An app, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
-| `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=Qwen3-8B-Q4_K_M.gguf`, `apps install open-webui server=new chat_file=...` (installs an LLM server with it), `apps install librechat` (and its database). | Install |
+| `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf` (a suggested model, downloaded for you), `apps install open-webui server=new chat_file=...` (installs an LLM server with it), `apps install librechat` (and its database). | Install |
 | `apps manual KEY [KEY=VALUE...]` | Print the instance an install would make, as YAML, without saving it: edit it and `apply` it. | Manual |
 | `models list SERVER` | A model server's models, which are loaded, and its auto names. | Models |
 | `models files SERVER` | The .gguf files the server can see. | Models › file list |
 | `models show SERVER MODEL` | One model's settings. | Models › Edit |
-| `models set SERVER MODEL KEY=VALUE...` | Add a model or change one, by the keys in [Models](advanced.md#models): `file=/models/x.gguf ctx_size=32768 kv_cache=q8_0 aliases=chat,coder sampling="--temp 0.6"`. `id=new-id` renames it (auto names follow). GPU and RAM: `offload.2.cpu_moe=999`, `offload.1.gpu_layers=30`, `offload.2=` removes the row for 2 GPUs. | Models › Add / Edit |
+| `models set SERVER MODEL KEY=VALUE...` | Add a model or change one, by the keys in [Models](advanced.md#models): `file=/models/x.gguf ctx_size=32768 kv_cache=q8_0 aliases=chat,coder sampling="--temp 0.6" thinking=off mtp=2 keep_loaded=true`. `id=new-id` renames it (auto names follow). GPU and RAM: `offload.2.cpu_moe=999`, `offload.1.gpu_layers=30`, `offload.2=` removes the row for 2 GPUs. | Models › Add / Edit |
+| `models suggested SERVER` | The [suggested models](advanced.md#suggested-models): how each fits this machine, whether it is downloaded (or how far along), and whether the server has it. | Models › Suggested models |
+| `models add-suggested SERVER KEY` | Add a suggested model with its makers' settings, downloading it if needed: `models add-suggested llm qwen3-coder-30b-a3b`. | Suggested models › Add |
+| `models download SERVER KEY`, `models stop-download SERVER KEY` | Download (or resume) a suggested model's files; stop a download (starting it again resumes). | Download / Stop |
 | `models delete SERVER MODEL` | Remove a model. | Models › Delete |
 | `models load SERVER MODEL`, `models unload SERVER [MODEL]` | Load a model now; unload one, or all of them. Unloading refuses while the server is answering. | Load / Unload |
 | `models auto-set SERVER ALIAS DEFAULT [N=MODEL...]` | Add or replace an auto name: `models auto-set llm coder small-coder 2=big-coder`. | Models › Auto names |
