@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.12.9 - 2026-10-26
+
+- New: everything the dashboard does also works from the `gpu-shepherd` command, e.g. `gpu-shepherd start comfyui`, `apps install`, `models set`, `settings set` and `update check` (see docs/cli.md). (#23)
+- New: a documented JSON API at `/api/v1` for scripts and Home Assistant, using an API token shown under Settings › API and command line (see docs/api.md). (#23)
+
 ## 0.12.8 - 2026-10-26
 
 - Docs, code comments and screenshots brought up to date with the App Store, the LLM server app and theme selection. (#22)
