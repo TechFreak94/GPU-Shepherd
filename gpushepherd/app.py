@@ -362,43 +362,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     no_server=no_server,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
-    # ------------------------------------------------------------------ guided setup (templates)
-    machine, model_files = svc.machine, svc.model_files
     # ------------------------------------------------------------------ automatic install (templates)
-    def machine() -> tpl.Machine:
-        instances, _ = store.instances()
-        servers = {}
-        for inst in instances.values():
-            if inst.kind != "llama-swap":
-                continue
-            cat = store.catalog(inst.id)
-            alias = next((a for a in ("chat", "coder") for m in cat.models if a in m.aliases or a == m.id), "")
-            servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
-                                "default_model": alias or (cat.models[0].id if cat.models else "")}
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in engine.snapshot().gpus],
-                           instances=instances, servers=servers, model_sizes={})
-
-    def default_models_dir(instances: dict[str, Instance]) -> str:
-        """Where this machine keeps models: the folder another model server already uses, a common
-        place that exists, or a folder inside the data folder."""
-        for inst in instances.values():
-            for v in inst.volumes:
-                if inst.kind == "llama-swap" and v.container == tpl.MODELS_IN_CONTAINER:
-                    return v.host
-                if v.container.endswith("ComfyUI/models") and v.host.endswith("/comfyui"):
-                    return v.host.removesuffix("/comfyui")
-        for d in ("/srv/models", "/opt/models", "/data/models"):
-            if Path(d).is_dir():
-                return d
-        return str(engine.host_data_dir / "models")
-
-    def model_files(models_dir: str) -> tuple[list[dict], list[str]]:
-        probe = Instance(id="probe", name="probe", image="probe",
-                         volumes=[VolumeMap(host=models_dir, container=tpl.MODELS_IN_CONTAINER)])
-        return llamaswap.local_model_files(probe)
-
-    def has_llm_server() -> bool:
-        return any(i.kind == "llama-swap" for i in store.instances()[0].values())
+    machine, model_files = svc.machine, svc.model_files
 
     def next_app(key: str) -> tpl.Template | None:
         """The app to go on to after installing an LLM server for it (?then=)."""
