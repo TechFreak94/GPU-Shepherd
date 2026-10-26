@@ -143,6 +143,7 @@ Same requirements, nothing to build: [compose.standalone.yaml](compose.standalon
 image published with every release. Save it as `compose.yaml` in an empty folder, then:
 
 ```bash
+sudo docker login ghcr.io     # while the image is private: GitHub user + a token with read:packages
 sudo docker compose up -d
 sudo docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
 ```
