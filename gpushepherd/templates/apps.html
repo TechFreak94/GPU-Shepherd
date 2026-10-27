@@ -23,7 +23,7 @@
     <div class="app-head">
       <span class="app-icon {{ gid }}" aria-hidden="true">{{ t.badge }}</span>
       <div><h2 id="app-{{ t.key }}">{{ t.title }}</h2>
-        <div class="small muted">{{ "Every free GPU" if t.gpu == "all" else gpu_choices[t.gpu] }}{% if have %} · <span class="tag accent" title="{{ have|map(attribute='name')|join(', ') }}">{{ have|length }} installed</span>{% endif %}</div></div>
+        <div class="small muted">{{ "Every free GPU" if t.gpu == "all" else gpu_choices[t.gpu] }}{% if t.experimental %} · <span class="tag warn" title="{{ t.experimental }}">Experimental</span>{% endif %}{% if have %} · <span class="tag accent" title="{{ have|map(attribute='name')|join(', ') }}">{{ have|length }} installed</span>{% endif %}</div></div>
     </div>
     <p class="sub">{{ t.blurb }}</p>
     <ul class="points">{% for p in t.points %}<li>{{ p }}</li>{% endfor %}</ul>
