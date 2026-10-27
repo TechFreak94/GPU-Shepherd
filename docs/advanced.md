@@ -311,7 +311,6 @@ servers, the models you picked), so every field above can be changed afterwards.
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model. |
 | LibreChat | none | `librechat/librechat`, plus its database: a second instance `<id>-mongodb` (`mongo:8.0`, no port on the host, data in the app data folder's `mongodb/`) that it *starts with*. Fresh secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`), `MONGO_URI`, sign-ups on, cookies that work over plain http (`SESSION_COOKIE_SECURE=false`), and a `librechat.yaml` in its app data folder with one endpoint, *Local models*, whose address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment. Images, uploads and logs go to its app data folder. |
 | AnythingLLM | none | `mintplexlabs/anythingllm` with its storage in the app data folder, and a `server.env` there mounted as its settings file (`/app/server/.env`) that points it at the model server (`generic-openai`, the `chat` model and its context size), with built-in vector store and the server's embeddings model when it has one (`EMBEDDING_ENGINE='generic-openai'`), else AnythingLLM's own. Its web scraper runs without `SYS_ADMIN` (`ANYTHINGLLM_CHROMIUM_ARGS`) and telemetry is off. |
-| Flowise | none | `flowiseai/flowise:3.0.13` (pinned: 3.1.x crashes on start with its built-in SQLite database), marked *Experimental*. Its app data folder's `data/` is mounted at `/home/node/.flowise` (made for user 1000) and holds its database, secret key, logs and uploads (`DATABASE_PATH`, `SECRETKEY_PATH`, `LOG_PATH`, `BLOB_STORAGE_PATH`); fresh login secrets (`JWT_AUTH_TOKEN_SECRET`, `JWT_REFRESH_TOKEN_SECRET`, `EXPRESS_SESSION_SECRET`, `TOKEN_HASH_SECRET`) and telemetry off. It is not connected to the model server for you: the server's address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment, to use in a flow. |
 | Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
 
 ![Installing the LLM server: suggested models for each name, best fit first](screenshots/llm-install-models.png)
@@ -331,17 +330,12 @@ afterwards repeat:
 - **AnythingLLM**: make a workspace and chat. It has no login until you set a password under its
   Settings, Security. AnythingLLM owns `server.env` after the first start (it rewrites it when you
   change settings in its page), so change its model there rather than under Edit.
-- **Flowise** (*Experimental*, shown as a tag on its App Store card and a notice on its install
-  page): create its first account, which becomes the admin. Under Credentials add an *OpenAI API*
-  credential with `LLM_API_KEY`. In a flow, use the *ChatOpenAI Custom* node with that credential,
-  BasePath set to `LLM_BASE_URL` and Model Name `chat`; for documents, *OpenAI Embeddings Custom*
-  with Model Name `embed`.
 
 The App Store doesn't offer LobeChat (its current version needs PostgreSQL, S3 file storage, an
 auth key set and a fixed public address before it starts) or Odysseus (its model servers can only
 be added inside the app); install those with *Any Docker image* or Docker Compose.
 
-Open WebUI, LibreChat, AnythingLLM, Flowise and Hermes Agent can also install a new LLM server alongside themselves
+Open WebUI, LibreChat, AnythingLLM and Hermes Agent can also install a new LLM server alongside themselves
 (*A new LLM server, installed with it*), with a chat model you pick from the models folder.
 It is offered first when there is no model server yet, and the install page says so, with an
 *Install an LLM server first* button: that installs the LLM server and then comes back to the app,

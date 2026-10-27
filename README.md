@@ -21,7 +21,7 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 - **App Store**: install an LLM server (with a chat model, a coding model, an embeddings model for
   chatting with your documents, or any mix), Open WebUI,
-  LibreChat, AnythingLLM, Flowise (experimental), Hermes Agent or ComfyUI. Apps that need a helper container get it too:
+  LibreChat, AnythingLLM, Hermes Agent or ComfyUI. Apps that need a helper container get it too:
   LibreChat comes with its MongoDB database, which starts and stops with LibreChat.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
   folders, connects chat and agent apps to your model server (or installs one alongside them) and
