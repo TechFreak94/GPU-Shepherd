@@ -4,6 +4,15 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.5 - 2026-10-27
+
+- New: install with Docker Compose from a published image, no clone needed (`compose.standalone.yaml`). It sets up the Starter preset on the first start. (#32)
+- New: Storage page, with a storage report, clean-ups that go through the trash, and a low-disk banner. (#32)
+- New: deleting an instance stops it gracefully and moves it to a recoverable trash. (#32)
+- New: warnings before a start when RAM or GPU memory may not be enough. (#32)
+- New: optional Tailscale setup in `install.sh` (`--tailscale`, `--tailscale-https`) for remote access to the dashboard and apps. (#32)
+- Improved: container logs are capped, old builds are removed after updates, and downloads can be tidied or discarded, with a free-space check first. (#32)
+
 ## 0.13.4 - 2026-10-26
 
 - The installer now supports Debian 12/13, Fedora, RHEL/Rocky/Alma 9+ and Arch, as well as Ubuntu. WSL2 support is experimental. (#31)
