@@ -26,6 +26,10 @@ from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, Of
                      MODEL_ID, SLUG)
 
 LLAMA_SWAP_IMAGE = "ghcr.io/mostlygeek/llama-swap:cuda"
+# what Speaches downloads first, and Open WebUI's voice uses
+STT_MODEL = "Systran/faster-distil-whisper-large-v3"
+TTS_MODEL = "speaches-ai/Kokoro-82M-v1.0-ONNX"
+TTS_VOICE = "af_heart"
 MODELS_IN_CONTAINER = "/models"
 
 # how much bigger than the .gguf file a model is once loaded (KV cache, buffers), for "auto" offload
@@ -80,6 +84,7 @@ class Template:
     hidden: bool = False                       # a companion: not offered in the App Store itself
     after_install: str = ""                    # what is left to do in the app itself once it runs
     experimental: str = ""                     # why it is marked Experimental in the App Store ("" = it isn't)
+    secrets: tuple[str, ...] = ()              # environment variables given a fresh random value when installed
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -103,6 +108,21 @@ TEMPLATES: tuple[Template, ...] = (
                                "It stays loaded beside the other models, on the CPU.")),
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
         docs="https://github.com/mostlygeek/llama-swap"),
+    Template(
+        key="ollama", tag="Model Server", badge="OL", title="Ollama", group="Model servers",
+        blurb="Ollama's model server, for apps that only speak Ollama's API.",
+        points=("Uses every free GPU and gives them back when something else needs one",
+                "Models from Ollama's library, kept in the models folder's ollama/ subfolder",
+                "Most apps here use the LLM server instead"),
+        default_id="ollama", default_name="Ollama", description="Ollama model server",
+        image="ollama/ollama:latest", container_port=11434, host_port=11434, gpu="all",
+        env={"OLLAMA_HOST": "0.0.0.0:11434"},
+        models_mount=("ollama", "/root/.ollama/models", False),
+        after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3:8b (CONTAINER is "
+                      "shown on its dashboard card). It answers at http://this-machine:PORT, and has no login or "
+                      "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
+                      "LLM server through its llama.cpp integration instead.",
+        needs="An NVIDIA GPU", docs="https://docs.ollama.com"),
     Template(
         key="open-webui", tag="Chat UI", badge="OW", title="Open WebUI", group="Chat and agents",
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
@@ -179,6 +199,18 @@ TEMPLATES: tuple[Template, ...] = (
                       "block with the same address and the model embed, if the server has an embeddings model.",
         needs="An LLM server for its flows to use", docs="https://docs.langflow.org"),
     Template(
+        key="invokeai", tag="Image UI", badge="INV", title="InvokeAI", group="Image and video",
+        blurb="Image generation with a polished canvas: inpainting, layers and a model manager, in the browser.",
+        points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
+                "Models in the models folder's invokeai/ subfolder, installed from its Model Manager"),
+        default_id="invokeai", default_name="InvokeAI", description="Image generation",
+        image="ghcr.io/invoke-ai/invokeai:latest", container_port=9090, host_port=9090, gpu="one", priority=60,
+        env={"INVOKEAI_ROOT": "/invokeai", "INVOKEAI_HOST": "0.0.0.0", "INVOKEAI_PORT": "9090"},
+        appdata=(("invokeai", "/invokeai"),), models_mount=("invokeai", "/invokeai/models", False),
+        after_install="Open it and add models under Model Manager, Starter Models. It has no login: anyone "
+                      "who can reach its port can use it.",
+        needs="An NVIDIA GPU with 8+ GB (12+ GB for SDXL and Flux)", docs="https://invoke.ai"),
+    Template(
         key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
@@ -191,6 +223,20 @@ TEMPLATES: tuple[Template, ...] = (
         models_mount=("comfyui", "/root/ComfyUI/models", False),
         needs="An NVIDIA GPU with 8+ GB and driver 580 or newer (CUDA 13 image)",
         docs="https://github.com/YanWenKun/ComfyUI-Docker"),
+
+    Template(
+        key="speaches", tag="Speech Server", badge="SP", title="Speaches", group="Speech",
+        blurb="Speech to text (Whisper) and text to speech (Kokoro) with an OpenAI-compatible API.",
+        points=("Takes one GPU, whichever is free", "Gives Open WebUI a voice: pick it when installing Open WebUI",
+                "Downloads its two models the first time it starts"),
+        default_id="speaches", default_name="Speaches", description="Speech to text and text to speech",
+        image="ghcr.io/speaches-ai/speaches:latest-cuda", container_port=8000, host_port=8000, gpu="one",
+        env={"PRELOAD_MODELS": f'["{STT_MODEL}", "{TTS_MODEL}"]', "LOG_LEVEL": "info"}, secrets=("API_KEY",),
+        appdata=(("hf-cache", "/home/ubuntu/.cache/huggingface/hub"),), data_owner=(1000, 1000),
+        after_install="It answers at http://this-machine:PORT/v1 with the key API_KEY (under Edit). Open WebUI "
+                      "installed after it can use it for voice; for an Open WebUI you already have, set Speech to "
+                      "Text and Text to Speech to OpenAI with that address and key in its Admin Panel, Audio.",
+        needs="An NVIDIA GPU with 4+ GB", docs="https://speaches.ai"),
 
     # companions: installed with an app, never on their own
     Template(
@@ -348,9 +394,10 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
     iid = free_id(t.default_id, set(m.instances))
     name = t.default_name if iid == t.default_id else f"{t.default_name} {iid.rsplit('-', 1)[-1]}"
     comfy = next((i.id for i in m.instances.values() if "comfyui" in (i.image + i.id).lower()), "")
+    speech = next(iter(speech_servers(m)), "")
     return {"name": name, "id": iid, "port": free_port(t.host_port, taken_ports), "gpu": t.gpu,
             "models_dir": models_dir, "appdata_dir": str(Path(appdata_root) / iid),
-            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy,
+            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy, "speech": speech,
             **{f"{s.key}_file": "" for s in slots(t)}, **{f"{s.key}_ctx": s.ctx_size for s in slots(t)},
             "offload": "auto", "autostart": False,
             "login_user": "admin" if t.login else "", "password": secrets.token_urlsafe(12) if t.login else "",
@@ -367,7 +414,7 @@ def answer_keys(t: Template) -> list[str]:
     if t.connects:
         keys.append("server")
     if t.connects == "openwebui":
-        keys.append("comfyui")
+        keys += ["comfyui", "speech"]
     for s in slots(t):
         keys += [f"{s.key}_file", f"{s.key}_ctx"]
     if slots(t):
@@ -412,7 +459,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
             raise ConfigError(f"an instance called '{cid}' already exists (it would be {t.title}'s {c.default_name})")
         requires.append(cid)
 
-    env = dict(t.env)
+    env = dict(t.env) | {k: secrets.token_urlsafe(24) for k in t.secrets}
     if t.login:
         user, password = str(a.get("login_user", "")).strip(), str(a.get("password", "")).strip()
         if not user or len(password) < 8:
@@ -660,6 +707,16 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
         if info.get("embed"):                  # documents are embedded by the model server, not on Open WebUI's CPU
             env |= {"RAG_EMBEDDING_ENGINE": "openai", "RAG_OPENAI_API_BASE_URL": _server_url(server, m),
                     "RAG_OPENAI_API_KEY": info["api_key"], "RAG_EMBEDDING_MODEL": info["embed"]}
+    speech = str(a.get("speech", "")).strip()
+    if speech:
+        if speech not in speech_servers(m):
+            raise ConfigError(f"no Speaches instance '{speech}'")
+        ports = m.instances[speech].ports
+        url = f"http://{speech}:{ports[0].container if ports else 8000}/v1"
+        key = m.instances[speech].env.get("API_KEY") or "none"
+        env |= {"AUDIO_STT_ENGINE": "openai", "AUDIO_STT_OPENAI_API_BASE_URL": url, "AUDIO_STT_OPENAI_API_KEY": key,
+                "AUDIO_STT_MODEL": STT_MODEL, "AUDIO_TTS_ENGINE": "openai", "AUDIO_TTS_OPENAI_API_BASE_URL": url,
+                "AUDIO_TTS_OPENAI_API_KEY": key, "AUDIO_TTS_MODEL": TTS_MODEL, "AUDIO_TTS_VOICE": TTS_VOICE}
     comfy = str(a.get("comfyui", "")).strip()
     if comfy:
         if comfy not in m.instances:
@@ -669,6 +726,11 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
         env |= {"ENABLE_IMAGE_GENERATION": "true", "IMAGE_GENERATION_ENGINE": "comfyui",
                 "COMFYUI_BASE_URL": f"http://{comfy}:{port}"}
     return env
+
+
+def speech_servers(m: Machine) -> dict[str, str]:
+    """Speaches instances an app can use for voice: id -> name."""
+    return {i.id: i.name for i in m.instances.values() if matches(get("speaches"), i)}
 
 
 def slots(t: Template) -> tuple[ModelSlot, ...]:

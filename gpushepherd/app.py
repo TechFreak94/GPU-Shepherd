@@ -483,6 +483,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
                     servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
+                    speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
                     no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
@@ -532,7 +533,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), str(err), "error")
         slot_fields = [f"{x.key}_{part}" for x in tpl.slots(t) for part in ("file", "ctx")]
         f = {k: str(raw.get(k, "")) for k in ["name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
-                                              "comfyui", "offload", "login_user", "password", "hass_url",
+                                              "comfyui", "speech", "offload", "login_user", "password", "hass_url",
                                               "hass_token", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
         then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None

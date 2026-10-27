@@ -120,6 +120,12 @@
           {% for id, name in comfy %}<option value="{{ id }}" {{ "selected" if f.comfyui == id }}>{{ name }} ({{ id }})</option>{% endfor %}
         </select>
         <div class="hint">Pick your ComfyUI instance to generate images from the chat.</div></div>
+      <div><label for="speech">Voice with</label>
+        <select id="speech" name="speech">
+          <option value="">Nothing (no voice input or read-aloud)</option>
+          {% for id, name in speech %}<option value="{{ id }}" {{ "selected" if f.speech == id }}>{{ name }} ({{ id }})</option>{% endfor %}
+        </select>
+        <div class="hint">{% if speech %}Pick your Speaches instance to talk to the chat and have answers read aloud.{% else %}Install Speaches from the App Store first to talk to the chat.{% endif %}</div></div>
       {% endif %}
     </div>
     <div class="subsection" data-server="{{ new_server }}">

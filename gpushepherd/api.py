@@ -196,6 +196,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             if t.connects else {},
             "comfyui": {i.id: i.name for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"}
             if t.connects == "openwebui" else {},
+            "speech": tpl.speech_servers(m) if t.connects == "openwebui" else {},
             "model_slots": {f"{s.key}_file": s.label for s in tpl.slots(t)},
         }
         return out
