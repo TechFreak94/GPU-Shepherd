@@ -48,6 +48,13 @@
     hx-confirm="Make a new API token? Scripts using the old one stop working until you give them the new one.">Make a new token</button></div>
 </div>
 
+<h3>Storage</h3>
+<div class="card">
+  <p class="small" style="margin-top:0">See how much room your disks, models and app images take, clean up what you no longer use,
+    and restore things you deleted from the trash.</p>
+  <div class="actions"><a href="/storage">Open Storage ›</a></div>
+</div>
+
 <h3>Updates</h3>
 <div class="card" id="updates" hx-get="/ui/update/card" hx-trigger="every 10s, refresh from:body">
   {% include "partials/update_card.html" %}

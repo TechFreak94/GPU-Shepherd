@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Storage · GPU Shepherd{% endblock %}
+{% block content %}
+<div class="pagehead"><h1>Storage</h1></div>
+
+<h3>Disks</h3>
+<div class="card">
+  {% for d in st.disks %}
+  {% set used = ((d.total - d.free) / d.total * 100) if d.total else 0 %}
+  <div{% if not loop.first %} style="margin-top:12px"{% endif %}>
+    <div class="row"><span class="mono">{{ d.path }}</span>
+      <span>{{ d.free|gb }} free of {{ d.total|gb }}{% if d.low %} <span class="tag warn">LOW</span>{% endif %}</span></div>
+    <div class="meter" role="img" aria-label="{{ used|round|int }}% used"><i class="{{ 'full' if d.low else 'high' if used > 85 else '' }}" style="width: {{ used }}%"></i></div>
+  </div>
+  {% else %}<p class="muted small" style="margin:0">No disks to show.</p>{% endfor %}
+</div>
+
+<h3>Folders</h3>
+<div class="card">
+  {% if st.folders %}
+  <table class="table">
+    <tr><th>Folder</th><th>Where</th><th>Size</th></tr>
+    {% for f in st.folders %}
+    <tr><td>{{ f.label }}</td><td class="mono">{{ f.path }}</td>
+      <td>{% if f.size is none %}<span class="muted">not visible to GPU Shepherd</span>{% else %}{{ f.size|gb }}{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted small" style="margin:0">No folders to show.</p>{% endif %}
+  {% if st.hidden %}
+  <p class="small muted" style="margin-bottom:0">GPU Shepherd can't see {% for p in st.hidden %}<span class="mono">{{ p }}</span>{{ ", " if not loop.last }}{% endfor %},
+    so it can't count or clean up what is in {{ "it" if st.hidden|length == 1 else "them" }}. Mount {{ "it" if st.hidden|length == 1 else "them" }} into the
+    GPU Shepherd container at the same path to include {{ "it" if st.hidden|length == 1 else "them" }} here.</p>
+  {% endif %}
+</div>
+
+<h3>App images</h3>
+<div class="card">
+  {% if st.images %}
+  <table class="table">
+    <tr><th>Image</th><th>Size</th><th>Used by</th></tr>
+    {% for i in st.images %}
+    <tr><td class="mono">{{ i.image }}</td><td>{{ i.size|gb }}</td>
+      <td>{% if i.used_by %}{{ i.used_by|join(", ") }}{% else %}<span class="muted">nothing</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted small" style="margin:0">No app images are downloaded yet.</p>{% endif %}
+  {% if st.images|selectattr("used_by", "equalto", [])|list %}
+  <p class="small muted">Images no app uses can go. They download again if an app needs them.</p>
+  <div class="actions"><button type="button" hx-post="/storage/images/remove-unused"
+    hx-confirm="Remove the app images nothing uses? They download again if an app needs them.">Remove unused images</button></div>
+  {% endif %}
+</div>
+
+<h3>Worth a look</h3>
+{% set why = {"unused": "in no model list", "partial": "unfinished download", "duplicate": "same file as another"} %}
+<div class="card">
+  {% if not (st.files or st.leftover_folders or st.orphans) %}
+  <p class="muted small" style="margin:0">Nothing to clean up. Every file belongs to an app and nothing is left over.</p>
+  {% endif %}
+  {% if st.files %}
+  <form hx-post="/storage/files/trash">
+    <strong>Files</strong>
+    <p class="small muted" style="margin:4px 0 0">Moving them to the trash frees nothing yet. You can restore them until the trash is emptied.</p>
+    <table class="table">
+      <tr><th></th><th>File</th><th>Size</th><th>Why</th></tr>
+      {% for f in st.files %}
+      <tr><td><input type="checkbox" name="path" value="{{ f.path }}" aria-label="Select {{ f.path }}"></td>
+        <td class="mono">{{ f.path }}</td><td>{{ f.size|gb }}</td><td><span class="tag">{{ why.get(f.why, f.why) }}</span></td></tr>
+      {% endfor %}
+    </table>
+    <div class="actions"><button type="submit">Move to trash</button></div>
+  </form>
+  {% endif %}
+  {% if st.leftover_folders %}
+  <strong>App data folders without an app</strong>
+  <table class="table">
+    {% for f in st.leftover_folders %}
+    <tr><td>{{ f.label }}</td><td class="mono">{{ f.path }}</td><td>{{ f.size|gb }}</td>
+      <td><button type="button" class="small" hx-post="/storage/leftover/trash" hx-vals='{{ {"name": f.label}|tojson }}'>Move to trash</button></td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if st.orphans %}
+  <strong>Containers without an app</strong>
+  <p class="small" style="margin:4px 0">{% for n in st.orphans %}<span class="mono">{{ n }}</span>{{ ", " if not loop.last }}{% endfor %}</p>
+  <div class="actions"><button type="button" hx-post="/storage/orphans/remove"
+    hx-confirm="Remove these containers? Their data folders are not touched.">Remove</button></div>
+  {% endif %}
+</div>
+
+<h3>Trash</h3>
+<div class="card">
+  {% if st.trash %}
+  <table class="table">
+    <tr><th>Item</th><th>Size</th><th>Deleted</th><th></th></tr>
+    {% for e in st.trash %}
+    <tr><td>{{ e.title }}</td><td>{{ e.size|gb }}</td>
+      <td>{% if e.age_days == 0 %}today{% else %}{{ e.age_days }} day{{ "s" if e.age_days != 1 }} ago{% endif %}</td>
+      <td><div class="actions" style="margin:0">
+        <button type="button" class="small" hx-post="/storage/trash/restore" hx-vals='{{ {"id": e.id}|tojson }}'>Restore</button>
+        <button type="button" class="small danger" hx-post="/storage/trash/purge" hx-vals='{{ {"id": e.id}|tojson }}'
+          hx-confirm="Delete {{ e.title }} for good? This can't be undone.">Delete for good</button></div></td></tr>
+    {% endfor %}
+  </table>
+  <div class="actions"><button type="button" class="danger" hx-post="/storage/trash/purge"
+    hx-confirm="Empty the trash? Everything in it is deleted for good.">Empty trash</button></div>
+  {% else %}<p class="muted small" style="margin:0">The trash is empty.</p>{% endif %}
+  <form hx-post="/storage/trash/days" style="margin-top:12px">
+    <div class="fields"><div><label for="days">Empty items after (days)</label>
+      <input type="number" id="days" name="days" min="0" value="{{ st.trash_days }}">
+      <div class="hint">0 = keep until I empty it.</div></div></div>
+    <div class="actions"><button type="submit">Save</button></div>
+  </form>
+</div>
+{% endblock %}

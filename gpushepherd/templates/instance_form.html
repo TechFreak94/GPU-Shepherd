@@ -123,7 +123,7 @@
 
   <div class="actions">
     {% if editing %}<button type="button" class="danger" hx-post="/instances/{{ f.id }}/delete"
-      hx-confirm="Delete {{ f.name }}? Its container is removed; folders on disk are kept.">Delete</button>{% endif %}
+      hx-confirm="Delete {{ f.name }}? It is stopped and moved to the trash together with its app data folder. You can restore it from Settings > Storage.">Delete</button>{% endif %}
     <a class="btn" href="/">Cancel</a>
     <button class="primary" type="submit">{{ "Install " ~ app_t.title if app_t else "Save" }}</button>
   </div>

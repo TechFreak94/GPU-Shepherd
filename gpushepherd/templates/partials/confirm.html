@@ -1,7 +1,12 @@
 <div class="dlg-head"><strong id="modal-title">{{ action|capitalize }} {{ name }}?</strong><button data-close-modal>Cancel</button></div>
 <div class="dlg-body">
+  {% if lines %}
   <p>To {{ action }} {{ name }}, GPU Shepherd will:</p>
   <ul>{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>GPU Shepherd can {{ action }} {{ name }}, but there is something to know first.</p>
+  {% endif %}
+  {% if warnings %}<div class="notice busy"><ul>{% for w in warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>{% endif %}
   {% if plan.to_restart %}<p class="small muted">Restarting a model server unloads its current model and cuts off requests in progress.</p>{% endif %}
   <div class="actions">
     <button data-close-modal>Cancel</button>
