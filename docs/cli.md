@@ -150,7 +150,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `apply FILE` | Create or replace an instance from a YAML or JSON file, such as `show`'s output (`-` reads standard input). `--id` gives the ID if the file has none. | Edit, *Any Docker image* |
 | `delete ID` | Delete the instance: its settings, model list and app data folder go to the [trash](advanced.md#storage-and-trash) (model files stay). A running one is stopped first and waits for running work. Asks first; `-y` doesn't. | Delete |
 | `apps` | The App Store's apps and what is installed from each. | App Store |
-| `apps show KEY` | An app, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
+| `apps show KEY` | An app, what it also installs, an `Experimental:` note if it has one, what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
 | `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf` (a suggested model, downloaded for you), `apps install open-webui server=new chat_file=...` (installs an LLM server with it), `apps install librechat` (and its database). | Install |
 | `apps manual KEY [KEY=VALUE...]` | Print the instance an install would make, as YAML, without saving it: edit it and `apply` it. | Manual |
 | `models list SERVER` | A model server's models, which are loaded, and its auto names. | Models |

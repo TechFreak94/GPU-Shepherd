@@ -79,7 +79,7 @@ GPU Shepherd makes one change at a time. Each start, stop, restart, delete and a
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/apps` | The apps: `key`, `title`, `group`, `blurb`, `needs`, `needs_llm_server`, `installed` (instance IDs), `also_installs` (helpers it comes with, e.g. LibreChat's database) and `after_install` (the step left to do in the app itself). |
+| `GET /api/v1/apps` | The apps: `key`, `title`, `group`, `blurb`, `needs`, `needs_llm_server`, `installed` (instance IDs), `also_installs` (helpers it comes with, e.g. LibreChat's database), `after_install` (the step left to do in the app itself) and `experimental` (why it is marked Experimental, empty otherwise). |
 | `GET /api/v1/apps/{key}` | One app, the `answers` its install form starts with, and the `choices` for `gpu`, `offload`, `server`, `comfyui` and the model files. |
 | `POST /api/v1/apps/{key}/install` | Install it (`201`). The body holds only the answers that differ from the defaults, e.g. `{"gpu": "pin:1", "port": 8189}` or `{"chat_file": "Qwen3-8B-Q4_K_M.gguf"}`. For apps that use a model server, `"server": "new"` installs an LLM server with it. Answers `instance`, `models`, `llm_server` (the one installed with it), `companions` (helper instances installed with it) and `downloads` (suggested models it started downloading). |
 | `POST /api/v1/apps/{key}/instance` | The instance an install would make, without saving it (*Manual*): change it and `PUT` it. |
