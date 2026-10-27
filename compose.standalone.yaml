@@ -27,6 +27,10 @@
 # Go back:  set SHEPHERD_VERSION to the release you had, then  sudo docker compose up -d
 # Your instances keep running while GPU Shepherd restarts. The dashboard's Update button and the
 # daily update check need a clone with install.sh / update.sh; this way you update with the above.
+#
+# Remote access (optional): install Tailscale on this machine (https://tailscale.com/download) and
+# run  sudo tailscale up . The dashboard and apps then answer on its Tailscale address too, and
+#   sudo tailscale serve --bg --https=443 http://127.0.0.1:8090   adds HTTPS for the dashboard.
 services:
   gpu-shepherd:
     image: ghcr.io/techfreak94/gpu-shepherd:${SHEPHERD_VERSION:-latest}

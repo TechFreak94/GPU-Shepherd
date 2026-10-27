@@ -33,6 +33,9 @@ It is safe to re-run: it only does what is still missing and keeps an existing `
 | `--no-docker-group` | Don't add you to the `docker` group (then `docker` needs sudo). |
 | `--dashboard-updates` | Set up the service behind the dashboard's Update button (see [below](#updating-from-the-dashboard)). |
 | `--no-dashboard-updates` | Don't offer it. |
+| `--tailscale` | Install [Tailscale](https://tailscale.com) and join this machine to your tailnet, so the dashboard and apps are reachable from your other devices without opening ports. Logs in with a link it prints, or with an auth key: `sudo TS_AUTHKEY=tskey-... ./install.sh --tailscale` (the key is never saved). Off by default. On WSL2, install Tailscale for Windows instead. |
+| `--tailscale-https` | With `--tailscale`, also serve the dashboard at `https://<machine>.<tailnet>.ts.net` (turn on HTTPS certificates in Tailscale's admin console first). |
+| `--no-tailscale` | Don't offer it. |
 | `--no-start` | Prepare everything but don't start GPU Shepherd. |
 | `--update [OPTIONS]` | Run `./update.sh` with the options that follow, instead of installing. |
 | `-y`, `--yes` | Ask nothing: defaults for everything no option sets. With `--yes`, a preset, the model download and dashboard updates only happen when their option is given. |
