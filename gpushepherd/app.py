@@ -171,6 +171,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # everything the dashboard changes goes through the same calls as the JSON API and the command
     svc = Shepherd(store, engine, jobs, llama_client, loading=app.state.loading)
     app.state.svc = svc
+    try:
+        svc.trash.purge_older(store.settings().trash_days)
+    except Exception as err:  # noqa: BLE001 - never worth not starting for
+        log.warning("could not empty old trash entries: %s", err)
     if preset:
         try:
             first_run.download(preset, svc.downloads)

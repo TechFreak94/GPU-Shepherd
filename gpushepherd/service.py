@@ -19,14 +19,15 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from . import app_updates, auth, host, instance_templates as tpl, model_library, updates
-from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Store, VolumeMap,
-                     friendly_errors)
+from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
+                     VolumeMap, friendly_errors)
 from .connectors import llamaswap
 from .backend import BackendError
 from .downloads import Downloads
 from .engine import Engine
 from .jobs import Busy, Job, JobRunner
 from .scheduler import Plan
+from .trash import Trash
 
 log = logging.getLogger("gpushepherd")
 ACTIONS = ("start", "stop", "restart")
@@ -97,10 +98,13 @@ class Shepherd:
     llama_client: object                # iid -> llama-swap client (a stand-in in demo mode)
     loading: dict[str, set[str]] = field(default_factory=dict)   # model server -> models loading
     downloads: Downloads | None = None
+    trash: Trash | None = None
 
     def __post_init__(self):
         if self.downloads is None:
             self.downloads = Downloads(self.backend, self.store.settings().container_prefix)
+        if self.trash is None:
+            self.trash = Trash(self.store.root)
 
     @property
     def backend(self):
@@ -187,12 +191,112 @@ class Shepherd:
         return f"Saved {inst.name}.{note}"
 
     def delete_instance(self, iid: str) -> str:
+        """Stop an instance the normal way and move it, with its app data folder and the helpers
+        that only it uses (its database), to the trash. A running instance is deleted in the
+        background, once its running work finishes."""
         inst = self.instance(iid)
+        instances, _ = self.store.instances()
+        others = [i for i in instances.values() if i.id != iid and iid in i.requires]
+        if others:
+            raise Problem(f"{others[0].name} needs {inst.name}: delete {others[0].name} first.", status=409)
+        ids = [iid] + self.own_helpers(inst, instances)
+        st = self.backend.states().get(iid)
+        running = bool(st and st.running)
         try:
-            self.jobs.submit(f"Deleting {inst.name}", lambda logf: self.engine.remove_instance(iid, logf), wait=True)
+            job = self.jobs.submit(f"Deleting {inst.name}", lambda job: self._delete(ids, job), wait=not running)
         except Busy as err:
             raise Problem(str(err), "warn", 409) from err
-        return f"Deleted {inst.name}."
+        if job.status == "failed":
+            raise Problem(f"Could not delete {inst.name}: {job.error}", status=500)
+        extra = f" (with {', '.join(instances[i].name for i in ids[1:])})" if ids[1:] else ""
+        if running:
+            return f"Deleting {inst.name}{extra}: it stops once its running work finishes, then goes to the trash."
+        return f"Deleted {inst.name}{extra}. It is in the trash (Settings, Storage) if you need it back."
+
+    @staticmethod
+    def own_helpers(inst: Instance, instances: dict[str, Instance]) -> list[str]:
+        """The helper instances an app installed with itself (its database) that nothing else uses."""
+        out = []
+        for r in inst.requires:
+            c = instances.get(r)
+            used = any(r in o.requires for o in instances.values() if o.id != inst.id)
+            if c and not used and r.startswith(f"{inst.id}-") and c.app:
+                out.append(r)
+        return out
+
+    def _delete(self, ids: list[str], job: Job) -> None:
+        instances, _ = self.store.instances()
+        self.engine.remove_containers(ids, job, job)
+        paths = self.instance_files(ids, instances)
+        entry = self.trash.put(", ".join(instances[i].name for i in ids if i in instances), ids, paths)
+        kept = [i.original for i in entry.items if not i.stored]
+        job(f"Moved {len(entry.items) - len(kept)} item(s) to the trash")
+        for k in kept:
+            job(f"Left {k} where it is (it could not be moved to the trash)")
+        for iid in ids:               # whatever could not be moved must not stay behind as an instance
+            self.store.delete_instance(iid)
+        self.trash.purge_older(self.store.settings().trash_days)
+
+    def instance_files(self, ids: list[str], instances: dict[str, Instance]) -> list[Path]:
+        """What deleting these instances removes: their YAML and model list (with the .prev copies),
+        generated files, and app data folders (appdata/<folder>) no other instance uses."""
+        root = self.store.root
+        paths = []
+        for iid in ids:
+            for p in (self.store.instance_path(iid), self.store.catalog_path(iid)):
+                paths += [p, p.with_suffix(p.suffix + ".prev")]
+            paths.append(root / "generated" / iid)
+        appdata = root / "appdata"
+
+        def tops(inst: Instance) -> set[Path]:
+            out = set()
+            for v in inst.volumes:
+                host = Path(v.host)
+                if host.is_relative_to(appdata) and host != appdata:
+                    out.add(appdata / host.relative_to(appdata).parts[0])
+            return out
+        kept = set().union(*(tops(i) for i in instances.values() if i.id not in ids))
+        mine = set().union(*(tops(instances[i]) for i in ids if i in instances))
+        return paths + sorted(mine - kept)
+
+    # ------------------------------------------------------------------ trash
+    def trash_entries(self) -> list:
+        self.trash.purge_older(self.store.settings().trash_days)
+        return self.trash.entries()
+
+    def restore_trash(self, eid: str) -> str:
+        try:
+            e = self.trash.restore(eid)
+        except KeyError as err:
+            raise Problem(str(err).strip("'\""), status=404) from err
+        except FileExistsError as err:
+            raise Problem(f"Can't put it back: {err}. Rename or delete that first.", status=409) from err
+        except OSError as err:
+            raise Problem(f"Could not put it back: {err}", status=500) from err
+        return f"Put {e.title} back." + (" Start it from the dashboard when you want it." if e.instances else "")
+
+    def purge_trash(self, eid: str = "") -> str:
+        """Delete one trash entry for good, or all of them ("")."""
+        ids = [eid] if eid else [e.id for e in self.trash.entries(sizes=False)]
+        freed = 0
+        for i in ids:
+            try:
+                freed += sum(e.size for e in self.trash.entries() if e.id == i)
+                self.trash.purge(i)
+            except KeyError as err:
+                raise Problem(str(err).strip("'\""), status=404) from err
+            except OSError as err:
+                raise Problem(f"Could not delete everything: {err}", status=500) from err
+        if not ids:
+            return "The trash is already empty."
+        return f"Deleted {'everything in the trash' if not eid else 'it'} for good, freeing {gb(freed)}."
+
+    @checked
+    def set_trash_days(self, days: int) -> str:
+        s = self.store.settings()
+        s.trash_days = days
+        self.store.save_settings(Settings.model_validate(s.model_dump()))
+        return f"The trash empties things after {days} days." if days else "The trash keeps things until you empty it."
 
     # ------------------------------------------------------------------ App Store
     def machine(self) -> tpl.Machine:
@@ -659,6 +763,13 @@ class Shepherd:
             raise Problem(str(err)) from err
         log.info("update: GitHub token %s", "removal requested" if clear else "handed to the host")
         return "Token removed." if clear else "Token saved; checking for updates with it."
+
+
+def gb(n: int | float) -> str:
+    """Bytes as a short size, e.g. 3.2 GB or 140 MB."""
+    if n >= 1e9:
+        return f"{n / 1e9:.1f} GB"
+    return f"{n / 1e6:.0f} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
 
 
 def parse_auto_rules(text: str) -> list[AutoRule]:

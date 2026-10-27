@@ -284,7 +284,7 @@ def cmd_set(args, c: Client) -> int:
 
 
 def cmd_delete(args, c: Client) -> int:
-    if not (args.yes or ask(f"Delete {args.id}? Its container is removed; its folders on disk are kept.")):
+    if not (args.yes or ask(f"Delete {args.id}? It is stopped and moved to the trash with its app data folder.")):
         print("Nothing deleted. Add -y to delete without asking.")
         return 1
     out(args, c.call("DELETE", f"/api/v1/instances/{args.id}"))

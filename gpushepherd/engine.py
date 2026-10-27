@@ -159,11 +159,16 @@ class Engine:
         self.store.save_catalog(catalog)
         return catalog
 
-    def remove_instance(self, iid: str, log) -> None:
-        log(f"Removing the container for {iid}")
-        self.backend.remove(self.container_name(iid))
-        self.store.delete_instance(iid)
-        log("Instance deleted (its volumes on disk were not touched).")
+    def remove_containers(self, ids: list[str], log, job=None) -> None:
+        """Stop the first instance the normal way (waiting for running work, like Stop; the
+        instances it requires stop with it), then remove all their containers. Raises
+        jobs.Cancelled, having changed nothing, if the wait is called off."""
+        st = self.backend.states().get(ids[0])
+        if st and st.running:
+            self.execute(self.plan("stop", ids[0]), log, job)
+        for iid in ids:
+            log(f"Removing the container for {iid}")
+            self.backend.remove(self.container_name(iid))
 
     # ------------------------------------------------------------------ llama-swap helpers
     def llama_client(self, iid: str) -> llamaswap.LlamaSwapClient:
