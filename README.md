@@ -95,6 +95,17 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Quick start
 
+### Minimum requirements
+
+| | Minimum |
+| :- | :- |
+| CPU | x86-64, 4 cores |
+| RAM | 32 GB (64 GB recommended for the largest models, which keep most of their layers in system RAM) |
+| Storage | 128 GB free for models and app data; an SSD is highly preferred |
+| GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+) |
+
+Less may run, but isn't supported: with under 32 GB of RAM, plan on models that fit in GPU memory.
+
 ### Linux: guided install
 
 On Ubuntu, Debian, Fedora, RHEL-family (Rocky, Alma) or Arch with an NVIDIA GPU, and WSL2
@@ -116,9 +127,6 @@ It is safe to re-run. For scripted installs every question has an option, and `-
 rest; see [CLI and scripts](docs/cli.md#installsh).
 
 On Proxmox, TrueNAS SCALE or Unraid, see [Proxmox](docs/proxmox.md), [TrueNAS SCALE](docs/truenas.md) or [Unraid](docs/unraid.md).
-
-RAM: with less than 32 GB, plan on models that fit in GPU memory. 64 GB is recommended for the
-largest models (Qwen3 Coder Next is ~49 GB at Q4).
 
 ### By hand
 

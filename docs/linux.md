@@ -4,6 +4,8 @@
 The others were checked in distro containers (detection and package commands), so reports from real
 machines are welcome.
 
+The machine itself should meet the [minimum requirements](../README.md#minimum-requirements).
+
 | Distribution | Versions | Docker | NVIDIA Container Toolkit | `--install-driver` |
 |---|---|---|---|---|
 | Ubuntu, and Ubuntu-based distros | 24.04, 26.04 | Ubuntu's packages (`docker.io`, `docker-compose-v2`) | NVIDIA's apt repository | `ubuntu-drivers install` |
