@@ -87,6 +87,8 @@ class Backend(Protocol):
     def helpers(self, kind: str) -> dict[str, "HelperState"]: ...
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
                  user: str | None = None) -> str: ...
+    def images(self, refs: list[str]) -> dict[str, int]: ...
+    def remove_image(self, ref: str) -> None: ...
     def ping(self) -> str: ...
 
 
@@ -361,6 +363,26 @@ class DockerBackend:
         except self._errors.APIError as err:
             raise BackendError(err.explanation or str(err)) from err
 
+    def images(self, refs: list[str]) -> dict[str, int]:
+        """The images among `refs` that are on this machine, with their size in bytes."""
+        out = {}
+        for ref in refs:
+            try:
+                out[ref] = int(self.api.inspect_image(ref).get("Size") or 0)
+            except self._errors.APIError:
+                continue        # not here (or Docker is down)
+        return out
+
+    def remove_image(self, ref: str) -> None:
+        try:
+            self.api.remove_image(ref)
+        except self._errors.NotFound:
+            pass
+        except self._errors.APIError as err:
+            if err.status_code == 409:
+                raise BackendError(f"{ref} is still used by a container") from err
+            raise BackendError(err.explanation or str(err)) from err
+
 
 def _ago(since: float) -> str:
     secs = max(int(time.time() - since), 0)
@@ -384,6 +406,7 @@ class FakeBackend:
         self.helper_seconds = 0.0
         self.helper_exit = 0
         self.tasks: list[tuple[str, list[tuple[str, str, bool]]]] = []   # (script, volumes) of run_task
+        self.present: dict[str, int] = {}     # images "on this machine" -> size
         self._lock = threading.Lock()
 
     def ping(self) -> str:
@@ -450,6 +473,15 @@ class FakeBackend:
         self.tasks.append((script, volumes))
         self.calls.append("task")
         return ""
+
+    def images(self, refs: list[str]) -> dict[str, int]:
+        return {r: self.present[r] for r in refs if r in self.present}
+
+    def remove_image(self, ref: str) -> None:
+        if any(spec.image == ref for spec in self.containers.values()):
+            raise BackendError(f"{ref} is still used by a container")
+        self.present.pop(ref, None)
+        self.calls.append(f"rmi {ref}")
 
     def helpers(self, kind: str) -> dict[str, HelperState]:
         """Demo helpers run for helper_seconds, then exit 0 (or helper_exit)."""

@@ -6,8 +6,11 @@
 Deleting an instance moves its YAML, its model list, its generated files and its app data folder
 (appdata/<folder>, unless another instance still uses it) into one entry. Everything lives in the
 data folder, so moving is a rename: instant, and the space is only freed when the entry is
-emptied. Model files are never put here by a delete. Entries older than the Trash setting's
-number of days are emptied by themselves (0 keeps them until emptied by hand).
+emptied. Model files are never put here by deleting an instance; ones removed from Settings >
+Storage stay on their own disk, in <models folder>/.shepherd-trash/<entry>/, moved by FileOps
+(a helper container where GPU Shepherd can't write the folder), and the entry here records them.
+Entries older than the Trash setting's number of days are emptied by themselves (0 keeps them
+until emptied by hand).
 """
 from __future__ import annotations
 
@@ -28,6 +31,24 @@ DAY = 86400
 class Item:
     original: str            # where it was
     stored: str              # path inside the entry ("" = could not be moved, left where it was)
+    folder: str = ""         # for a model file: its models folder; stored is then an absolute path in it
+
+
+class FileOps:
+    """Moving and deleting in a models folder. This one does it directly; service.py swaps in one
+    that uses a helper container when GPU Shepherd can't write the folder."""
+
+    def move(self, folder: str, pairs: list[tuple[str, str]]) -> None:
+        for src, dst in pairs:
+            Path(dst).parent.mkdir(parents=True, exist_ok=True)
+            os.rename(src, dst)
+
+    def remove(self, folder: str, paths: list[str]) -> None:
+        for p in paths:
+            if Path(p).is_dir() and not Path(p).is_symlink():
+                shutil.rmtree(p)
+            else:
+                Path(p).unlink(missing_ok=True)
 
 
 @dataclass
@@ -45,9 +66,10 @@ class Entry:
 
 
 class Trash:
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, ops: FileOps | None = None):
         self.data = Path(data_dir)
         self.root = self.data / "trash"
+        self.ops = ops or FileOps()
 
     # ------------------------------------------------------------------ putting things in
     def put(self, title: str, instances: list[str], paths: list[Path]) -> Entry:
@@ -69,6 +91,22 @@ class Trash:
         self._save(entry)
         return entry
 
+    def put_files(self, title: str, folder: str, paths: list[str]) -> Entry:
+        """Move files out of the way inside their own models folder (same disk, so instant)."""
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        eid = _free(self.root, f"{stamp}-files")
+        (self.root / eid).mkdir(parents=True)
+        dest = Path(folder) / ".shepherd-trash" / eid
+        pairs = [(p, str(dest / f"{n}-{Path(p).name}")) for n, p in enumerate(paths)]
+        try:
+            self.ops.move(folder, pairs)
+        except Exception:
+            shutil.rmtree(self.root / eid, ignore_errors=True)
+            raise
+        entry = Entry(eid, title, time.time(), [], [Item(src, dst, folder) for src, dst in pairs])
+        self._save(entry)
+        return entry
+
     # ------------------------------------------------------------------ looking
     def entries(self, sizes: bool = True) -> list[Entry]:
         out = []
@@ -77,7 +115,8 @@ class Trash:
         for d in self.root.iterdir():
             e = self._load(d.name)
             if e:
-                e.size = tree_size(d / "files") if sizes else 0
+                if sizes:
+                    e.size = tree_size(d / "files") + sum(tree_size(Path(i.stored)) for i in e.items if i.folder)
                 out.append(e)
         return sorted(out, key=lambda e: e.deleted, reverse=True)
 
@@ -97,14 +136,19 @@ class Trash:
         if clashes:
             raise FileExistsError("something else is there now: " + ", ".join(clashes))
         for i in e.items:
-            if i.stored:
+            if i.stored and not i.folder:
                 Path(i.original).parent.mkdir(parents=True, exist_ok=True)
                 os.rename(base / i.stored, i.original)
+        for folder, items in _by_folder(e).items():
+            self.ops.move(folder, [(i.stored, i.original) for i in items])
+            self.ops.remove(folder, [str(Path(folder) / ".shepherd-trash" / eid)])
         shutil.rmtree(base)
         return e
 
     def purge(self, eid: str) -> Entry:
         e = self.entry(eid)
+        for folder in _by_folder(e):
+            self.ops.remove(folder, [str(Path(folder) / ".shepherd-trash" / eid)])
         shutil.rmtree(self.root / eid)
         return e
 
@@ -126,7 +170,8 @@ class Trash:
     # ------------------------------------------------------------------ files
     def _save(self, e: Entry) -> None:
         data = {"title": e.title, "deleted": e.deleted, "instances": e.instances,
-                "items": [{"original": i.original, "stored": i.stored} for i in e.items]}
+                "items": [{"original": i.original, "stored": i.stored} | ({"folder": i.folder} if i.folder else {})
+                          for i in e.items]}
         (self.root / e.id / "manifest.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     def _load(self, eid: str) -> Entry | None:
@@ -134,7 +179,8 @@ class Trash:
             raw = yaml.safe_load((self.root / eid / "manifest.yaml").read_text(encoding="utf-8")) or {}
             return Entry(eid, str(raw.get("title", eid)), float(raw.get("deleted", 0)),
                          [str(x) for x in raw.get("instances") or []],
-                         [Item(str(i["original"]), str(i.get("stored", ""))) for i in raw.get("items") or []])
+                         [Item(str(i["original"]), str(i.get("stored", "")), str(i.get("folder", "")))
+                          for i in raw.get("items") or []])
         except (OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
             return None
 
@@ -154,6 +200,14 @@ def tree_size(path: Path) -> int:
     except OSError:
         pass
     return total
+
+
+def _by_folder(e: Entry) -> dict[str, list[Item]]:
+    out: dict[str, list[Item]] = {}
+    for i in e.items:
+        if i.folder and i.stored:
+            out.setdefault(i.folder, []).append(i)
+    return out
 
 
 def _free(root: Path, name: str) -> str:

@@ -472,6 +472,60 @@ def cmd_settings(args, c: Client) -> int:
     return 0
 
 
+def cmd_storage(args, c: Client) -> int:
+    a = args.action or "show"
+    if a == "show":
+        def text(s):
+            table([[d["path"], gb(d["free"]), gb(d["total"]), "LOW" if d["low"] else ""] for d in s["disks"]],
+                  ["DISK", "FREE", "SIZE", ""])
+            print()
+            table([[f["label"], f["path"], "not visible" if f["size"] is None else gb(f["size"])] for f in s["folders"]],
+                  ["FOLDER", "PATH", "SIZE"])
+            rows = [[i["image"], gb(i["size"]), ", ".join(i["used_by"]) or "unused"] for i in s["images"]]
+            if rows:
+                print()
+                table(rows, ["IMAGE", "SIZE", "USED BY"])
+            rows = [[f["why"], gb(f["size"]), f["path"]] for f in s["files"]]
+            rows += [["leftover", gb(f["size"]), f["path"]] for f in s["leftover_folders"]]
+            rows += [["container", "-", n] for n in s["orphans"]]
+            if rows:
+                print("\nWorth a look (unused = in no model list, partial = unfinished download):")
+                table(rows, ["WHAT", "SIZE", "PATH"])
+        out(args, c.get("/api/v1/storage"), text)
+    elif a in ("remove-images", "remove-orphans"):
+        out(args, c.post(f"/api/v1/storage/{a.removeprefix('remove-')}"))
+    elif a == "trash-files":
+        if not args.items:
+            raise Failed("which files? e.g. gpu-shepherd storage trash-files /srv/models/old.gguf")
+        out(args, c.call("POST", "/api/v1/storage/files", {"paths": args.items}))
+    elif a == "trash-folder":
+        if len(args.items) != 1:
+            raise Failed("which app data folder? e.g. gpu-shepherd storage trash-folder old-app")
+        out(args, c.call("POST", "/api/v1/storage/leftovers", {"name": args.items[0]}))
+    return 0
+
+
+def cmd_trash(args, c: Client) -> int:
+    a = args.action or "list"
+    if a == "list":
+        out(args, c.get("/api/v1/trash"), lambda rows: table(
+            [[e["id"], e["title"], gb(e["size"]), f"{e['age_days']}d"] for e in rows], ["ID", "WHAT", "SIZE", "AGE"]))
+        return 0
+    if a == "empty":
+        if not (args.yes or ask("Delete everything in the trash for good?")):
+            print("Nothing deleted. Add -y to empty it without asking.")
+            return 1
+        out(args, c.call("DELETE", "/api/v1/trash"))
+        return 0
+    if not args.id:
+        raise Failed(f"which one? e.g. gpu-shepherd trash {a} ID (see gpu-shepherd trash)")
+    if a == "restore":
+        out(args, c.post(f"/api/v1/trash/{args.id}/restore"))
+    else:
+        out(args, c.call("DELETE", f"/api/v1/trash/{args.id}"))
+    return 0
+
+
 def cmd_password(args, c: Client) -> int:
     current = getpass.getpass("Current password: ")
     new = getpass.getpass("New password (10+ characters): ")
@@ -548,7 +602,7 @@ def cmd_token(args, c: Client | None) -> int:
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "models": cmd_models, "jobs": cmd_jobs,
-            "settings": cmd_settings,
+            "settings": cmd_settings, "storage": cmd_storage, "trash": cmd_trash,
             "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
 
 
@@ -572,7 +626,7 @@ def add_commands(sub) -> None:
     p = sub.add_parser("set", help="change an instance's settings: KEY=VALUE, e.g. gpu.mode=elastic autostart=true")
     p.add_argument("id")
     p.add_argument("changes", nargs="+", metavar="KEY=VALUE")
-    p = sub.add_parser("delete", help="delete an instance (its folders on disk are kept)")
+    p = sub.add_parser("delete", help="delete an instance (it goes to the trash with its app data folder)")
     p.add_argument("id")
     p.add_argument("-y", "--yes", action="store_true", help="don't ask")
 
@@ -630,9 +684,18 @@ def add_commands(sub) -> None:
     p = sub.add_parser("jobs", help="recent changes: list, show N, skip N (stop waiting), cancel N")
     p.add_argument("action", nargs="?", choices=("list", "show", "skip", "cancel"))
     p.add_argument("job", nargs="?", type=int)
-    p = sub.add_parser("settings", help="show, or set bind_address=... network=...")
+    p = sub.add_parser("settings", help="show, or set bind_address=... network=... trash_days=...")
     p.add_argument("action", nargs="?", choices=("show", "set"))
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
+    p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
+                                       "trash-folder NAME")
+    p.add_argument("action", nargs="?", choices=("show", "remove-images", "remove-orphans", "trash-files",
+                                                 "trash-folder"))
+    p.add_argument("items", nargs="*")
+    p = sub.add_parser("trash", help="deleted instances and files: list, restore ID, delete ID, empty")
+    p.add_argument("action", nargs="?", choices=("list", "restore", "delete", "empty"))
+    p.add_argument("id", nargs="?")
+    p.add_argument("-y", "--yes", action="store_true", help="empty without asking")
     sub.add_parser("password", help="change the admin password (asks for it)")
     p = sub.add_parser("update", help="status, check, install, log, set-token USER, clear-token")
     p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "set-token", "clear-token"))

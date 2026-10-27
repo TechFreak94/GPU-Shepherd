@@ -297,7 +297,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         s = store.settings()
         return {"admin_user": s.admin_user, "bind_address": s.bind_address, "network": s.network,
                 "container_prefix": s.container_prefix, "data_dir": str(store.root),
-                "host_data_dir": str(engine.host_data_dir)}
+                "host_data_dir": str(engine.host_data_dir), "trash_days": s.trash_days}
 
     @r.get("/api/v1/settings")
     def get_settings():
@@ -307,11 +307,62 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     async def patch_settings(request: Request):
         data = await body(request)
-        unknown = set(data) - {"bind_address", "network"}
+        unknown = set(data) - {"bind_address", "network", "trash_days"}
         if unknown:
             raise Problem(f"unknown or read-only setting(s): {', '.join(sorted(unknown))}")
-        msg = svc.set_containers(data.get("bind_address"), data.get("network"))
-        return {"message": msg, "settings": settings_json()}
+        msgs = []
+        if "trash_days" in data:
+            days = str(data["trash_days"])
+            if not days.isdigit():
+                raise Problem("trash_days must be a whole number of days (0 = keep until emptied)")
+            msgs.append(svc.set_trash_days(int(days)))
+        if {"bind_address", "network"} & set(data):
+            msgs.append(svc.set_containers(data.get("bind_address"), data.get("network")))
+        return {"message": " ".join(msgs), "settings": settings_json()}
+
+    # ------------------------------------------------------------------ storage and trash
+    @r.get("/api/v1/storage")
+    @handle
+    def get_storage(request: Request):
+        return svc.storage()
+
+    @r.post("/api/v1/storage/{what}")
+    @handle
+    async def storage_cleanup(request: Request, what: str):
+        if what == "images":
+            return {"message": svc.remove_unused_images()}
+        if what == "orphans":
+            return {"message": svc.remove_orphans()}
+        if what == "files":
+            data = await body(request)
+            paths = data.get("paths")
+            if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                raise Problem('send {"paths": [...]} with paths the storage report lists')
+            return {"message": svc.trash_files(paths)}
+        if what == "leftovers":
+            data = await body(request)
+            return {"message": svc.trash_leftover(str(data.get("name", "")))}
+        raise Problem("unknown clean-up (images, orphans, files or leftovers)", status=404)
+
+    @r.get("/api/v1/trash")
+    @handle
+    def get_trash(request: Request):
+        return svc.storage()["trash"]
+
+    @r.post("/api/v1/trash/{eid}/restore")
+    @handle
+    def restore_trash(request: Request, eid: str):
+        return {"message": svc.restore_trash(eid)}
+
+    @r.delete("/api/v1/trash/{eid}")
+    @handle
+    def purge_trash_entry(request: Request, eid: str):
+        return {"message": svc.purge_trash(eid)}
+
+    @r.delete("/api/v1/trash")
+    @handle
+    def empty_trash(request: Request):
+        return {"message": svc.purge_trash()}
 
     @r.post("/api/v1/settings/password")
     @handle
