@@ -15,6 +15,7 @@ instances, folders) and gets pydantic objects back.
 """
 from __future__ import annotations
 
+import base64
 import re
 import secrets
 from dataclasses import dataclass, field
@@ -78,6 +79,7 @@ class Template:
     companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
     hidden: bool = False                       # a companion: not offered in the App Store itself
     after_install: str = ""                    # what is left to do in the app itself once it runs
+    experimental: str = ""                     # why it is marked Experimental in the App Store ("" = it isn't)
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -155,6 +157,27 @@ TEMPLATES: tuple[Template, ...] = (
         after_install="Open it and make a workspace to chat in; the model server is already set up. "
                       "It has no login until you set a password under Settings, Security.",
         needs="An LLM server to chat with", docs="https://docs.anythingllm.com/installation-docker/overview"),
+    Template(
+        key="langflow", tag="Agent UI", badge="LF", title="Langflow", group="Chat and agents",
+        blurb="Build chatbots, RAG pipelines and agents by wiring blocks together, running on your own model server.",
+        points=("No GPU needed", "Its own login, and the model server's API key saved in it for you",
+                "You type the model server's address into its OpenAI blocks (steps below)"),
+        default_id="langflow", default_name="Langflow", description="Langflow",
+        image="langflowai/langflow:latest", container_port=7860, host_port=7860, gpu="none",
+        # its database lives inside the container unless told otherwise, and is lost with it
+        env={"LANGFLOW_HOST": "0.0.0.0", "LANGFLOW_PORT": "7860", "LANGFLOW_CONFIG_DIR": "/app/data",
+             "LANGFLOW_DATABASE_URL": "sqlite:////app/data/langflow.db", "LANGFLOW_AUTO_LOGIN": "false",
+             "DO_NOT_TRACK": "true"},
+        login=("LANGFLOW_SUPERUSER", "LANGFLOW_SUPERUSER_PASSWORD"),
+        appdata=(("data", "/app/data"),), data_owner=(1000, 0), connects="langflow",
+        experimental="Each flow picks its own model, so GPU Shepherd can't point Langflow's flows at the "
+                     "model server for you: you type its address into them yourself.",
+        after_install="Log in with the user name and password you chose. In a flow, use the OpenAI block: under "
+                      "its advanced settings set OpenAI API Base to the model server's address (LLM_BASE_URL under "
+                      "Edit on this instance), and type chat (or another name the server answers to) as the Model "
+                      "Name. Its OpenAI API Key is already the server's key. For documents, the OpenAI Embeddings "
+                      "block with the same address and the model embed, if the server has an embeddings model.",
+        needs="An LLM server for its flows to use", docs="https://docs.langflow.org"),
     Template(
         key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
@@ -401,6 +424,8 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         env.update(_hermes(a, m))
     elif t.connects == "librechat":
         env.update(_librechat(a, m, requires))
+    elif t.connects == "langflow":
+        env.update(_langflow(a, m))
 
     inst = Instance(id=iid, name=str(a.get("name", "")).strip() or iid, description=t.description, kind=t.kind,
                     image=t.image, command=list(t.command), env=env,
@@ -537,6 +562,8 @@ def app_env(t: Template, server: str, m: Machine) -> dict[str, str]:
         env |= _hermes(a, m)
     elif t.connects == "librechat" and a["server"]:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
+    elif t.connects == "langflow" and a["server"]:
+        env |= _langflow_server(server, m)
     return env
 
 
@@ -603,6 +630,23 @@ def _librechat(a: dict, m: Machine, requires: list[str]) -> dict[str, str]:
     if server:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
     return env
+
+
+def _langflow(a: dict, m: Machine) -> dict[str, str]:
+    """A fresh key for the secrets it stores (a Fernet key), and the model server."""
+    env = {"LANGFLOW_SECRET_KEY": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()}
+    server = _server(a, m)
+    if server:
+        env |= _langflow_server(server, m)
+    return env
+
+
+def _langflow_server(server: str, m: Machine) -> dict[str, str]:
+    """The server's key, which Langflow saves as its OPENAI_API_KEY variable, and the server's host
+    on its allowlists: Langflow refuses plain-http internal addresses, and sending a key from its
+    environment anywhere but OpenAI, unless the host is listed."""
+    return {"OPENAI_API_KEY": m.servers[server]["api_key"], "LLM_BASE_URL": _server_url(server, m),
+            "LANGFLOW_SSRF_ALLOWED_HOSTS": server, "LANGFLOW_PROVIDER_CREDENTIAL_ALLOWED_HOSTS": f"http://{server}"}
 
 
 def _openwebui(a: dict, m: Machine) -> dict[str, str]:

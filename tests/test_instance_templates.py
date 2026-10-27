@@ -1,4 +1,5 @@
 """The App Store's apps: the built-in templates and what they build."""
+import base64
 import pytest
 
 from gpushepherd import instance_templates as tpl
@@ -162,7 +163,7 @@ def test_installed_counts_older_instances():
            "d": Instance(id="d", name="D", image="x", app="hermes")}
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
-                   "librechat": [], "anythingllm": []}
+                   "librechat": [], "anythingllm": [], "langflow": []}
 
 
 def test_kind_tags():
@@ -207,6 +208,28 @@ def test_librechat():
         tpl.build(t, f, taken)
     with pytest.raises(ConfigError, match="too long"):
         tpl.build(t, f | {"id": "a" * 40}, m)
+
+
+def test_langflow():
+    m, t = server_machine(), tpl.get("langflow")
+    assert t.experimental and "OpenAI API Base" in t.after_install
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["login_user"] == "admin" and len(f["password"]) >= 8
+    inst, _ = tpl.build(t, f, m)
+    assert inst.ports[0].container == 7860 and inst.gpu.mode == "none" and not inst.requires
+    env = inst.env
+    assert env["LANGFLOW_SUPERUSER"] == "admin" and env["LANGFLOW_SUPERUSER_PASSWORD"] == f["password"]
+    assert env["LANGFLOW_AUTO_LOGIN"] == "false" and env["LANGFLOW_DATABASE_URL"] == "sqlite:////app/data/langflow.db"
+    assert env["OPENAI_API_KEY"] == "sk-abc" and env["LLM_BASE_URL"] == "http://llm:8080/v1"
+    assert env["LANGFLOW_SSRF_ALLOWED_HOSTS"] == "llm" and env["LANGFLOW_PROVIDER_CREDENTIAL_ALLOWED_HOSTS"] == "http://llm"
+    assert len(base64.urlsafe_b64decode(env["LANGFLOW_SECRET_KEY"])) == 32          # a Fernet key
+    assert {v.container: v.host for v in inst.volumes} == {"/app/data": "/a/langflow/data"}
+    assert tpl.seed_files(t, f, m) == {}
+    assert tpl.connected_server(inst, m) == "llm"
+    want = tpl.app_env(t, "llm", m)
+    assert want["LANGFLOW_SSRF_ALLOWED_HOSTS"] == "llm" and "LANGFLOW_SECRET_KEY" not in want
+    bare = tpl.build(t, f | {"server": ""}, m)[0].env
+    assert "OPENAI_API_KEY" not in bare and "LANGFLOW_SSRF_ALLOWED_HOSTS" not in bare
 
 
 def test_anythingllm():

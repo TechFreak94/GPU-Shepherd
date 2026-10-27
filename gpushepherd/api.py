@@ -162,7 +162,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return {"key": t.key, "title": t.title, "group": t.group, "blurb": t.blurb, "points": list(t.points),
                 "kind": t.kind, "image": t.image, "gpu": t.gpu, "needs": t.needs, "docs": t.docs,
                 "needs_llm_server": bool(t.connects), "installed": [i.id for i in installed],
-                "also_installs": [tpl.get(c).title for c in t.companions], "after_install": t.after_install}
+                "also_installs": [tpl.get(c).title for c in t.companions], "after_install": t.after_install,
+                "experimental": t.experimental}
 
     @r.get("/api/v1/apps")
     def list_apps():
