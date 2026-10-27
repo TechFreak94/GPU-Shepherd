@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.6 - 2026-10-27
+
+- README: minimum system requirements. (#33)
+- Docs: storage, trash and app updates, with new screenshots. (#33)
+
 ## 0.13.5 - 2026-10-27
 
 - New: install with Docker Compose from a published image, no clone needed (`compose.standalone.yaml`). It sets up the Starter preset on the first start. (#32)
