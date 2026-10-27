@@ -52,7 +52,7 @@ always need the token, so another web page can't make your browser change anythi
 | `GET /api/v1/instances` | Every instance: its settings plus `state` (`running`, `status`, `status_text`, `gpus`, `container`, `restart_needed`). |
 | `GET /api/v1/instances/{id}` | One instance, the same way. |
 | `PUT /api/v1/instances/{id}` | Create (`201`) or replace (`200`) an instance. The body is the whole instance, as `GET` returns it (`state` is ignored) or as in `instances/<id>.yaml`; `id` defaults to the one in the address and `name` to the ID. To change one field, `GET`, change it and `PUT` it back. |
-| `DELETE /api/v1/instances/{id}` | Delete it and its container; its folders on disk are kept. |
+| `DELETE /api/v1/instances/{id}` | Delete it: stop it (a running one waits for its work to finish, in the background) and move its settings, model list and app data folder, plus a helper only it uses (LibreChat's database), to the [trash](#storage-and-trash). `409` while another instance needs it. Model files are never touched. |
 | `POST /api/v1/instances/{id}/start` | Start it. Also `/stop` and `/restart`. Body (optional): `{"confirm": true}`. |
 | `GET /api/v1/instances/{id}/logs` | `{"logs": "..."}`, the container's log. |
 
@@ -113,12 +113,36 @@ For instances of kind `llama-swap`.
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`. |
-| `PATCH /api/v1/settings` | Change `bind_address` and/or `network` (the others are YAML only). |
+| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`. |
+| `PATCH /api/v1/settings` | Change `bind_address`, `network` and/or `trash_days` (the others are YAML only). |
 | `POST /api/v1/settings/password` | `{"current": "...", "new": "..."}` (10+ characters). |
 | `POST /api/v1/token` | Make a new API token and answer it as `token`; the one used for this request stops working. |
 
 The theme is not here: it is saved per browser.
+
+## Storage and trash
+
+Deleting an instance or cleaning up a file moves it to the trash first, so it can be put back.
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/storage` | Free space per `disks`, the `folders` and their sizes, app `images` and what uses them, `files` worth a look (`why`: `unused`, `partial` or `duplicate`), `leftover_folders`, `orphans` (containers without an instance) and the `trash`. |
+| `POST /api/v1/storage/images` | Remove the app images no instance uses (they download again when needed). |
+| `POST /api/v1/storage/orphans` | Remove containers left without an instance. Their data folders are not touched. |
+| `POST /api/v1/storage/files` | `{"paths": [...]}`: move model files from `files` to the trash. |
+| `POST /api/v1/storage/leftovers` | `{"name": "..."}`: move an unused app data folder from `leftover_folders` to the trash. |
+| `GET /api/v1/trash` | What is in it: `id`, `title`, `size`, `age_days`. |
+| `POST /api/v1/trash/{id}/restore` | Put it back (`409` if something is in its place). |
+| `DELETE /api/v1/trash/{id}` | Delete one entry for good. `DELETE /api/v1/trash` empties the trash. |
+
+## App updates
+
+Settings that an app's template gained after it was installed (the dashboard's *App updates* banner).
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/app-updates` | A list of `instance`, `key`, `title`, `changes` and `afterwards` (what is left for you to do). |
+| `POST /api/v1/app-updates/{id}/{key}/apply` | Apply it. `/skip` stops it being offered again. |
 
 ## Updates
 

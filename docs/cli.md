@@ -148,7 +148,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `show ID` | The instance's settings as YAML, the same as `instances/<id>.yaml`. | Edit |
 | `set ID KEY=VALUE...` | Change settings, by the YAML keys in [Instance options](advanced.md#instances): `name=`, `image=`, `autostart=true`, `gpu.mode=elastic`, `gpu.gpus=0,1`, `gpu.priority=70`, `drain.timeout=300`, `open_port=`, ... `ports`, `volumes` and `env` take the editor's lines, separated by `;`: `ports=8188:8188;9000:9000/udp`, `volumes=/srv/x:/data:ro`, `env=A=1;B=2`. `command` takes a command line. An empty value clears an optional field. | Edit, Save |
 | `apply FILE` | Create or replace an instance from a YAML or JSON file, such as `show`'s output (`-` reads standard input). `--id` gives the ID if the file has none. | Edit, *Any Docker image* |
-| `delete ID` | Delete the instance and its container; folders on disk are kept. Asks first; `-y` doesn't. | Delete |
+| `delete ID` | Delete the instance: its settings, model list and app data folder go to the [trash](advanced.md#storage-and-trash) (model files stay). A running one is stopped first and waits for running work. Asks first; `-y` doesn't. | Delete |
 | `apps` | The App Store's apps and what is installed from each. | App Store |
 | `apps show KEY` | An app, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
 | `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf` (a suggested model, downloaded for you), `apps install open-webui server=new chat_file=...` (installs an LLM server with it), `apps install librechat` (and its database). | Install |
@@ -165,10 +165,13 @@ theme is the one exception: it is a choice saved in each browser.
 | `models auto-set SERVER ALIAS DEFAULT [N=MODEL...]` | Add or replace an auto name: `models auto-set llm coder small-coder 2=big-coder`. | Models › Auto names |
 | `models auto-delete SERVER ALIAS` | Remove an auto name. | Models › Auto names |
 | `models settings SERVER [KEY=VALUE...]` | Show or change `threads`, `health_timeout` and `llama_server`. `--new-api-key` gives the server a new API key. | Models › Server settings |
+| `app-updates` | Settings added to installed apps since you installed them. `app-updates apply INSTANCE KEY` (or `--all`) applies one, `app-updates skip INSTANCE KEY` stops it being offered. | App updates banner |
+| `storage` | Free space per disk, folder sizes, app images and what looks unused. `storage remove-images` and `remove-orphans` clean up; `storage trash-files PATH...` and `trash-folder NAME` move unused model files or an app data folder to the trash. | Storage |
+| `trash`, `trash restore ID`, `trash delete ID`, `trash empty` | What is in the trash, put one back, delete one for good, empty it (`-y` doesn't ask). | Storage › Trash |
 | `jobs` | Recent changes and how they ended. | Dashboard › last change |
 | `jobs show N` | Follow a change's log. | Log |
 | `jobs skip N`, `jobs cancel N` | While a change waits for running work: stop without waiting longer, or call it off. | Stop now / Cancel change |
-| `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address` and `network`. | Settings › Containers |
+| `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address`, `network` and `trash_days`. | Settings › Containers, Storage › Trash |
 | `password` | Change the admin password (asks for the current and the new one). | Settings › Password |
 | `token` | Print the API token. `--new` makes a new one; the old one stops working. Reads the data folder, so it works without the app running. | Settings › API and command line |
 | `update` | Running version, and whether an update is waiting. | Version number |

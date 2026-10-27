@@ -71,6 +71,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Light or dark**: follows your device, or pick Light or Dark with the theme button at the top.
 
   ![Dark theme](docs/screenshots/dashboard-dark.png)
+- **Storage and trash**: free space per disk, folder sizes, unused app images and model files, and a
+  trash that deleting an instance or a file goes to first, so you can put it back.
+- **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
@@ -95,6 +98,17 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Quick start
 
+### Minimum requirements
+
+| | Minimum |
+| :- | :- |
+| CPU | x86-64, 4 cores |
+| RAM | 32 GB (64 GB recommended for the largest models, which keep most of their layers in system RAM) |
+| Storage | 128 GB free for models and app data; an SSD is highly preferred |
+| GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+) |
+
+Less may run, but isn't supported: with under 32 GB of RAM, plan on models that fit in GPU memory.
+
 ### Linux: guided install
 
 On Ubuntu, Debian, Fedora, RHEL-family (Rocky, Alma) or Arch with an NVIDIA GPU, and WSL2
@@ -116,9 +130,6 @@ It is safe to re-run. For scripted installs every question has an option, and `-
 rest; see [CLI and scripts](docs/cli.md#installsh).
 
 On Proxmox, TrueNAS SCALE or Unraid, see [Proxmox](docs/proxmox.md), [TrueNAS SCALE](docs/truenas.md) or [Unraid](docs/unraid.md).
-
-RAM: with less than 32 GB, plan on models that fit in GPU memory. 64 GB is recommended for the
-largest models (Qwen3 Coder Next is ~49 GB at Q4).
 
 ### By hand
 
@@ -270,6 +281,8 @@ in the suggested models.
   catalogs/<id>.yaml     model list + API key per model server        (mode 600)
   generated/<id>/        files rendered for containers - do not edit
   update/                update status, log and settings backups
+  appdata/<app>/         each app's own data
+  trash/                 deleted instances and files, until restored or emptied
 ```
 
 You can edit the YAML by hand; GPU Shepherd re-reads it on every page load and shows a warning
