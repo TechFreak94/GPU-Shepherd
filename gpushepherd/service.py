@@ -20,7 +20,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import app_updates, auth, downloads, host, instance_templates as tpl, model_library, storage, updates
+from . import app_updates, auth, budget, downloads, host, instance_templates as tpl, model_library, storage, updates
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import llamaswap
@@ -71,6 +71,7 @@ class Change:
     lines: list[str]                    # what the plan does, in words
     job: Job | None = None              # set once it runs
     noop: bool = False                  # already in that state
+    warnings: list[str] = field(default_factory=list)   # memory that may not be enough (budget.py)
 
     @property
     def needs_confirm(self) -> bool:
@@ -101,12 +102,15 @@ class Shepherd:
     loading: dict[str, set[str]] = field(default_factory=dict)   # model server -> models loading
     downloads: Downloads | None = None
     trash: Trash | None = None
+    peaks: budget.Peaks | None = None
 
     def __post_init__(self):
         if self.downloads is None:
             self.downloads = Downloads(self.backend, self.store.settings().container_prefix)
         if self.trash is None:
             self.trash = Trash(self.store.root, HelperFileOps(self.backend))
+        if self.peaks is None:
+            self.peaks = budget.Peaks(self.store.root)
 
     @property
     def backend(self):
@@ -134,13 +138,51 @@ class Shepherd:
         if p.error:
             raise Problem(p.error, status=409)
         c = Change(action, iid, names[iid], p, p.describe(names), noop=p.is_noop)
-        if c.noop or (p.side_effects and not confirm):
+        if not c.noop:
+            c.warnings = self.memory_warnings(p)
+        if c.noop or ((p.side_effects or c.warnings) and not confirm):
             return c
         try:
             c.job = self.jobs.submit(f"{VERBS[action]} {c.name}", lambda job: self.engine.execute(p, job, job))
         except Busy as err:
             raise Problem(str(err), "warn", 409) from err
         return c
+
+    def memory_warnings(self, p: Plan) -> list[str]:
+        """What may not fit once the plan runs: system RAM for what starts, and model server models
+        bigger than the GPUs they get. Estimates (see budget.py), so only warnings."""
+        try:
+            snap = self.engine.snapshot()
+            peaks = self.peaks.get()
+            vram_of = {g.index: int(g.mem_total * 2**20) for g in snap.gpus}
+            out, need, starting = [], 0, []
+            for iid in dict.fromkeys(p.to_start + p.to_restart):
+                inst = snap.instances.get(iid)
+                if not inst:
+                    continue
+                gpus = p.allocations.get(iid, [])
+                vram = sum(vram_of.get(g, 0) for g in gpus)
+                cat = self.store.catalog(iid) if inst.kind == "llama-swap" else None
+                n = budget.ram_needed(inst, cat, len(gpus), vram, peaks.get(iid, 0))
+                if n:
+                    need += n
+                    starting.append(inst.name)
+                if cat and gpus:
+                    out += budget.too_big(inst, cat, len(gpus), vram)
+            total, available = host.mem_available()
+            if need and total:
+                leaving = [self.engine.container_name(i) for i in p.to_stop + p.to_restart
+                           if snap.states.get(i) and snap.states[i].running]
+                freed = sum(s.mem_used for s in self.backend.stats(leaving).values()) if leaving else 0
+                free = available + freed
+                if need > free - budget.HEADROOM:
+                    out.insert(0, f"{', '.join(starting)} may need about {budget.gb(need)} of system RAM, and about "
+                                  f"{budget.gb(free)} is free. If the machine runs out, the system stops a "
+                                  "container to make room.")
+            return out
+        except Exception as err:  # noqa: BLE001 - a check that fails must not block a start
+            log.warning("memory check skipped: %s", err)
+            return []
 
     def job(self, jid: int) -> Job:
         job = next((j for j in self.jobs.recent() if j.id == jid), None)
@@ -237,6 +279,7 @@ class Shepherd:
             job(f"Left {k} where it is (it could not be moved to the trash)")
         for iid in ids:               # whatever could not be moved must not stay behind as an instance
             self.store.delete_instance(iid)
+            self.peaks.forget(iid)
         self.trash.purge_older(self.store.settings().trash_days)
 
     def instance_files(self, ids: list[str], instances: dict[str, Instance]) -> list[Path]:

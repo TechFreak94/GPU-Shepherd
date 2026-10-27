@@ -232,9 +232,11 @@ def cmd_change(args, c: Client) -> int:
     path = f"/api/v1/instances/{args.id}/{args.command}"
     r = c.post(path, {}, ok=(200, 202, 409))
     if r.get("needs_confirm"):
-        print("This also changes other instances:")
+        print("The plan:")
         for line in r["plan"]:
             print(f"  {line}")
+        for line in r.get("warnings", []):
+            print(f"Warning: {line}")
         if not (args.yes or ask("Go ahead?")):
             print("Nothing changed. Add -y to go ahead without asking.")
             return 1

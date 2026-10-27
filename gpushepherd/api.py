@@ -131,9 +131,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         if c.noop:
             return {"message": c.text, "noop": True}
         if c.needs_confirm:
-            return JSONResponse({"error": "This also changes other instances. Send {\"confirm\": true} to go ahead.",
-                                 "needs_confirm": True, "plan": c.lines}, status_code=409)
-        return JSONResponse({"message": c.text, "plan": c.lines, "job": job_json(c.job)}, status_code=202)
+            why = "This also changes other instances." if c.plan.side_effects else "Memory may not be enough."
+            return JSONResponse({"error": f"{why} Send {{\"confirm\": true}} to go ahead.", "needs_confirm": True,
+                                 "plan": c.lines, "warnings": c.warnings}, status_code=409)
+        return JSONResponse({"message": c.text, "plan": c.lines, "warnings": c.warnings, "job": job_json(c.job)},
+                            status_code=202)
 
     @r.get("/api/v1/instances/{iid}/logs")
     @handle

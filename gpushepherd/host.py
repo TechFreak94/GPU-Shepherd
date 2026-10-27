@@ -102,6 +102,15 @@ def ram_gb() -> float:
         return 0.0
 
 
+def mem_available() -> tuple[int, int]:
+    """(total, available) system RAM in bytes, (0, 0) if unknown."""
+    try:
+        mem = _meminfo()
+        return mem.get("MemTotal", 0), mem.get("MemAvailable", mem.get("MemFree", 0))
+    except OSError:
+        return 0, 0
+
+
 def query() -> Host:
     global _prev
     h = Host()

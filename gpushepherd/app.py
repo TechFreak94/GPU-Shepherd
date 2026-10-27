@@ -201,6 +201,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         running = [i for i, st in snap.states.items() if st.running and i in snap.instances]
         try:
             usage = backend.stats([engine.container_name(i) for i in running])
+            svc.peaks.record({i: usage[engine.container_name(i)].mem_used for i in running
+                              if engine.container_name(i) in usage})
         except Exception:  # noqa: BLE001
             usage = {}
         gpu_by_index = {g.index: g for g in snap.gpus}
