@@ -162,7 +162,7 @@ def test_installed_counts_older_instances():
            "d": Instance(id="d", name="D", image="x", app="hermes")}
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
-                   "librechat": [], "anythingllm": [], "flowise": []}
+                   "librechat": [], "anythingllm": []}
 
 
 def test_kind_tags():
@@ -207,24 +207,6 @@ def test_librechat():
         tpl.build(t, f, taken)
     with pytest.raises(ConfigError, match="too long"):
         tpl.build(t, f | {"id": "a" * 40}, m)
-
-
-def test_flowise():
-    m, t = server_machine(), tpl.get("flowise")
-    assert t.experimental and "ChatOpenAI Custom" in t.after_install
-    f = tpl.defaults(t, m, "/m", "/a")
-    inst, _ = tpl.build(t, f, m)
-    assert inst.ports[0].container == 3000 and inst.gpu.mode == "none" and not inst.requires
-    env = inst.env
-    assert env["LLM_BASE_URL"] == "http://llm:8080/v1" and env["LLM_API_KEY"] == "sk-abc"
-    secrets = [env[k] for k in ("JWT_AUTH_TOKEN_SECRET", "JWT_REFRESH_TOKEN_SECRET", "EXPRESS_SESSION_SECRET",
-                                "TOKEN_HASH_SECRET")]
-    assert len(set(secrets)) == 4 and all(len(x) == 64 for x in secrets)
-    assert {v.container: v.host for v in inst.volumes} == {"/home/node/.flowise": "/a/flowise/data"}
-    assert tpl.seed_files(t, f, m) == {}
-    assert tpl.connected_server(inst, m) == "llm"
-    assert tpl.app_env(t, "llm", m)["LLM_BASE_URL"] == "http://llm:8080/v1"
-    assert "LLM_BASE_URL" not in tpl.build(t, f | {"server": ""}, m)[0].env
 
 
 def test_anythingllm():

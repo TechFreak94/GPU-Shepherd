@@ -308,8 +308,6 @@ def cmd_apps(args, c: Client) -> int:
 
         def show(a):
             print(f"{a['title']}: {a['blurb']}")
-            if a.get("experimental"):
-                print(f"Experimental: {a['experimental']}")
             for p in a["points"]:
                 print(f"  - {p}")
             if a["needs"]:

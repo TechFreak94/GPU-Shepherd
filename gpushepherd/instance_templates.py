@@ -78,7 +78,6 @@ class Template:
     companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
     hidden: bool = False                       # a companion: not offered in the App Store itself
     after_install: str = ""                    # what is left to do in the app itself once it runs
-    experimental: str = ""                     # why it is marked Experimental in the App Store ("" = it isn't)
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -156,28 +155,6 @@ TEMPLATES: tuple[Template, ...] = (
         after_install="Open it and make a workspace to chat in; the model server is already set up. "
                       "It has no login until you set a password under Settings, Security.",
         needs="An LLM server to chat with", docs="https://docs.anythingllm.com/installation-docker/overview"),
-    Template(
-        key="flowise", tag="Agent UI", badge="FW", title="Flowise", group="Chat and agents",
-        blurb="Build chatbots, RAG pipelines and agents by wiring blocks together, running on your own model server.",
-        points=("No GPU needed", "Its own login: the first account you make is the admin",
-                "You connect the model server inside your flows (steps below)"),
-        default_id="flowise", default_name="Flowise", description="Flowise",
-        # 3.1.x images crash on start with the built-in SQLite database (connect-sqlite3 0.9.17)
-        image="flowiseai/flowise:3.0.13", container_port=3000, host_port=3002, gpu="none",
-        env={"PORT": "3000", "DATABASE_PATH": "/home/node/.flowise", "SECRETKEY_PATH": "/home/node/.flowise",
-             "LOG_PATH": "/home/node/.flowise/logs", "BLOB_STORAGE_PATH": "/home/node/.flowise/storage",
-             "DISABLE_FLOWISE_TELEMETRY": "true"},
-        appdata=(("data", "/home/node/.flowise"),), data_owner=(1000, 1000), connects="flowise",
-        experimental="GPU Shepherd can't connect Flowise to a model server for you: each flow picks its own "
-                     "model, so you add the server to your flows yourself.",
-        after_install="Open it and create your account: the first one becomes the admin. Then, in Flowise: "
-                      "1) Credentials, Add Credential, OpenAI API, and paste the model server's API key "
-                      "(LLM_API_KEY under Edit on this instance). 2) In a flow, use the ChatOpenAI Custom node: "
-                      "BasePath is LLM_BASE_URL from the same place, Model Name is chat (or another name the "
-                      "server answers to), Connect Credential is the one you made. 3) For documents, the "
-                      "OpenAI Embeddings Custom node with the same BasePath and credential, Model Name embed, "
-                      "if the server has an embeddings model.",
-        needs="An LLM server for its flows to use", docs="https://docs.flowiseai.com"),
     Template(
         key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
@@ -424,8 +401,6 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         env.update(_hermes(a, m))
     elif t.connects == "librechat":
         env.update(_librechat(a, m, requires))
-    elif t.connects == "flowise":
-        env.update(_flowise(a, m))
 
     inst = Instance(id=iid, name=str(a.get("name", "")).strip() or iid, description=t.description, kind=t.kind,
                     image=t.image, command=list(t.command), env=env,
@@ -560,7 +535,7 @@ def app_env(t: Template, server: str, m: Machine) -> dict[str, str]:
         env |= _openwebui(a, m)
     elif t.connects == "hermes":
         env |= _hermes(a, m)
-    elif t.connects in ("librechat", "flowise") and a["server"]:
+    elif t.connects == "librechat" and a["server"]:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
     return env
 
@@ -624,17 +599,6 @@ def _librechat(a: dict, m: Machine, requires: list[str]) -> dict[str, str]:
     env = {"MONGO_URI": f"mongodb://{requires[0]}:27017/LibreChat",
            "CREDS_KEY": secrets.token_hex(32), "CREDS_IV": secrets.token_hex(16),
            "JWT_SECRET": secrets.token_hex(32), "JWT_REFRESH_SECRET": secrets.token_hex(32)}
-    server = _server(a, m)
-    if server:
-        env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
-    return env
-
-
-def _flowise(a: dict, m: Machine) -> dict[str, str]:
-    """Fresh secrets (Flowise signs logins with fixed defaults otherwise) and the model server's
-    address and key, for the user to copy into their flows."""
-    env = {"JWT_AUTH_TOKEN_SECRET": secrets.token_hex(32), "JWT_REFRESH_TOKEN_SECRET": secrets.token_hex(32),
-           "EXPRESS_SESSION_SECRET": secrets.token_hex(32), "TOKEN_HASH_SECRET": secrets.token_hex(32)}
     server = _server(a, m)
     if server:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}

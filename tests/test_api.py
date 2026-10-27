@@ -112,7 +112,6 @@ def test_app_store_install(stack):
     assert client.post("/api/v1/apps/nope/install", json={}).status_code == 404
     lc = client.get("/api/v1/apps/librechat").json()
     assert lc["also_installs"] == ["LibreChat database"] and "first account" in lc["after_install"]
-    assert not lc["experimental"] and client.get("/api/v1/apps/flowise").json()["experimental"]
     r = client.post("/api/v1/apps/librechat/install", json={"server": "llm"})
     assert r.status_code == 201 and r.json()["companions"] == ["librechat-mongodb"], r.text
     assert "Installed LibreChat and LibreChat database." in r.json()["message"]
