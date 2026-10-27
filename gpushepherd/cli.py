@@ -385,8 +385,9 @@ def cmd_models(args, c: Client) -> int:
         out(args, c.get(f"{base}/suggestions"), lambda rows: table(
             [[x["key"], x["name"], x["fit"], x["status"], "yes" if x["in_catalog"] else "-"] for x in rows],
             ["KEY", "MODEL", "ON THIS MACHINE", "DOWNLOAD", "ADDED"]))
-    elif a in ("add-suggested", "download", "stop-download"):
-        op = {"add-suggested": "add", "download": "download", "stop-download": "cancel"}[a]
+    elif a in ("add-suggested", "download", "stop-download", "discard-download"):
+        op = {"add-suggested": "add", "download": "download", "stop-download": "cancel",
+              "discard-download": "discard"}[a]
         out(args, c.post(f"{base}/suggestions/{args.key}/{op}"))
     elif a == "show":
         m = next((x for x in c.get(f"{base}/models")["models"] if x["id"] == args.model), None)
@@ -601,7 +602,8 @@ def add_commands(sub) -> None:
         .add_argument("server")
     for name, what in (("add-suggested", "add a suggested model with its settings, downloading it if needed"),
                        ("download", "download (or resume) a suggested model's files"),
-                       ("stop-download", "stop a download; starting it again resumes")):
+                       ("stop-download", "stop a download; starting it again resumes"),
+                       ("discard-download", "stop a download and delete its partial files")):
         q = msub.add_parser(name, help=what)
         q.add_argument("server")
         q.add_argument("key", help="its key, from `models suggested`")

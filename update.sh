@@ -436,6 +436,16 @@ save_recovery() {
     fi
 }
 
+# Every rebuild leaves the image it replaces behind, untagged. Only the running image and
+# gpu-shepherd:previous (for --rollback) are worth keeping, so the older builds are removed.
+tidy_images() {
+    local freed
+    freed=$(docker image prune -f --filter "label=org.opencontainers.image.title=GPU Shepherd" 2>/dev/null \
+        | sed -n 's/^Total reclaimed space: *//p')
+    if [ -n "$freed" ] && [ "$freed" != "0B" ]; then info "Removed older GPU Shepherd builds ($freed)"; fi
+    return 0
+}
+
 restore_settings() {   # restore_settings FILE: put the backed-up YAML files back (current ones -> .before-restore)
     local f
     for f in $(tar -tzf "$1" | grep -v '/$'); do
@@ -507,6 +517,7 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
     (cd "$HERE" && docker compose up -d --build "$CONTAINER") || recover "$old" "the rebuild failed"
     write_status updating "Starting the new version and waiting for the dashboard" start
     healthy || recover "$old" "GPU Shepherd did not start on port $PORT"
+    tidy_images
     write_status "done" "GPU Shepherd $(version_at HEAD) is running ($(g log -1 --format='%h, %cs' HEAD))."
     say "GPU Shepherd $(version_at HEAD) is running $(g log -1 --format='%h from %cs: %s' HEAD)"
     if [ -n "$old" ] && [ "$old" != "$new" ]; then

@@ -7,6 +7,11 @@ services:
     image: gpu-shepherd:local
     container_name: gpu-shepherd
     restart: unless-stopped
+    # If the machine runs out of memory, the kernel stops an app before GPU Shepherd.
+    oom_score_adj: -500
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
     # Where Docker uses SELinux (Fedora's moby-engine, or selinux-enabled set by hand), GPU Shepherd
     # can only reach the Docker socket with SELinux labels off for it; install.sh uncomments this.
     # security_opt: [label=disable]

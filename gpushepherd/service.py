@@ -22,6 +22,7 @@ from . import app_updates, auth, host, instance_templates as tpl, model_library,
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Store, VolumeMap,
                      friendly_errors)
 from .connectors import llamaswap
+from .backend import BackendError
 from .downloads import Downloads
 from .engine import Engine
 from .jobs import Busy, Job, JobRunner
@@ -481,7 +482,7 @@ class Shepherd:
             out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
                         "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
                         "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
-                        "pct": st.pct, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
+                        "pct": st.pct, "partial": st.partial, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
                         "files": [{"path": f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}", "url": x.url, "gb": x.gb}
                                   for x in s.files]})
         return sorted(out, key=lambda x: x.pop("rank"))
@@ -501,11 +502,21 @@ class Shepherd:
                           "add one under Edit first.")
         if self.downloads.status(s, folder).state == "ready":
             return f"{s.name} is already downloaded."
-        return self.downloads.start(s, folder)
+        try:
+            return self.downloads.start(s, folder)
+        except ValueError as err:
+            raise Problem(str(err), "warn", 507) from err
 
     def cancel_download(self, iid: str, key: str) -> str:
         self.server(iid)
         return self.downloads.cancel(self._suggestion(key))
+
+    def discard_download(self, iid: str, key: str) -> str:
+        inst, _ = self.server(iid)
+        try:
+            return self.downloads.discard(self._suggestion(key), self.models_dir(inst))
+        except BackendError as err:
+            raise Problem(f"Could not delete the partial files: {err}", status=500) from err
 
     @checked
     def add_suggestion(self, iid: str, key: str) -> str:

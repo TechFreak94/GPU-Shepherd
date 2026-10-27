@@ -6,6 +6,8 @@ Every container GPU Shepherd creates carries labels:
     gpushepherd.config     fingerprint of the instance config it was created from
 Short-lived helper containers (model downloads) carry gpushepherd.helper instead, so they are
 never mistaken for an instance.
+Where Docker keeps logs in its default json-file format, which grows without limit, every
+container gets a size limit (LOG_LIMIT), so a chatty model server can't fill the disk over months.
 GPU assignments are baked in at creation time, so moving an instance to other GPUs means
 re-creating its container (its data lives in volumes, so nothing is lost).
 """
@@ -25,6 +27,7 @@ LABEL_INSTANCE = "gpushepherd.instance"
 LABEL_GPUS = "gpushepherd.gpus"
 LABEL_CONFIG = "gpushepherd.config"
 LABEL_HELPER = "gpushepherd.helper"
+LOG_LIMIT = {"max-size": "10m", "max-file": "3"}
 
 
 @dataclass
@@ -82,6 +85,8 @@ class Backend(Protocol):
     def run_helper(self, name: str, image: str, script: str, volumes: list[tuple[str, str, bool]],
                    user: str | None, kind: str) -> None: ...
     def helpers(self, kind: str) -> dict[str, "HelperState"]: ...
+    def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
+                 user: str | None = None) -> str: ...
     def ping(self) -> str: ...
 
 
@@ -149,6 +154,18 @@ class DockerBackend:
                 return False    # Docker is down: ask again next time
             self._selinux = any("name=selinux" in o for o in opts)
         return self._selinux
+
+    @property
+    def log_config(self) -> dict | None:
+        """A size limit for the container's logs, when Docker's log driver is json-file (another
+        driver someone chose, such as journald or local, already handles size and is left alone)."""
+        if "_log_config" not in self.__dict__:
+            try:
+                driver = self.client.info().get("LoggingDriver") or "json-file"
+            except Exception:  # noqa: BLE001
+                return None     # Docker is down: ask again next time
+            self._log_config = {"Type": "json-file", "Config": dict(LOG_LIMIT)} if driver == "json-file" else None
+        return self._log_config
 
     def ping(self) -> str:
         try:
@@ -221,7 +238,7 @@ class DockerBackend:
         host_config = self.api.create_host_config(
             binds=binds, port_bindings=port_bindings, device_requests=device_requests,
             restart_policy={"Name": "unless-stopped"}, shm_size=spec.shm_size, mem_limit=spec.mem_limit,
-            init=True)
+            init=True, log_config=self.log_config)
         networking = self.api.create_networking_config(
             {spec.network: self.api.create_endpoint_config(aliases=[spec.alias])})
         labels = {LABEL_INSTANCE: spec.instance_id, LABEL_GPUS: ",".join(map(str, spec.gpus)),
@@ -312,7 +329,7 @@ class DockerBackend:
         self.remove(name)
         host_config = self.api.create_host_config(
             binds=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], restart_policy={"Name": "no"},
-            init=True)
+            init=True, log_config=self.log_config)
         try:
             created = self.api.create_container(image, command=["-c", script], entrypoint="sh", name=name,
                                                 host_config=host_config, labels={LABEL_HELPER: kind}, user=user)
@@ -328,6 +345,21 @@ class DockerBackend:
             out[name] = HelperState(running=c.get("State") in ("running", "created", "restarting"),
                                     exit_code=int(code.group(1)) if code else None)
         return out
+
+    def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
+                 user: str | None = None) -> str:
+        """Run `sh -c script` in a throwaway container with `volumes` mounted and wait for it: for
+        file work in folders GPU Shepherd can't write itself. Raises BackendError if it fails."""
+        try:
+            out = self.client.containers.run(
+                image, ["-c", script], entrypoint="sh", remove=True, stdout=True, stderr=True, user=user,
+                volumes=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], labels={LABEL_HELPER: "task"})
+            return out.decode("utf-8", "replace")
+        except self._errors.ContainerError as err:
+            text = (err.stderr or b"").decode("utf-8", "replace").strip()
+            raise BackendError(text.splitlines()[-1] if text else str(err)) from err
+        except self._errors.APIError as err:
+            raise BackendError(err.explanation or str(err)) from err
 
 
 def _ago(since: float) -> str:
@@ -351,6 +383,7 @@ class FakeBackend:
         self.helper_runs: dict[str, tuple[str, str, float]] = {}   # name -> (kind, script, started)
         self.helper_seconds = 0.0
         self.helper_exit = 0
+        self.tasks: list[tuple[str, list[tuple[str, str, bool]]]] = []   # (script, volumes) of run_task
         self._lock = threading.Lock()
 
     def ping(self) -> str:
@@ -411,6 +444,12 @@ class FakeBackend:
         with self._lock:
             self.helper_runs[name] = (kind, script, time.time())
         self.calls.append(f"helper {name}")
+
+    def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
+                 user: str | None = None) -> str:
+        self.tasks.append((script, volumes))
+        self.calls.append("task")
+        return ""
 
     def helpers(self, kind: str) -> dict[str, HelperState]:
         """Demo helpers run for helper_seconds, then exit 0 (or helper_exit)."""

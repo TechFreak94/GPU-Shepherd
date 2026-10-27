@@ -11,6 +11,7 @@ def make_backend():
     b._errors = derr
     b.api = docker.APIClient(base_url="unix:///nonexistent.sock", version="1.44")
     b._selinux = False
+    b._log_config = {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}}
     b.calls = []
     b.api.create_container = lambda image, **kw: b.calls.append(("create", image, kw)) or {"Id": "abc"}
     b.api.start = lambda cid: b.calls.append(("start", cid))
@@ -42,6 +43,16 @@ def test_create_payload():
     assert kw["labels"] == {LABEL_INSTANCE: "llm", LABEL_GPUS: "0,1", LABEL_CONFIG: "cafe"}
     assert kw["networking_config"]["EndpointsConfig"]["gpushepherd"]["Aliases"] == ["llm"]
     assert kw["environment"] == {"A": "1"} and kw["command"] == ["--x"]
+    assert hc["LogConfig"] == {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}}
+
+
+def test_log_limit_only_for_the_json_file_driver():
+    b = make_backend()
+    del b._log_config
+    b.client = type("C", (), {"info": lambda self: {"LoggingDriver": "journald"}})()
+    assert b.log_config is None
+    b.create_and_start(spec())
+    assert not b.calls[1][2]["host_config"].get("LogConfig")
 
 
 def test_cpu_only_container_gets_no_gpu_request():

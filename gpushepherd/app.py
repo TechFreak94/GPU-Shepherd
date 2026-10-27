@@ -624,6 +624,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 msg = svc.download_suggestion(iid, key)
             elif op == "cancel":
                 msg = svc.cancel_download(iid, key)
+            elif op == "discard":
+                msg = svc.discard_download(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:

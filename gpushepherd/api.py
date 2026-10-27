@@ -256,6 +256,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return JSONResponse({"message": svc.download_suggestion(iid, key)}, status_code=202)
         if op == "cancel":
             return {"message": svc.cancel_download(iid, key)}
+        if op == "discard":
+            return {"message": svc.discard_download(iid, key)}
         raise Problem("unknown operation", status=404)
 
     @r.get("/api/v1/app-updates")
