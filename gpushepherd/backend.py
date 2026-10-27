@@ -80,6 +80,8 @@ class Backend(Protocol):
     def stop(self, name: str, timeout: int = 30) -> None: ...
     def remove(self, name: str) -> None: ...
     def logs(self, name: str, tail: int = 300) -> str: ...
+    def exec(self, name: str, cmd: list[str], env: dict[str, str] | None = None,
+             workdir: str = "") -> tuple[int, str]: ...
     def stats(self, names: list[str]) -> dict[str, ContainerStats]: ...
     def probe(self, image: str, script: str) -> str: ...
     def run_helper(self, name: str, image: str, script: str, volumes: list[tuple[str, str, bool]],
@@ -279,6 +281,18 @@ class DockerBackend:
         except self._errors.APIError as err:
             return f"(could not read logs: {err.explanation or err})"
 
+    def exec(self, name: str, cmd: list[str], env: dict[str, str] | None = None,
+             workdir: str = "") -> tuple[int, str]:
+        """Run a command inside a running container; its exit code and output."""
+        try:
+            ex = self.api.exec_create(name, cmd, environment=env or None, workdir=workdir or None)
+            out = self.api.exec_start(ex["Id"])
+            return self.api.exec_inspect(ex["Id"]).get("ExitCode") or 0, out.decode("utf-8", "replace")
+        except self._errors.NotFound as err:
+            raise BackendError(f"{name} is not running") from err
+        except self._errors.APIError as err:
+            raise BackendError(err.explanation or str(err)) from err
+
     def stats(self, names: list[str]) -> dict[str, ContainerStats]:
         """CPU and memory use of running containers. Docker's one-shot stats return at once but
         carry a single CPU sample, so CPU use is measured against the previous call's sample."""
@@ -407,6 +421,8 @@ class FakeBackend:
         self.helper_exit = 0
         self.tasks: list[tuple[str, list[tuple[str, str, bool]]]] = []   # (script, volumes) of run_task
         self.present: dict[str, int] = {}     # images "on this machine" -> size
+        self.execs: list[tuple[str, list[str], dict[str, str], str]] = []   # (name, cmd, env, workdir)
+        self.exec_reply = lambda name, cmd, env: (0, "[]")                  # what an exec answers
         self._lock = threading.Lock()
 
     def ping(self) -> str:
@@ -452,6 +468,13 @@ class FakeBackend:
 
     def logs(self, name: str, tail: int = 300) -> str:
         return f"[demo] {name} is {'running' if self.running.get(name) else 'stopped'}\n"
+
+    def exec(self, name: str, cmd: list[str], env: dict[str, str] | None = None,
+             workdir: str = "") -> tuple[int, str]:
+        if not self.running.get(name):
+            raise BackendError(f"{name} is not running")
+        self.execs.append((name, cmd, dict(env or {}), workdir))
+        return self.exec_reply(name, cmd, env or {})
 
     def stats(self, names: list[str]) -> dict[str, ContainerStats]:
         rnd = random.Random(int(time.time() / 4))      # steady between two dashboard refreshes

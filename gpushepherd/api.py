@@ -123,6 +123,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def delete_instance(request: Request, iid: str):
         return {"message": svc.delete_instance(iid)}
 
+    @r.get("/api/v1/instances/{iid}/logins")
+    @handle
+    def instance_logins(request: Request, iid: str):
+        return svc.logins(iid)
+
+    @r.post("/api/v1/instances/{iid}/logins")
+    @handle
+    async def reset_login(request: Request, iid: str):
+        data = await body(request) if await request.body() else {}
+        msg, password = svc.reset_login(iid, str(data.get("user") or ""), str(data.get("password") or ""))
+        return {"message": msg, "password": password}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     async def instance_action(request: Request, iid: str, action: str):

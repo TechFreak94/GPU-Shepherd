@@ -20,7 +20,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import app_updates, auth, budget, downloads, host, instance_templates as tpl, model_library, storage, updates
+from . import (app_updates, auth, budget, downloads, host, instance_templates as tpl, logins, model_library, storage,
+               updates)
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import llamaswap
@@ -667,6 +668,93 @@ class Shepherd:
         inst.skipped_updates = sorted(set(inst.skipped_updates) | {u.key})
         self.store.save_instance(inst)
         return f"Skipped \"{u.title}\" for {inst.name}."
+
+    # ------------------------------------------------------------------ app logins
+    def _login_method(self, iid: str) -> tuple[Instance, logins.Method]:
+        inst = self.instance(iid)
+        m = logins.method(inst)
+        if m is None:
+            raise Problem(f"GPU Shepherd doesn't know how {inst.name} keeps its logins.", status=404)
+        return inst, m
+
+    def _running(self, iid: str) -> bool:
+        st = self.backend.states().get(iid)
+        return bool(st and st.running)
+
+    def _login_script(self, inst: Instance, m: logins.Method, user: str = "", password: str = "") -> str:
+        ex = logins.script(m, user, password)
+        try:
+            code, out = self.backend.exec(self.engine.container_name(inst.id), ex.cmd, ex.env, ex.workdir)
+        except BackendError as err:
+            raise Problem(f"couldn't reach {inst.name}: {err}", status=409) from err
+        if code:
+            raise Problem(f"{inst.name} couldn't {'set the password' if user else 'list its accounts'}: "
+                          f"{logins.last_line(out)}", status=409)
+        return out
+
+    @checked
+    def logins(self, iid: str) -> dict:
+        """An app's logins: its accounts, with their passwords where GPU Shepherd can read them."""
+        inst, m = self._login_method(iid)
+        path = self._settings_file(inst) if m.app == "anythingllm" else None
+        settings = path.read_text(encoding="utf-8") if path else None
+        accounts, running, multi = logins.readable(m, inst, settings), self._running(iid), False
+        if m.in_container and running:
+            listed, multi = logins.parse_accounts(self._login_script(inst, m))
+            if m.app != "anythingllm" or multi:
+                accounts = listed
+        status = ""
+        if m.in_container and not running and m.app != "anythingllm":
+            status = f"Start {inst.name} to see the accounts in {m.where}."
+        elif not accounts:
+            status = (f"{inst.name} has no password yet." if m.app in ("anythingllm", "hermes")
+                      else f"No accounts yet: the first one is made in {inst.name} itself.")
+        return {"instance": iid, "name": inst.name, "where": m.where, "note": m.note, "running": running,
+                "multi_user": multi, "status": status, "accounts": [asdict(a) for a in accounts],
+                "can_reset": not m.in_container or running or m.app == "anythingllm"}
+
+    @checked
+    def reset_login(self, iid: str, user: str = "", password: str = "") -> tuple[str, str]:
+        """Give an app account a new password (a made-up one when none is given). Returns what to
+        tell the user and the password."""
+        inst, m = self._login_method(iid)
+        password = password.strip() or secrets.token_urlsafe(12)
+        logins.check_password(password)
+        user = user.strip()
+        running = self._running(iid)
+        if m.app == "hermes":
+            inst.env = inst.env | {"HERMES_DASHBOARD_BASIC_AUTH_USERNAME": user or "admin",
+                                   "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": password}
+            self.store.save_instance(inst)
+            return self._restart_for_login(inst, running), password
+        multi = False
+        if m.app == "anythingllm" and running:
+            multi = logins.parse_accounts(self._login_script(inst, m))[1]
+        if m.app == "anythingllm" and not multi:
+            path = self._settings_file(inst)
+            if not path:
+                raise Problem(f"can't find {inst.name}'s {app_updates.ANYTHINGLLM_FILE}", status=409)
+            text = logins.set_env_value(path.read_text(encoding="utf-8"), "AUTH_TOKEN", password)
+            if not logins.env_value(text, "JWT_SECRET"):            # it signs logins with this
+                text = logins.set_env_value(text, "JWT_SECRET", secrets.token_hex(32))
+            path.write_text(text, encoding="utf-8")
+            return self._restart_for_login(inst, running), password
+        if not user:
+            raise Problem("Which account? Give its user name or email.")
+        if not running:
+            raise Problem(f"Start {inst.name} first: its accounts are in {m.where}.", status=409)
+        if not logins.parse_updated(self._login_script(inst, m, user, password)):
+            raise Problem(f"{inst.name} has no account '{user}'.", status=404)
+        return f"Set a new password for {user} on {inst.name}.", password
+
+    def _restart_for_login(self, inst: Instance, running: bool) -> str:
+        if not running:
+            return f"Saved {inst.name}'s new password: it is used from its next start."
+        try:
+            self.change("restart", inst.id, confirm=True)
+        except Problem:
+            return f"Saved {inst.name}'s new password. Restart it to use it."
+        return f"Saved {inst.name}'s new password and restarting it."
 
     # ------------------------------------------------------------------ model catalogue
     @checked

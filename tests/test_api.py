@@ -350,3 +350,63 @@ def test_old_trash_is_emptied_by_itself(stack):
     assert svc.trash_entries() == []
     with pytest.raises(Problem):
         svc.set_trash_days(-1)
+
+
+def test_app_logins(stack):
+    app, client, backend, data = stack
+    base = "/api/v1/instances"
+    assert client.get(f"{base}/llm/logins").status_code == 404           # a model server has no logins
+
+    # Hermes Agent: one login in its environment, shown; a new one restarts it
+    r = client.post("/api/v1/apps/hermes/install", json={"id": "agent", "server": "llm", "password": "first-pass"})
+    assert r.status_code == 201, r.text
+    got = client.get(f"{base}/agent/logins").json()
+    assert got["accounts"] == [{"user": "admin", "role": "dashboard", "password": "first-pass"}] and got["can_reset"]
+    assert client.post(f"{base}/agent/logins", json={"password": "short"}).status_code == 400
+    r = client.post(f"{base}/agent/logins", json={"user": "me", "password": "second-pass"}).json()
+    assert r["password"] == "second-pass" and "next start" in r["message"]
+    env = yaml.safe_load((data / "instances" / "agent.yaml").read_text())["env"]
+    assert env["HERMES_DASHBOARD_BASIC_AUTH_USERNAME"] == "me" and env["HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"] == "second-pass"
+    client.post(f"{base}/agent/start")
+    wait(app)
+    assert "restarting" in client.post(f"{base}/agent/logins", json={"user": "me"}).json()["message"]
+    wait(app)
+
+    # Open WebUI: accounts in its database, read and changed by a script in its running container
+    assert client.post("/api/v1/apps/open-webui/install", json={"id": "webui2", "server": "llm"}).status_code == 201
+    got = client.get(f"{base}/webui2/logins").json()
+    assert "Start" in got["status"] and not got["can_reset"] and not backend.execs
+    assert client.post(f"{base}/webui2/logins", json={"user": "a@b.c"}).status_code == 409
+    client.post(f"{base}/webui2/start")
+    wait(app)
+    backend.exec_reply = lambda name, cmd, env: (0, 'note\n[{"user": "a@b.c", "role": "admin"}]')
+    assert client.get(f"{base}/webui2/logins").json()["accounts"] == [{"user": "a@b.c", "role": "admin", "password": ""}]
+    backend.exec_reply = lambda name, cmd, env: (0, '{"updated": 1}' if env.get("GS_USER") == "a@b.c" else '{"updated": 0}')
+    r = client.post(f"{base}/webui2/logins", json={"user": "a@b.c"}).json()
+    name, cmd, env, _ = backend.execs[-1]
+    assert name.endswith("webui2") and env == {"GS_USER": "a@b.c", "GS_PASSWORD": r["password"]}
+    assert r["password"] not in " ".join(cmd) and len(r["password"]) >= 12
+    assert client.post(f"{base}/webui2/logins", json={"user": "x@y.z"}).status_code == 404
+    backend.exec_reply = lambda name, cmd, env: (1, "Traceback\nsqlite3.OperationalError: no such table: auth")
+    assert "no such table" in client.get(f"{base}/webui2/logins").json()["error"]
+
+    # AnythingLLM without multi-user mode: its one password lives in server.env
+    assert client.post("/api/v1/apps/anythingllm/install", json={"id": "allm", "server": "llm"}).status_code == 201
+    got = client.get(f"{base}/allm/logins").json()
+    assert got["accounts"] == [] and "no password" in got["status"] and got["can_reset"]
+    r = client.post(f"{base}/allm/logins", json={"password": "doc-pass-123"}).json()
+    vols = yaml.safe_load((data / "instances" / "allm.yaml").read_text())["volumes"]
+    env_path = Path(next(v["host"] for v in vols if v["container"] == "/app/server/.env"))
+    env_file = env_path.read_text()
+    assert "AUTH_TOKEN='doc-pass-123'" in env_file and "JWT_SECRET='" in env_file and "LLM_PROVIDER" in env_file
+    assert client.get(f"{base}/allm/logins").json()["accounts"][0]["password"] == "doc-pass-123"
+
+
+def test_cli_logins(run, stack):
+    _, client, _, _ = stack
+    client.post("/api/v1/apps/hermes/install", json={"id": "agent", "server": "llm", "password": "first-pass"})
+    code, text = run("logins", "agent")
+    assert code == 0 and "admin (dashboard)  password: first-pass" in text and "environment" in text
+    code, text = run("logins", "agent", "--reset")
+    assert code == 0 and "Password: " in text and "first-pass" not in text
+    assert run("logins", "llm")[0] == 1
