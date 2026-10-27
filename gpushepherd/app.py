@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, drain, host as host_mod, instance_templates as tpl, model_library, updates
+from . import __version__, api, auth, buildinfo, changelog, drain, first_run, host as host_mod, instance_templates as tpl, model_library, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -25,7 +25,7 @@ from .connectors import llamaswap
 from .engine import Engine
 from .jobs import JobRunner
 from .scheduler import gpu_text
-from .service import Problem, Shepherd, message, parse_auto_rules
+from .service import Problem, Shepherd, gb, message, parse_auto_rules
 
 log = logging.getLogger("gpushepherd")
 HERE = Path(__file__).parent
@@ -91,6 +91,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     if generated:
         log.warning("First start: log in as '%s' with password '%s' (also in %s). Change it under Settings.",
                     store.settings().admin_user, generated, auth.initial_password_file(store))
+    preset = None
+    if not demo:
+        try:                               # the published image's first start (first_run.py)
+            preset = first_run.create_preset(store)
+        except Exception as err:  # noqa: BLE001 - starting empty is better than not starting
+            log.warning("could not create the preset: %s", err)
     settings = store.settings()
     api_token = auth.api_token(store)      # made now, so `gpu-shepherd` commands find it in the data folder
     if demo:
@@ -105,6 +111,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     templates.env.globals.update(version=__version__, asset_version=build.get("commit", __version__)[:12],
                                  gpu_text=gpu_text, demo=demo, level=meter_level)
     templates.env.filters["gib"] = gib
+    templates.env.filters["gb"] = gb
     templates.env.filters["md"] = changelog.inline
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
@@ -165,6 +172,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # everything the dashboard changes goes through the same calls as the JSON API and the command
     svc = Shepherd(store, engine, jobs, llama_client, loading=app.state.loading)
     app.state.svc = svc
+    try:
+        svc.trash.purge_older(store.settings().trash_days)
+    except Exception as err:  # noqa: BLE001 - never worth not starting for
+        log.warning("could not empty old trash entries: %s", err)
+    if preset:
+        try:
+            first_run.download(preset, svc.downloads)
+        except Exception as err:  # noqa: BLE001
+            log.warning("could not start downloading the preset's models: %s", err)
 
     def base_url(request: Request, port: int, path: str = "/") -> str:
         """The address an instance's port is reached at, from the browser's point of view."""
@@ -186,6 +202,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         running = [i for i, st in snap.states.items() if st.running and i in snap.instances]
         try:
             usage = backend.stats([engine.container_name(i) for i in running])
+            svc.peaks.record({i: usage[engine.container_name(i)].mem_used for i in running
+                              if engine.container_name(i) in usage})
         except Exception:  # noqa: BLE001
             usage = {}
         gpu_by_index = {g.index: g for g in snap.gpus}
@@ -243,7 +261,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
                 "running_count": len(running), "instance_count": len(snap.instances),
                 "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None),
-                "now": time.time(), "u": updates.status(store.root), "app_updates": app_update_count()}
+                "now": time.time(), "u": updates.status(store.root), "app_updates": app_update_count(),
+                "low_space": low_space()}
 
     def app_update_count() -> int:
         try:
@@ -251,6 +270,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Exception:  # noqa: BLE001 - the dashboard shows without the notice
             log.exception("could not work out app updates")
             return 0
+
+    def low_space() -> list:
+        try:
+            return svc.low_space()
+        except Exception:  # noqa: BLE001 - the dashboard shows without the banner
+            log.exception("could not check free disk space")
+            return []
 
     def problem(err: Problem) -> Response:
         return toast(Response(status_code=204), err.msg, err.kind)
@@ -264,7 +290,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), c.text)
         if c.needs_confirm:
             resp = page(request, "partials/confirm.html", plan=c.plan, lines=c.lines, iid=iid, action=action,
-                        name=c.name, back=back)
+                        name=c.name, back=back, warnings=c.warnings)
             resp.headers["HX-Retarget"] = "#modal-body"
             resp.headers["HX-Reswap"] = "innerHTML"
             resp.headers["HX-Trigger-After-Swap"] = "open-modal"
@@ -613,6 +639,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 msg = svc.download_suggestion(iid, key)
             elif op == "cancel":
                 msg = svc.cancel_download(iid, key)
+            elif op == "discard":
+                msg = svc.discard_download(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:
@@ -845,6 +873,56 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         auth.new_api_token(store)
         log.info("API token replaced from the dashboard")
         return Response(status_code=204, headers={"HX-Redirect": "/settings?msg=New API token made. The old one no longer works."})
+
+    # ------------------------------------------------------------------ storage
+    @app.get("/storage", response_class=HTMLResponse)
+    def storage_page(request: Request):
+        return page(request, "storage.html", st=svc.storage())
+
+    def storage_done(action):
+        """Run one clean-up, then show the Storage page again with what happened."""
+        try:
+            msg = action()
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": f"/storage?msg={msg}"})
+
+    @app.post("/storage/images/remove-unused")
+    def storage_remove_images():
+        return storage_done(svc.remove_unused_images)
+
+    @app.post("/storage/orphans/remove")
+    def storage_remove_orphans():
+        return storage_done(svc.remove_orphans)
+
+    @app.post("/storage/files/trash")
+    async def storage_trash_files(request: Request):
+        raw = await request.form()
+        return storage_done(lambda: svc.trash_files([str(p) for p in raw.getlist("path")]))
+
+    @app.post("/storage/leftover/trash")
+    async def storage_trash_leftover(request: Request):
+        raw = await request.form()
+        return storage_done(lambda: svc.trash_leftover(str(raw.get("name", ""))))
+
+    @app.post("/storage/trash/restore")
+    async def storage_restore(request: Request):
+        raw = await request.form()
+        return storage_done(lambda: svc.restore_trash(str(raw.get("id", ""))))
+
+    @app.post("/storage/trash/purge")
+    async def storage_purge(request: Request):
+        raw = await request.form()        # no id = empty the whole trash
+        return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
+
+    @app.post("/storage/trash/days")
+    async def storage_trash_days(request: Request):
+        raw = await request.form()
+        try:
+            days = int(str(raw.get("days", "")).strip())
+        except ValueError:
+            return problem(Problem("Days must be a whole number (0 keeps things until you empty the trash)."))
+        return storage_done(lambda: svc.set_trash_days(days))
 
     # ------------------------------------------------------------------ JSON API (api.py)
     app.include_router(api.router(svc, build))

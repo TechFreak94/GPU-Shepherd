@@ -15,7 +15,7 @@
     this window shows each step and carries on by itself.</p>
   {% endif %}
   <div class="actions">
-    <button hx-post="/ui/update/check" hx-target="#modal-body" title="Ask the server whether a newer version is out">Check for updates</button>
+    {% if not u.image or u.dashboard_updates %}<button hx-post="/ui/update/check" hx-target="#modal-body" title="Ask the server whether a newer version is out">Check for updates</button>{% endif %}
     {% if can_update %}
     <button class="primary" hx-post="/ui/update/update" hx-target="#modal-body" {% if u.local_changes %}disabled{% endif %}>{% if u.new_version %}Update to {{ u.new_version }}{% elif u.available %}Update now{% else %}Rebuild now{% endif %}</button>
     {% endif %}

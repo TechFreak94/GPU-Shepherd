@@ -9,6 +9,10 @@
   <button class="small" hx-get="/ui/app-updates" hx-target="#modal-body" title="See what each update changes, then apply or skip it">Review ›</button>
 </div>
 {% endif %}
+{% for d in low_space %}
+<div class="notice error"><div><strong>Disk almost full:</strong> <span class="mono">{{ d.path }}</span> has {{ d.free_text }} free.</div>
+  <a href="/storage">See Storage ›</a></div>
+{% endfor %}
 {% if problems %}
 <div class="notice error">Something needs a look:
   <ul>{% for p in problems %}<li class="mono">{{ p }}</li>{% endfor %}</ul>

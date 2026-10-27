@@ -6,12 +6,17 @@ where it stopped, so starting it again after a failure or a restart doesn't begi
 
 Progress comes from the files' sizes when GPU Shepherd can see the folder (it is mounted at the
 same path), and otherwise from whether the helper is still running.
+
+A download only starts when the disk has room for what is left of it (when GPU Shepherd can see
+the folder), the helper is removed once the files are complete, and a stopped download's partial
+files can be thrown away (discard).
 """
 from __future__ import annotations
 
 import logging
 import os
 import shlex
+import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +28,7 @@ log = logging.getLogger("gpushepherd")
 IMAGE = "curlimages/curl:8.11.1"
 KIND = "download"
 FOLDER = "/models"           # the models folder inside the helper
+SPARE_GB = 2.0               # free space a download must leave on the disk
 
 
 @dataclass
@@ -35,6 +41,11 @@ class Status:
     @property
     def pct(self) -> int | None:
         return min(round(100 * self.done_gb / self.total_gb), 99) if self.total_gb and self.done_gb else None
+
+    @property
+    def partial(self) -> bool:
+        """Stopped part-way, so there is something to discard."""
+        return self.state in ("missing", "failed") and (self.done_gb > 0 or self.state == "failed")
 
     @property
     def text(self) -> str:
@@ -53,8 +64,9 @@ class Status:
 
 def script(s: Suggestion) -> str:
     """Fetch each missing file to <file>.part and rename it once complete."""
-    lines = ["set -e", f"mkdir -p {shlex.quote(f'{FOLDER}/{s.key}')}"]
+    lines = ["set -e"]
     for f in s.files:
+        lines.append(f"mkdir -p {shlex.quote(os.path.dirname(f'{FOLDER}/{s.path(f)}'))}")
         dest = shlex.quote(f"{FOLDER}/{s.path(f)}")
         part = shlex.quote(f"{FOLDER}/{s.path(f)}.part")
         lines.append(f"if [ ! -s {dest} ]; then echo {shlex.quote('Downloading ' + f.name)}; "
@@ -78,9 +90,10 @@ class Downloads:
         total = sum(f.gb for f in s.files)
         root = Path(models_dir) if models_dir else None
         visible = bool(root and root.is_dir())
-        if visible and all(_size(root / s.path(f)) for f in s.files):
-            return Status("ready", total, total)
         name = self.name(s)
+        if visible and all(_size(root / s.path(f)) for f in s.files):
+            self._tidy(name)
+            return Status("ready", total, total)
         with self._lock:
             starting = self._starting.get(name)
         if starting == "":
@@ -102,6 +115,9 @@ class Downloads:
         """Start downloading (or resume). The helper image is fetched first, in the background."""
         if not models_dir.startswith("/"):
             raise ValueError("the model server has no models folder to download into")
+        short = room_short(s, models_dir)
+        if short:
+            raise ValueError(short)
         name = self.name(s)
         with self._lock:
             if self._starting.get(name) == "":
@@ -137,9 +153,45 @@ class Downloads:
             self._starting.pop(self.name(s), None)
         return f"Stopped downloading {s.name}. Download it again to carry on where it stopped."
 
+    def discard(self, s: Suggestion, models_dir: str) -> str:
+        """Stop a download and delete its partial files (complete files of it are kept)."""
+        self.cancel(s)
+        parts = [f"{s.path(f)}.part" for f in s.files]
+        root = Path(models_dir) if models_dir.startswith("/") else None
+        if root and root.is_dir() and os.access(root, os.W_OK):
+            for rel in parts:
+                (root / rel).unlink(missing_ok=True)
+        elif root:
+            self.backend.run_task(IMAGE, "rm -f " + " ".join(shlex.quote(f"{FOLDER}/{p}") for p in parts),
+                                  [(models_dir, FOLDER, False)], _owner(models_dir))
+        return f"Threw away the partial download of {s.name}."
+
+    def _tidy(self, name: str) -> None:
+        """Remove a finished download's helper: once the files are there, it has nothing to tell."""
+        try:
+            if name in self.backend.helpers(KIND):
+                self.backend.remove(name)
+        except Exception as err:  # noqa: BLE001 - tidying up is not worth failing the page for
+            log.debug("could not remove %s: %s", name, err)
+
     def _error(self, name: str) -> str:
         lines = [x for x in self.backend.logs(name, tail=20).splitlines() if x.strip()]
         return lines[-1].strip()[:200] if lines else ""
+
+
+def room_short(s: Suggestion, models_dir: str) -> str:
+    """Why there isn't room for what is left of a download ("" when there is, or when GPU Shepherd
+    can't see the folder to tell)."""
+    root = Path(models_dir)
+    if not root.is_dir():
+        return ""
+    left = sum(max(f.gb * 1e9 - _size(root / s.path(f)) - _size(root / (s.path(f) + ".part")), 0)
+               for f in s.files if not _size(root / s.path(f))) / 1e9
+    free = shutil.disk_usage(root).free / 1e9
+    if left + SPARE_GB <= free:
+        return ""
+    return (f"Not enough disk space for {s.name}: it needs {left:.1f} GB more and {models_dir} has "
+            f"{free:.1f} GB free. Free some space (Settings, Storage) and try again.")
 
 
 def _size(path: Path) -> int:

@@ -136,6 +136,43 @@ def test_downloads_run_in_a_helper(tmp_path):
         d.start(s, "relative/path")
 
 
+def test_finished_downloads_are_tidied_and_partials_can_be_discarded(tmp_path, monkeypatch):
+    backend = FakeBackend()
+    d = downloads.Downloads(backend)
+    s = ml.get("qwen3-embedding-0.6b")
+    d.start(s, str(tmp_path))
+    wait_for(lambda: d.status(s, str(tmp_path)), "ready")
+    name = d.name(s)
+    assert name in backend.helper_runs
+    (tmp_path / s.key).mkdir()
+    (tmp_path / s.key / s.model.name).write_bytes(b"gguf")
+    assert d.status(s, str(tmp_path)).state == "ready" and name not in backend.helper_runs   # helper removed
+    # a stopped download: its .part file can be thrown away
+    (tmp_path / s.key / s.model.name).unlink()
+    part = tmp_path / s.key / (s.model.name + ".part")
+    with open(part, "wb") as f:
+        f.truncate(50_000_000)                                     # sparse: 50 MB fetched so far
+    st = d.status(s, str(tmp_path))
+    assert st.state == "missing" and st.partial
+    assert "Threw away" in d.discard(s, str(tmp_path)) and not part.exists()
+    assert not d.status(s, str(tmp_path)).partial
+    # a folder GPU Shepherd can't see is cleaned up by a helper container
+    d.discard(s, "/nonexistent/models")
+    script, volumes = backend.tasks[-1]
+    assert script.startswith("rm -f /models/qwen3-embedding-0.6b/") and volumes == [("/nonexistent/models", "/models", False)]
+
+
+def test_downloads_need_room_on_the_disk(tmp_path, monkeypatch):
+    s = ml.get("qwen3-embedding-0.6b")
+    usage = type("U", (), {"free": int(1e9)})
+    monkeypatch.setattr(downloads.shutil, "disk_usage", lambda _p: usage)
+    with pytest.raises(ValueError, match="Not enough disk space"):
+        downloads.Downloads(FakeBackend()).start(s, str(tmp_path))
+    usage.free = int(10e9)
+    assert downloads.room_short(s, str(tmp_path)) == ""
+    assert downloads.room_short(s, "/nonexistent") == ""        # can't tell: let it try
+
+
 def test_install_form_uses_a_suggestion_and_the_embed_slot():
     t = tpl.get("llm-server")
     m = tpl.Machine(gpu_mem_gb=[8.0, 8.0], instances={}, servers={}, model_sizes={}, ram_gb=64)

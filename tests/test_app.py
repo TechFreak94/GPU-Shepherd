@@ -790,3 +790,36 @@ def test_full_health_check_fails_when_the_dashboard_does(stack, monkeypatch):
     monkeypatch.setattr("gpushepherd.app.host_mod.query", broken)
     assert client.get("/healthz?full=1").status_code == 500
     assert client.get("/healthz").status_code == 200
+
+
+def test_storage_page_and_trash(stack):
+    app, client, _, data = stack
+    login(client)
+    r = client.get("/storage")
+    assert r.status_code == 200 and "Storage" in r.text and "The trash is empty" in r.text
+    assert client.post("/instances/hermes/delete", headers=HX).status_code == 204
+    wait(app)
+    r = client.get("/storage")
+    assert r.status_code == 200 and "Hermes" in r.text and "Restore" in r.text and "Empty trash" in r.text
+    assert 'href="/storage"' in client.get("/settings").text
+
+
+def test_storage_cleanup_routes(stack):
+    _, client, _, _ = stack
+    login(client)
+    r = client.post("/storage/images/remove-unused", headers=HX)
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/storage?msg=")
+    r = client.post("/storage/trash/days", headers=HX, data={"days": "7"})
+    assert r.headers["HX-Redirect"].startswith("/storage?msg=")
+    assert 'value="7"' in client.get("/storage").text
+    r = client.post("/storage/trash/days", headers=HX, data={"days": "x"})
+    assert r.status_code == 204 and "toast" in r.headers["HX-Trigger"]
+
+
+def test_confirm_modal_shows_memory_warnings(stack, monkeypatch):
+    app, client, _, _ = stack
+    login(client)
+    monkeypatch.setattr(app.state.svc, "memory_warnings", lambda *a, **k: ["test warning"])
+    r = client.post("/ui/instances/llm/start", headers=HX)
+    wait(app)
+    assert "test warning" in r.text and "Continue" in r.text

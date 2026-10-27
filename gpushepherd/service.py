@@ -12,20 +12,24 @@ import logging
 import os
 import re
 import secrets
+import shlex
+import shutil
 import threading
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import app_updates, auth, host, instance_templates as tpl, model_library, updates
-from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Store, VolumeMap,
-                     friendly_errors)
+from . import app_updates, auth, budget, downloads, host, instance_templates as tpl, model_library, storage, updates
+from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
+                     VolumeMap, friendly_errors)
 from .connectors import llamaswap
-from .downloads import Downloads
+from .backend import BackendError
+from .downloads import IMAGE as HELPER_IMAGE, KIND as DOWNLOAD_KIND, Downloads
 from .engine import Engine
 from .jobs import Busy, Job, JobRunner
 from .scheduler import Plan
+from .trash import FileOps, Trash
 
 log = logging.getLogger("gpushepherd")
 ACTIONS = ("start", "stop", "restart")
@@ -67,6 +71,7 @@ class Change:
     lines: list[str]                    # what the plan does, in words
     job: Job | None = None              # set once it runs
     noop: bool = False                  # already in that state
+    warnings: list[str] = field(default_factory=list)   # memory that may not be enough (budget.py)
 
     @property
     def needs_confirm(self) -> bool:
@@ -96,10 +101,16 @@ class Shepherd:
     llama_client: object                # iid -> llama-swap client (a stand-in in demo mode)
     loading: dict[str, set[str]] = field(default_factory=dict)   # model server -> models loading
     downloads: Downloads | None = None
+    trash: Trash | None = None
+    peaks: budget.Peaks | None = None
 
     def __post_init__(self):
         if self.downloads is None:
             self.downloads = Downloads(self.backend, self.store.settings().container_prefix)
+        if self.trash is None:
+            self.trash = Trash(self.store.root, HelperFileOps(self.backend))
+        if self.peaks is None:
+            self.peaks = budget.Peaks(self.store.root)
 
     @property
     def backend(self):
@@ -127,13 +138,51 @@ class Shepherd:
         if p.error:
             raise Problem(p.error, status=409)
         c = Change(action, iid, names[iid], p, p.describe(names), noop=p.is_noop)
-        if c.noop or (p.side_effects and not confirm):
+        if not c.noop:
+            c.warnings = self.memory_warnings(p)
+        if c.noop or ((p.side_effects or c.warnings) and not confirm):
             return c
         try:
             c.job = self.jobs.submit(f"{VERBS[action]} {c.name}", lambda job: self.engine.execute(p, job, job))
         except Busy as err:
             raise Problem(str(err), "warn", 409) from err
         return c
+
+    def memory_warnings(self, p: Plan) -> list[str]:
+        """What may not fit once the plan runs: system RAM for what starts, and model server models
+        bigger than the GPUs they get. Estimates (see budget.py), so only warnings."""
+        try:
+            snap = self.engine.snapshot()
+            peaks = self.peaks.get()
+            vram_of = {g.index: int(g.mem_total * 2**20) for g in snap.gpus}
+            out, need, starting = [], 0, []
+            for iid in dict.fromkeys(p.to_start + p.to_restart):
+                inst = snap.instances.get(iid)
+                if not inst:
+                    continue
+                gpus = p.allocations.get(iid, [])
+                vram = sum(vram_of.get(g, 0) for g in gpus)
+                cat = self.store.catalog(iid) if inst.kind == "llama-swap" else None
+                n = budget.ram_needed(inst, cat, len(gpus), vram, peaks.get(iid, 0))
+                if n:
+                    need += n
+                    starting.append(inst.name)
+                if cat and gpus:
+                    out += budget.too_big(inst, cat, len(gpus), vram)
+            total, available = host.mem_available()
+            if need and total:
+                leaving = [self.engine.container_name(i) for i in p.to_stop + p.to_restart
+                           if snap.states.get(i) and snap.states[i].running]
+                freed = sum(s.mem_used for s in self.backend.stats(leaving).values()) if leaving else 0
+                free = available + freed
+                if need > free - budget.HEADROOM:
+                    out.insert(0, f"{', '.join(starting)} may need about {budget.gb(need)} of system RAM, and about "
+                                  f"{budget.gb(free)} is free. If the machine runs out, the system stops a "
+                                  "container to make room.")
+            return out
+        except Exception as err:  # noqa: BLE001 - a check that fails must not block a start
+            log.warning("memory check skipped: %s", err)
+            return []
 
     def job(self, jid: int) -> Job:
         job = next((j for j in self.jobs.recent() if j.id == jid), None)
@@ -186,12 +235,223 @@ class Shepherd:
         return f"Saved {inst.name}.{note}"
 
     def delete_instance(self, iid: str) -> str:
+        """Stop an instance the normal way and move it, with its app data folder and the helpers
+        that only it uses (its database), to the trash. A running instance is deleted in the
+        background, once its running work finishes."""
         inst = self.instance(iid)
+        instances, _ = self.store.instances()
+        others = [i for i in instances.values() if i.id != iid and iid in i.requires]
+        if others:
+            raise Problem(f"{others[0].name} needs {inst.name}: delete {others[0].name} first.", status=409)
+        ids = [iid] + self.own_helpers(inst, instances)
+        st = self.backend.states().get(iid)
+        running = bool(st and st.running)
         try:
-            self.jobs.submit(f"Deleting {inst.name}", lambda logf: self.engine.remove_instance(iid, logf), wait=True)
+            job = self.jobs.submit(f"Deleting {inst.name}", lambda job: self._delete(ids, job), wait=not running)
         except Busy as err:
             raise Problem(str(err), "warn", 409) from err
-        return f"Deleted {inst.name}."
+        if job.status == "failed":
+            raise Problem(f"Could not delete {inst.name}: {job.error}", status=500)
+        extra = f" (with {', '.join(instances[i].name for i in ids[1:])})" if ids[1:] else ""
+        if running:
+            return f"Deleting {inst.name}{extra}: it stops once its running work finishes, then goes to the trash."
+        return f"Deleted {inst.name}{extra}. It is in the trash (Settings, Storage) if you need it back."
+
+    @staticmethod
+    def own_helpers(inst: Instance, instances: dict[str, Instance]) -> list[str]:
+        """The helper instances an app installed with itself (its database) that nothing else uses."""
+        out = []
+        for r in inst.requires:
+            c = instances.get(r)
+            used = any(r in o.requires for o in instances.values() if o.id != inst.id)
+            if c and not used and r.startswith(f"{inst.id}-") and c.app:
+                out.append(r)
+        return out
+
+    def _delete(self, ids: list[str], job: Job) -> None:
+        instances, _ = self.store.instances()
+        self.engine.remove_containers(ids, job, job)
+        paths = self.instance_files(ids, instances)
+        entry = self.trash.put(", ".join(instances[i].name for i in ids if i in instances), ids, paths)
+        kept = [i.original for i in entry.items if not i.stored]
+        job(f"Moved {len(entry.items) - len(kept)} item(s) to the trash")
+        for k in kept:
+            job(f"Left {k} where it is (it could not be moved to the trash)")
+        for iid in ids:               # whatever could not be moved must not stay behind as an instance
+            self.store.delete_instance(iid)
+            self.peaks.forget(iid)
+        self.trash.purge_older(self.store.settings().trash_days)
+
+    def instance_files(self, ids: list[str], instances: dict[str, Instance]) -> list[Path]:
+        """What deleting these instances removes: their YAML and model list (with the .prev copies),
+        generated files, and app data folders (appdata/<folder>) no other instance uses."""
+        root = self.store.root
+        paths = []
+        for iid in ids:
+            for p in (self.store.instance_path(iid), self.store.catalog_path(iid)):
+                paths += [p, p.with_suffix(p.suffix + ".prev")]
+            paths.append(root / "generated" / iid)
+        appdata = root / "appdata"
+
+        def tops(inst: Instance) -> set[Path]:
+            out = set()
+            for v in inst.volumes:
+                host = Path(v.host)
+                if host.is_relative_to(appdata) and host != appdata:
+                    out.add(appdata / host.relative_to(appdata).parts[0])
+            return out
+        kept = set().union(*(tops(i) for i in instances.values() if i.id not in ids))
+        mine = set().union(*(tops(instances[i]) for i in ids if i in instances))
+        return paths + sorted(mine - kept)
+
+    # ------------------------------------------------------------------ trash
+    def trash_entries(self) -> list:
+        self.trash.purge_older(self.store.settings().trash_days)
+        return self.trash.entries()
+
+    def restore_trash(self, eid: str) -> str:
+        try:
+            e = self.trash.restore(eid)
+        except KeyError as err:
+            raise Problem(str(err).strip("'\""), status=404) from err
+        except FileExistsError as err:
+            raise Problem(f"Can't put it back: {err}. Rename or delete that first.", status=409) from err
+        except OSError as err:
+            raise Problem(f"Could not put it back: {err}", status=500) from err
+        return f"Put {e.title} back." + (" Start it from the dashboard when you want it." if e.instances else "")
+
+    def purge_trash(self, eid: str = "") -> str:
+        """Delete one trash entry for good, or all of them ("")."""
+        ids = [eid] if eid else [e.id for e in self.trash.entries(sizes=False)]
+        freed = 0
+        for i in ids:
+            try:
+                freed += sum(e.size for e in self.trash.entries() if e.id == i)
+                self.trash.purge(i)
+            except KeyError as err:
+                raise Problem(str(err).strip("'\""), status=404) from err
+            except OSError as err:
+                raise Problem(f"Could not delete everything: {err}", status=500) from err
+        if not ids:
+            return "The trash is already empty."
+        return f"Deleted {'everything in the trash' if not eid else 'it'} for good, freeing {gb(freed)}."
+
+    @checked
+    def set_trash_days(self, days: int) -> str:
+        s = self.store.settings()
+        s.trash_days = days
+        self.store.save_settings(Settings.model_validate(s.model_dump()))
+        return f"The trash empties things after {days} days." if days else "The trash keeps things until you empty it."
+
+    # ------------------------------------------------------------------ storage
+    def storage(self) -> dict:
+        """What takes space (see storage.py), the app images on this machine, containers left
+        without an instance, and the trash."""
+        instances, _ = self.store.instances()
+        catalogs = {}
+        for iid, inst in instances.items():
+            if inst.kind == "llama-swap":
+                cat = self.store.catalog(iid)
+                catalogs[iid] = [f for m in cat.models for f in (m.file, m.mmproj, m.mtp_draft) if f]
+        scan = storage.scan(self.store.root, instances, catalogs, tpl.MODELS_IN_CONTAINER, self._downloading(instances))
+        states = self.backend.states()
+        users: dict[str, list[str]] = {}
+        for iid, st in states.items():
+            users.setdefault(st.image, []).append(instances[iid].name if iid in instances else st.name)
+        for inst in instances.values():
+            users.setdefault(inst.image, [])
+            if inst.name not in users[inst.image]:
+                users[inst.image].append(inst.name)
+        present = self.backend.images(sorted(self._image_candidates(instances)))
+        images = [{"image": ref, "size": size, "used_by": sorted(users.get(ref, []))}
+                  for ref, size in sorted(present.items())]
+        return {"disks": [asdict(d) | {"low": d.low} for d in scan.disks],
+                "folders": [asdict(f) for f in scan.folders],
+                "hidden": scan.hidden,
+                "files": [asdict(f) for f in scan.files],
+                "leftover_folders": [asdict(f) for f in scan.leftover_folders],
+                "images": images,
+                "orphans": sorted(st.name for iid, st in states.items() if iid not in instances),
+                "trash": [asdict(e) | {"age_days": e.age_days} for e in self.trash_entries()],
+                "trash_days": self.store.settings().trash_days}
+
+    def low_space(self) -> list[dict]:
+        """Disks GPU Shepherd uses that are nearly full, for the dashboard's banner. Cheap: no sizes."""
+        instances, _ = self.store.instances()
+        out, seen = [], set()
+        for p in [str(self.store.root)] + storage.model_folders(instances, tpl.MODELS_IN_CONTAINER):
+            try:
+                dev = os.stat(p).st_dev
+                if dev in seen:
+                    continue
+                seen.add(dev)
+                free = shutil.disk_usage(p).free
+            except OSError:
+                continue
+            if free < storage.LOW_GB * 1e9:
+                out.append({"path": p, "free": free, "free_text": gb(free)})
+        return out
+
+    def _image_candidates(self, instances: dict[str, Instance]) -> set[str]:
+        """Images GPU Shepherd may have pulled: the App Store's, the download helper, and the
+        instances' own. Other images on the machine are none of its business."""
+        return {t.image for t in tpl.TEMPLATES} | {HELPER_IMAGE} | {i.image for i in instances.values()}
+
+    def _downloading(self, instances: dict[str, Instance]) -> set[str]:
+        running = {n for n, h in self.backend.helpers(DOWNLOAD_KIND).items() if h.running}
+        folders = storage.model_folders(instances, tpl.MODELS_IN_CONTAINER)
+        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS if self.downloads.name(s) in running
+                for f in s.files for m in folders}
+
+    def remove_unused_images(self) -> str:
+        rows = [r for r in self.storage()["images"] if not r["used_by"]]
+        freed, failed = 0, []
+        for r in rows:
+            try:
+                self.backend.remove_image(r["image"])
+                freed += r["size"]
+            except BackendError as err:
+                failed.append(str(err))
+        if not rows:
+            return "No unused app images to remove."
+        msg = f"Removed {len(rows) - len(failed)} unused image(s), freeing {gb(freed)}."
+        if failed:
+            msg += " Kept: " + "; ".join(failed)
+        return msg + " They download again if an app needs them."
+
+    def trash_files(self, paths: list[str]) -> str:
+        """Move model files the Storage page listed (unused, unfinished, duplicate) to the trash."""
+        found = {f["path"]: f for f in self.storage()["files"]}
+        unknown = [p for p in paths if p not in found]
+        if unknown or not paths:
+            raise Problem(f"Not a file the Storage page lists: {unknown[0]}" if unknown else "No files picked.",
+                          status=404 if unknown else 400)
+        by_folder: dict[str, list[str]] = {}
+        for p in paths:
+            by_folder.setdefault(found[p]["folder"], []).append(p)
+        size = sum(found[p]["size"] for p in paths)
+        for folder, files in by_folder.items():
+            title = Path(files[0]).name if len(files) == 1 else f"{len(files)} model files from {folder}"
+            try:
+                self.trash.put_files(title, folder, files)
+            except (OSError, BackendError) as err:
+                raise Problem(f"Could not move the files: {err}", status=500) from err
+        return f"Moved {len(paths)} file(s) ({gb(size)}) to the trash. The space is freed when the trash is emptied."
+
+    def trash_leftover(self, name: str) -> str:
+        folder = next((f for f in self.storage()["leftover_folders"] if f["label"] == name), None)
+        if not folder:
+            raise Problem(f"No unused app data folder called '{name}'", status=404)
+        entry = self.trash.put(f"App data folder {name}", [], [Path(folder["path"])])
+        if not entry.items or not entry.items[0].stored:
+            raise Problem(f"Could not move {folder['path']} to the trash", status=500)
+        return f"Moved the app data folder {name} to the trash."
+
+    def remove_orphans(self) -> str:
+        names = self.storage()["orphans"]
+        for n in names:
+            self.backend.remove(n)
+        return f"Removed {len(names)} container(s) left without an instance." if names else "Nothing to remove."
 
     # ------------------------------------------------------------------ App Store
     def machine(self) -> tpl.Machine:
@@ -481,7 +741,7 @@ class Shepherd:
             out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
                         "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
                         "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
-                        "pct": st.pct, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
+                        "pct": st.pct, "partial": st.partial, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
                         "files": [{"path": f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}", "url": x.url, "gb": x.gb}
                                   for x in s.files]})
         return sorted(out, key=lambda x: x.pop("rank"))
@@ -501,11 +761,21 @@ class Shepherd:
                           "add one under Edit first.")
         if self.downloads.status(s, folder).state == "ready":
             return f"{s.name} is already downloaded."
-        return self.downloads.start(s, folder)
+        try:
+            return self.downloads.start(s, folder)
+        except ValueError as err:
+            raise Problem(str(err), "warn", 507) from err
 
     def cancel_download(self, iid: str, key: str) -> str:
         self.server(iid)
         return self.downloads.cancel(self._suggestion(key))
+
+    def discard_download(self, iid: str, key: str) -> str:
+        inst, _ = self.server(iid)
+        try:
+            return self.downloads.discard(self._suggestion(key), self.models_dir(inst))
+        except BackendError as err:
+            raise Problem(f"Could not delete the partial files: {err}", status=500) from err
 
     @checked
     def add_suggestion(self, iid: str, key: str) -> str:
@@ -648,6 +918,40 @@ class Shepherd:
             raise Problem(str(err)) from err
         log.info("update: GitHub token %s", "removal requested" if clear else "handed to the host")
         return "Token removed." if clear else "Token saved; checking for updates with it."
+
+
+class HelperFileOps(FileOps):
+    """Trash moves in a models folder: directly when GPU Shepherd can write it, otherwise in a
+    helper container with the folder mounted (models folders are often mounted read-only here)."""
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    def _inside(self, folder: str, path: str) -> str:
+        return "/f/" + str(Path(path).relative_to(folder))
+
+    def _run(self, folder: str, lines: list[str]) -> None:
+        self.backend.run_task(HELPER_IMAGE, "set -e\n" + "\n".join(lines), [(folder, "/f", False)],
+                              downloads._owner(folder))
+
+    def move(self, folder: str, pairs: list[tuple[str, str]]) -> None:
+        if os.access(folder, os.W_OK):
+            return super().move(folder, pairs)
+        self._run(folder, [f"mkdir -p {shlex.quote(os.path.dirname(self._inside(folder, d)))} && "
+                           f"mv -n {shlex.quote(self._inside(folder, s))} {shlex.quote(self._inside(folder, d))}"
+                           for s, d in pairs])
+
+    def remove(self, folder: str, paths: list[str]) -> None:
+        if os.access(folder, os.W_OK):
+            return super().remove(folder, paths)
+        self._run(folder, ["rm -rf " + " ".join(shlex.quote(self._inside(folder, p)) for p in paths)])
+
+
+def gb(n: int | float) -> str:
+    """Bytes as a short size, e.g. 3.2 GB or 140 MB."""
+    if n >= 1e9:
+        return f"{n / 1e9:.1f} GB"
+    return f"{n / 1e6:.0f} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
 
 
 def parse_auto_rules(text: str) -> list[AutoRule]:

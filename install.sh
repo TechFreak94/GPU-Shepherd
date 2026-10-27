@@ -17,6 +17,7 @@
 #   7. writes compose.yaml (if there isn't one yet) and starts GPU Shepherd
 #   8. with a preset, offers to download its models
 #   9. offers to let the dashboard check for updates and update GPU Shepherd for you
+#  10. if you ask for it (off by default), installs Tailscale to reach the dashboard and apps remotely
 #
 # Nothing is installed or changed until you confirm the plan. A flag answers its question in
 # advance, so the guided mode only asks what the flags left open. Run it again at any time: it
@@ -40,6 +41,8 @@ PRESET=""               # preset name or folder, or "none", once decided by a fl
 DOWNLOAD=""             # yes / no: download the preset's models at the end
 DOCKER_GROUP=1
 DASH_UPDATES=""         # yes / no: install the service that lets the dashboard update GPU Shepherd
+TAILSCALE=""            # yes / no: install Tailscale on this machine and log it in to your tailnet
+TS_HTTPS=0              # 1: also serve the dashboard over HTTPS on its Tailscale name
 GPU_TEST_IMAGE=ubuntu:24.04
 # Below this much installed RAM, models must fit entirely in GPU memory. Keeping part of a model in
 # system RAM (MoE expert offload) needs room for those layers plus the OS, Docker and the other
@@ -78,6 +81,14 @@ in advance, for scripted or advanced installs.
                           you press its button (a small systemd service; see update.sh);
                           with --yes this is only set up when given
   --no-dashboard-updates  don't offer that; update with ./update.sh instead
+  --tailscale         install Tailscale and join this machine to your tailnet, to reach the
+                      dashboard and apps from your other devices without opening any ports.
+                      Logs in with a link it prints, or with an auth key in the TS_AUTHKEY
+                      environment variable (sudo TS_AUTHKEY=tskey-... ./install.sh --tailscale);
+                      the key is not saved. Off unless asked for.
+  --tailscale-https   with --tailscale, also serve the dashboard at https://<name>.<tailnet>.ts.net
+                      (needs HTTPS certificates turned on in Tailscale's admin console)
+  --no-tailscale      don't offer Tailscale
   --update [OPTIONS]  update GPU Shepherd instead of installing: runs ./update.sh (see --help there)
   --no-start          prepare everything but don't start GPU Shepherd
   -y, --yes           don't ask anything: use the defaults for whatever no option sets
@@ -110,6 +121,9 @@ while [ $# -gt 0 ]; do
         --no-docker-group) DOCKER_GROUP=0; shift ;;
         --dashboard-updates) DASH_UPDATES=yes; shift ;;
         --no-dashboard-updates) DASH_UPDATES=no; shift ;;
+        --tailscale)      TAILSCALE=yes; shift ;;
+        --tailscale-https) TAILSCALE=yes; TS_HTTPS=1; shift ;;
+        --no-tailscale)   TAILSCALE=no; shift ;;
         -y|--yes)         ASSUME_YES=1; shift ;;
         -h|--help)        usage; exit 0 ;;
         *)                usage >&2; die "unknown option: $1" ;;
@@ -625,6 +639,44 @@ if [ "$DASH_UPDATES" = yes ] && [ ! -e "$HERE/.git" ]; then
     DASH_UPDATES=no
 fi
 
+# --------------------------------------------------------------------------- remote access
+
+# Tailscale goes on the host, not in a container: the dashboard and every app already publish
+# their ports there, so one login reaches them all, and it keeps working while GPU Shepherd is
+# restarted or updated. Never asked when it is already logged in.
+HAS_TAILSCALE=0
+if have tailscale; then HAS_TAILSCALE=1; fi
+TS_UP=0
+if [ "$HAS_TAILSCALE" -eq 1 ] && tailscale status >/dev/null 2>&1; then TS_UP=1; fi
+if [ -z "$TAILSCALE" ]; then
+    if [ "$INTERACTIVE" -eq 1 ] && [ "$TS_UP" -eq 0 ] && [ "$WSL" -eq 0 ]; then
+        echo "    Tailscale (free for personal use) lets your phone and laptop reach the dashboard and"
+        echo "    apps from anywhere, without opening ports on your router. Your other devices need it too."
+        if confirm "Install Tailscale for remote access?" N; then TAILSCALE=yes; else TAILSCALE=no; fi
+        echo
+    else
+        TAILSCALE=no
+    fi
+fi
+if [ "$TAILSCALE" = yes ]; then
+    if [ "$WSL" -eq 1 ]; then
+        warn "--tailscale ignored in WSL2: install Tailscale for Windows instead. Ports published by
+         Docker Desktop are then reachable on the Windows machine's Tailscale address."
+        TAILSCALE=no
+    elif [ "$HAS_TAILSCALE" -eq 0 ] && { [ "$SKIP_DEPS" -eq 1 ] || [ -z "$FAMILY" ]; }; then
+        warn "--tailscale ignored: Tailscale isn't installed and this script won't install it here.
+         Install it (https://tailscale.com/download), then run this script again."
+        TAILSCALE=no
+    elif [ "$HAS_SYSTEMD" -eq 0 ]; then
+        warn "--tailscale ignored: systemd isn't running here, so tailscaled can't run as a service."
+        TAILSCALE=no
+    elif [ -n "$IN_CONTAINER" ] && [ ! -c /dev/net/tun ]; then
+        warn "--tailscale ignored: this container has no /dev/net/tun. Pass it through (see
+         https://tailscale.com/kb/1130/lxc-unprivileged) or install Tailscale on the host instead."
+        TAILSCALE=no
+    fi
+fi
+
 # --------------------------------------------------------------------------- docker group
 
 DOCKER_USER=""
@@ -699,6 +751,14 @@ if [ "$NO_START" -eq 0 ]; then
 fi
 if [ "$DASH_UPDATES" = yes ]; then
     plan+=("Install the gpu-shepherd-update service: daily update checks, and updates from the dashboard")
+fi
+if [ "$TAILSCALE" = yes ]; then
+    [ "$HAS_TAILSCALE" -eq 1 ] || plan+=("Install Tailscale (from Tailscale's package repository)")
+    if [ "$TS_UP" -eq 0 ]; then
+        if [ -n "${TS_AUTHKEY:-}" ]; then plan+=("Join your tailnet with the auth key in TS_AUTHKEY")
+        else plan+=("Join your tailnet: you open a login link it prints"); fi
+    fi
+    [ "$TS_HTTPS" -eq 0 ] || plan+=("Serve the dashboard over HTTPS on this machine's Tailscale name")
 fi
 
 say "The plan:"
@@ -937,11 +997,64 @@ download_models() {
     fi
 }
 
+# Installs and logs in Tailscale. Any failure is a warning: GPU Shepherd works without it.
+TS_IP=""; TS_URL=""
+setup_tailscale() {
+    [ "$TAILSCALE" = yes ] || return 0
+    echo
+    if ! have tailscale; then
+        say "Installing Tailscale"
+        if [ "$FAMILY" = arch ]; then
+            pkg_install tailscale || { warn "could not install Tailscale"; return 0; }
+        else
+            # Tailscale's own script adds its package repository for this distro (apt, dnf, ...).
+            local script; script=$(mktemp)
+            if ! curl -fsSL https://tailscale.com/install.sh -o "$script" || ! sh "$script"; then
+                rm -f "$script"; warn "could not install Tailscale (see https://tailscale.com/download)"; return 0
+            fi
+            rm -f "$script"
+        fi
+    fi
+    systemctl enable --now tailscaled >/dev/null 2>&1 || true
+    if ! tailscale status >/dev/null 2>&1; then
+        say "Joining your tailnet"
+        local ok=0
+        if [ -n "${TS_AUTHKEY:-}" ]; then
+            # Handed over in a private temporary file, so the key never shows in the process list.
+            local keyfile; keyfile=$(mktemp); chmod 600 "$keyfile"
+            printf '%s' "$TS_AUTHKEY" > "$keyfile"
+            if tailscale up --auth-key="file:$keyfile"; then ok=1; fi
+            rm -f "$keyfile"
+            unset TS_AUTHKEY
+        elif [ "$INTERACTIVE" -eq 1 ]; then
+            echo "    Open the link below in a browser and log in to Tailscale to add this machine."
+            if tailscale up; then ok=1; fi
+        fi
+        if [ "$ok" -eq 0 ]; then
+            warn "this machine hasn't joined a tailnet yet. Finish with:  sudo tailscale up"
+            return 0
+        fi
+    fi
+    TS_IP=$(tailscale ip -4 2>/dev/null | head -n 1)
+    [ "$TS_HTTPS" -eq 1 ] || return 0
+    # The certificate name is this machine's name in the tailnet; there is none until HTTPS
+    # certificates are turned on, and serve would then wait for that instead of failing.
+    local name
+    name=$(tailscale status --json 2>/dev/null | tr -d ' \n' | sed -n 's/.*"CertDomains":\["\([^"]*\)".*/\1/p')
+    if [ -n "$name" ] && tailscale serve --bg --https=443 "http://127.0.0.1:$PORT" >/dev/null; then
+        TS_URL="https://$name"
+    else
+        warn "the dashboard isn't served over HTTPS yet. Turn on HTTPS certificates in Tailscale's admin
+         console (DNS page), then run:  sudo tailscale serve --bg --https=443 http://127.0.0.1:$PORT"
+    fi
+}
+
 if [ "$DASH_UPDATES" = yes ]; then
     "$HERE/update.sh" --enable-dashboard-updates || warn "could not set up dashboard updates; update with: sudo ./update.sh"
 fi
 
 if [ "$NO_START" -eq 1 ]; then
+    setup_tailscale
     say "Ready. Start GPU Shepherd with:  sudo docker compose up -d --build"
     download_models
     exit 0
@@ -960,9 +1073,16 @@ for _ in $(seq 1 60); do
 done
 curl -fsS "$url/healthz" >/dev/null 2>&1 || die "GPU Shepherd did not answer on $url. See: sudo docker compose logs gpu-shepherd"
 
+setup_tailscale
 host_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo
 say "GPU Shepherd is running: http://${host_ip:-<this-machine>}:$PORT"
+if [ -n "$TS_URL" ]; then
+    echo "    From your devices on Tailscale: $TS_URL"
+fi
+if [ -n "$TS_IP" ]; then
+    echo "    Over Tailscale: http://$TS_IP:$PORT, and each app on its usual port at $TS_IP"
+fi
 if [ -f "$DATA_DIR/INITIAL_PASSWORD.txt" ]; then
     echo "    First login (also saved in $DATA_DIR/INITIAL_PASSWORD.txt):"
     sed -n 's/^\(user\|password\): /    \1: /p' "$DATA_DIR/INITIAL_PASSWORD.txt"

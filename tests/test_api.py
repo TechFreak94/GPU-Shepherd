@@ -14,6 +14,7 @@ from gpushepherd.__main__ import main
 from gpushepherd.app import DemoLlamaClient, create_app
 from gpushepherd.backend import FakeBackend
 from gpushepherd.config import Store
+from gpushepherd.service import Problem
 
 EXAMPLE = Path(__file__).parent / "fixtures" / "stack"
 HX = {"HX-Request": "true"}
@@ -89,7 +90,7 @@ def test_instances_put_and_delete(stack):
     assert r.status_code == 400 and "already used by 'llm'" in r.json()["error"]
     r = client.put("/api/v1/instances/whisper", json=inst | {"gpu": {"mode": "fixed"}})
     assert r.status_code == 400 and "needs at least one GPU" in r.json()["error"]
-    assert client.delete("/api/v1/instances/whisper").json()["message"] == "Deleted Whisper."
+    assert client.delete("/api/v1/instances/whisper").json()["message"].startswith("Deleted Whisper.")
     assert client.get("/api/v1/instances/whisper").status_code == 404
 
 
@@ -292,3 +293,59 @@ def test_installing_with_a_suggested_model_downloads_it(stack, tmp_path_factory)
             break
         time.sleep(0.01)
     assert "shepherd-download-qwen3.5-9b" in backend.helper_runs
+
+
+def test_delete_moves_an_app_and_its_database_to_the_trash(stack):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    appdata = data / "appdata" / "chat"
+    vol = lambda sub, inside: {"host": str(appdata / sub), "container": inside}    # noqa: E731
+    assert client.put("/api/v1/instances/chat-db", json={"name": "Chat DB", "image": "mongo:7", "app": "mongodb",
+                                                          "volumes": [vol("db", "/data/db")]}).status_code == 201
+    assert client.put("/api/v1/instances/chat", json={"name": "Chat", "image": "x/chat:1", "requires": ["chat-db"],
+                                                       "volumes": [vol("data", "/data")]}).status_code == 201
+    (appdata / "db").mkdir(parents=True, exist_ok=True)
+    (appdata / "db" / "store.bin").write_bytes(b"x" * 1000)
+    (data / "generated" / "chat").mkdir(parents=True)
+    r = client.delete("/api/v1/instances/chat-db")
+    assert r.status_code == 409 and "Chat needs Chat DB" in r.json()["error"]
+    client.post("/api/v1/instances/chat/start")
+    wait(app)
+    assert backend.running["shepherd-chat"] and backend.running["shepherd-chat-db"]
+    msg = client.delete("/api/v1/instances/chat").json()["message"]
+    assert "with Chat DB" in msg and "stops once its running work finishes" in msg
+    wait(app)
+    assert "shepherd-chat" not in backend.containers and "shepherd-chat-db" not in backend.containers
+    assert "stop shepherd-chat" in backend.calls                                     # stopped the normal way first
+    assert not (data / "instances" / "chat.yaml").exists() and not (data / "instances" / "chat-db.yaml").exists()
+    assert not appdata.exists() and not (data / "generated" / "chat").exists()
+    [entry] = svc.trash_entries()
+    assert entry.instances == ["chat", "chat-db"] and entry.title == "Chat, Chat DB" and entry.size >= 1000
+    # put back, then delete again and empty the trash
+    assert "Put Chat, Chat DB back" in svc.restore_trash(entry.id)
+    assert (appdata / "db" / "store.bin").exists() and client.get("/api/v1/instances/chat").status_code == 200
+    assert svc.trash_entries() == []
+    assert client.delete("/api/v1/instances/chat").json()["message"].startswith("Deleted Chat (with Chat DB).")
+    entry = svc.trash_entries()[0]
+    client.put("/api/v1/instances/chat", json={"name": "New chat", "image": "x/chat:2"})
+    with pytest.raises(Problem, match="something else is there now"):
+        svc.restore_trash(entry.id)
+    assert "freeing" in svc.purge_trash(entry.id) and svc.trash_entries() == []
+    with pytest.raises(Problem):
+        svc.purge_trash(entry.id)
+
+
+def test_old_trash_is_emptied_by_itself(stack):
+    app, client, _, data = stack
+    svc = app.state.svc
+    client.put("/api/v1/instances/whisper", json={"name": "Whisper", "image": "x/w:1"})
+    client.delete("/api/v1/instances/whisper")
+    [entry] = svc.trash_entries()
+    manifest = data / "trash" / entry.id / "manifest.yaml"
+    raw = yaml.safe_load(manifest.read_text())
+    manifest.write_text(yaml.safe_dump(raw | {"deleted": raw["deleted"] - 31 * 86400}))
+    assert "keeps things" in svc.set_trash_days(0) and len(svc.trash_entries()) == 1
+    svc.set_trash_days(30)
+    assert svc.trash_entries() == []
+    with pytest.raises(Problem):
+        svc.set_trash_days(-1)

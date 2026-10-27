@@ -26,6 +26,10 @@
           {% elif s.state != "ready" and s.in_catalog %}
             <button hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/download" hx-target="#suggestions" hx-swap="outerHTML">{{ "Try again" if s.state == "failed" else "Download" }}</button>
           {% endif %}
+          {% if s.partial %}
+            <button hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/discard" hx-target="#suggestions" hx-swap="outerHTML"
+              hx-confirm="Delete what was downloaded of {{ s.name }} so far?" title="Deletes the unfinished files to free the space">Discard</button>
+          {% endif %}
           {% if not s.in_catalog %}
             <button class="{{ 'primary' if s.fits else '' }}" hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/add"
               {% if not s.fits %}hx-confirm="{{ s.name }} is probably too big for this machine. Add it anyway?"{% endif %}
