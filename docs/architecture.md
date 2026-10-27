@@ -18,6 +18,8 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       ├─ downloads.py  fetches suggested models in a helper container (curl)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
+                      ├─ storage.py / trash.py   what takes disk space; the trash deletes go to first
+                      ├─ app_updates.py  settings installed apps are missing from their current template
                       ├─ auth.py       scrypt password hashing, first-run password, API token
                       ├─ updates.py    update status, steps and requests, shared with update.sh on the host
                       └─ changelog.py  reads CHANGELOG.md, compares versions

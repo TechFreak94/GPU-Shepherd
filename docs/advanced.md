@@ -15,6 +15,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 - [Model servers](#model-servers): models, model behaviour, GPU and system RAM, suggested models,
   auto names, server settings
 - [Settings](#settings)
+- [Storage and trash](#storage-and-trash)
 - [What App Store apps fill in](#what-app-store-apps-fill-in)
 
 ## Instances
@@ -275,8 +276,26 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | Docker network | `network` | The network every instance joins. |
 | Theme | - | System (follows your device), Light or Dark. Saved per browser in a `theme` cookie, not in `settings.yaml`. The theme button at the top of every page cycles through them. |
 | API token | - | For the [JSON API](api.md) and the `gpu-shepherd` commands. Kept in the `api-token` file in the data folder (mode 600), not in `settings.yaml`. *Make a new token* replaces it. |
+| Empty the trash after | `trash_days` | Days before the [trash](#storage-and-trash) empties itself, 30 by default; `0` keeps things until you empty it. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
+
+## Storage and trash
+
+The **Storage** page shows free space on each disk it uses (with a warning when one is low), the size
+of each folder, the app images and which instance uses them, and what is worth a look: model files in
+no model list, unfinished downloads, the same file twice, app data folders with no instance, and
+containers with no instance. Folders that aren't mounted into GPU Shepherd's container at the same
+path are listed without sizes.
+
+Nothing here is deleted outright. Deleting an instance, and moving files or folders from the Storage
+page, put them in the **trash**, where *Restore* puts them back and *Delete for good* frees the space.
+Deleting an instance moves its settings, model list and app data folder (and a helper only it uses,
+such as LibreChat's database), never its model files. Model files you remove from the Storage page wait
+in `.shepherd-trash` in their own models folder. Entries empty themselves after `trash_days`.
+Unused app images and containers without an instance are removed at once; images download again when
+an app needs them. The same things are in the `gpu-shepherd` [commands](cli.md#commands) and the
+[API](api.md#storage-and-trash).
 
 ## What App Store apps fill in
 

@@ -71,6 +71,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Light or dark**: follows your device, or pick Light or Dark with the theme button at the top.
 
   ![Dark theme](docs/screenshots/dashboard-dark.png)
+- **Storage and trash**: free space per disk, folder sizes, unused app images and model files, and a
+  trash that deleting an instance or a file goes to first, so you can put it back.
+- **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
@@ -278,6 +281,8 @@ in the suggested models.
   catalogs/<id>.yaml     model list + API key per model server        (mode 600)
   generated/<id>/        files rendered for containers - do not edit
   update/                update status, log and settings backups
+  appdata/<app>/         each app's own data
+  trash/                 deleted instances and files, until restored or emptied
 ```
 
 You can edit the YAML by hand; GPU Shepherd re-reads it on every page load and shows a warning
