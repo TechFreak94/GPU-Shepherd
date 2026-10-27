@@ -21,6 +21,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from . import instance_templates as tpl
 from .config import ConfigError, Instance
 
 MIN_PASSWORD = 8
@@ -52,20 +53,21 @@ class Method:
 
 def method(inst: Instance) -> Method | None:
     """How an instance's logins are read and reset (None: GPU Shepherd doesn't know its logins)."""
-    if inst.app == "hermes":
+    app = next((t.key for t in tpl.TEMPLATES if tpl.matches(t, inst)), "")    # older ones by their image
+    if app == "hermes":
         return Method("hermes", "its environment (the dashboard login)", False,
                       "Setting a new password restarts Hermes Agent if it is running.")
-    if inst.app == "anythingllm":
+    if app == "anythingllm":
         return Method("anythingllm", "its settings file, server.env, or in multi-user mode its database", True,
                       "Without a password anyone who can open AnythingLLM can use it. Setting its password "
                       "restarts AnythingLLM; in multi-user mode accounts change at once.")
-    if inst.app == "open-webui":
+    if app == "open-webui":
         return Method("open-webui", "its database", True,
                       "The first account made in Open WebUI is its admin.")
-    if inst.app == "librechat":
+    if app == "librechat":
         return Method("librechat", "its MongoDB database", True,
                       "The first account made in LibreChat is its admin. Its database starts with it.")
-    if inst.app == "langflow":
+    if app == "langflow":
         return Method("langflow", "its database", True,
                       "The admin was made from LANGFLOW_SUPERUSER and LANGFLOW_SUPERUSER_PASSWORD when "
                       "Langflow first started; changing those later does nothing, so set a new password here.")

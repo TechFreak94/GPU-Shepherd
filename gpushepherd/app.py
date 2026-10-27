@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, drain, first_run, host as host_mod, instance_templates as tpl, model_library, updates
+from . import __version__, api, auth, buildinfo, changelog, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -222,7 +222,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     problems.append(cat_error)
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "unknown" if unknown else "not created"),
-                    "container": engine.container_name(inst.id),
+                    "container": engine.container_name(inst.id), "has_logins": logins.method(inst) is not None,
                     "gpus": gpus, "assigned": assigned,
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
                     "usage": usage.get(engine.container_name(inst.id)),
@@ -354,6 +354,30 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/ui/dashboard", response_class=HTMLResponse)
     def dashboard_partial(request: Request):
         return page(request, "partials/dashboard.html", **dashboard_ctx(request))
+
+    def logins_dialog(request: Request, iid: str, result: tuple[str, str] | None = None, error: str = ""):
+        info = svc.logins(iid)
+        return page(request, "partials/logins.html", title=f"Logins: {info['name']}", info=info, result=result,
+                    error=error)
+
+    @app.get("/ui/instances/{iid}/logins", response_class=HTMLResponse)
+    def instance_logins(request: Request, iid: str):
+        try:
+            return logins_dialog(request, iid)
+        except Problem as err:
+            return problem(err)
+
+    @app.post("/ui/instances/{iid}/logins", response_class=HTMLResponse)
+    async def instance_logins_reset(request: Request, iid: str):
+        form = await request.form()
+        try:
+            result = svc.reset_login(iid, str(form.get("user", "")), str(form.get("password", "")))
+        except Problem as err:
+            try:
+                return logins_dialog(request, iid, error=err.msg)
+            except Problem:
+                return problem(err)
+        return logins_dialog(request, iid, result=result)
 
     @app.post("/ui/instances/{iid}/{action}")
     async def instance_action(request: Request, iid: str, action: str):

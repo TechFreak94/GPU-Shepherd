@@ -12,6 +12,8 @@ def inst(app, **env):
 def test_methods():
     assert logins.method(inst("comfyui")) is None and logins.method(inst("")) is None
     assert not logins.method(inst("hermes")).in_container
+    old = Instance(id="x", name="X", image="ghcr.io/open-webui/open-webui:main")       # from before the App Store
+    assert logins.method(old).where == "its database"
     for app in ("open-webui", "librechat", "langflow", "anythingllm"):
         m = logins.method(inst(app))
         assert m.in_container and logins.script(m).cmd

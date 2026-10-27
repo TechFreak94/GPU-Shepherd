@@ -824,3 +824,16 @@ def test_confirm_modal_shows_memory_warnings(stack, monkeypatch):
     r = client.post("/ui/instances/llm/start", headers=HX)
     wait(app)
     assert "test warning" in r.text and "Continue" in r.text
+
+
+def test_logins_dialog(stack):
+    app, client, backend, tmp = stack
+    login(client)
+    hermes = tmp / "instances" / "hermes.yaml"
+    hermes.write_text(hermes.read_text() + "app: hermes\n")
+    dash = client.get("/", headers=HX).text
+    assert "/ui/instances/hermes/logins" in dash and "/ui/instances/llm/logins" not in dash
+    dlg = client.get("/ui/instances/hermes/logins", headers=HX).text
+    assert "Logins: Hermes" in dlg and "<strong>admin</strong>" in dlg
+    r = client.post("/ui/instances/hermes/logins", data={"user": "admin", "password": "brand-new-pass-1"}, headers=HX)
+    assert "Saved" in r.text and "brand-new-pass-1" in r.text

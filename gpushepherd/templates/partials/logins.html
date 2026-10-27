@@ -1,0 +1,26 @@
+<div class="dlg-head"><strong id="modal-title">{{ title }}</strong>
+  <span class="btns"><button data-close-modal>Close</button></span></div>
+<div class="dlg-body">
+  {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+  {% if result %}<div class="flash"><p style="margin:0 0 6px">{{ result[0] }}</p>
+    <p style="margin:0">New password: <span class="mono" style="word-break:break-all;user-select:all">{{ result[1] }}</span>
+      <button type="button" class="small" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.pw)" data-pw="{{ result[1] }}">Copy</button></p>
+    <p class="muted small" style="margin:6px 0 0">This is shown once. Save it now.</p></div>{% endif %}
+  <p>{{ info.name }} keeps its logins in {{ info.where }}.</p>
+  {% if info.status %}<p class="muted">{{ info.status }}</p>{% endif %}
+  {% if info.accounts %}<ul>
+    {% for a in info.accounts %}<li><strong>{{ a.user or "(no user name)" }}</strong>{% if a.role %} <span class="muted">({{ a.role }})</span>{% endif %}
+      {% if a.password %}<details><summary>Show password</summary>
+        <span class="mono" style="word-break:break-all;user-select:all">{{ a.password }}</span></details>{% endif %}</li>{% endfor %}
+  </ul>{% endif %}
+  {% if info.can_reset %}
+  <form hx-post="/ui/instances/{{ info.instance }}/logins" hx-target="#modal-body" style="display:flex;flex-wrap:wrap;gap:8px;align-items:end">
+    <label>User{% if info.accounts|length > 1 or info.multi_user %}<br>
+      <select name="user">{% for a in info.accounts %}<option value="{{ a.user }}">{{ a.user }}</option>{% endfor %}</select>
+      {% else %}<br><input name="user" value="{{ info.accounts[0].user if info.accounts else '' }}" placeholder="optional" autocomplete="off">{% endif %}</label>
+    <label>New password<br><input name="password" type="text" placeholder="leave empty to make one up" autocomplete="off"></label>
+    <button class="primary">Set new password</button>
+  </form>
+  {% endif %}
+  {% if info.note %}<p class="muted small">{{ info.note }}</p>{% endif %}
+</div>
