@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.7 - 2026-10-28
+
+- App Store: Langflow, marked Experimental. (#34)
+- App Store: InvokeAI, Ollama and Speaches. Open WebUI can now use Speaches for voice (pick it under *Voice with* when installing). (#34)
+- Logins: see an app's accounts and set a new password from its dashboard card, the API or `gpu-shepherd logins`. (#34)
+- Every app now shows its license. A new Credits dialog and ACKNOWLEDGEMENTS.md credit the open-source projects GPU Shepherd is built on and runs. (#34)
+
 ## 0.13.6 - 2026-10-27
 
 - README: minimum system requirements. (#33)
