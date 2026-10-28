@@ -126,12 +126,12 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         sampling=QWEN_THINKING),
     Suggestion(
         key="muse-glimmer-30b", name="Muse Glimmer 30B",
-        blurb="Dense agent and coding model that reads images (screenshots, charts); 128K context. For two "
-              "8 GB GPUs with a few of its layers in RAM, or one 24 GB GPU.",
+        blurb="Dense agent and coding model that reads images (screenshots, charts); 128K context. Needs two "
+              "8 GB GPUs or one 16 GB GPU (a 3-bit build, so it fits whole: about 30 tokens/s on two RTX 3070s).",
         uses=("chat", "coder"), license="Apache-2.0", page=f"{HF}/unsloth/Muse-Glimmer-30B-GGUF", layers=52,
-        model=_hf("unsloth/Muse-Glimmer-30B-GGUF", "Muse-Glimmer-30B-UD-Q4_K_XL.gguf", 15.88),
+        model=_hf("unsloth/Muse-Glimmer-30B-GGUF", "Muse-Glimmer-30B-UD-IQ3_XXS.gguf", 13.13),
         mmproj=_hf("unsloth/Muse-Glimmer-30B-GGUF", "mmproj-Muse-Glimmer-30B-Q8_0.gguf", 2.05),
-        sampling=GEMMA, ctx_size=65536),
+        sampling=GEMMA),
     Suggestion(
         key="qwen3.6-35b-a3b", name="Qwen3.6 35B-A3B",
         blurb="Fast mixture-of-experts chat and coding with images. Fits two 8 GB GPUs, or one GPU with "
