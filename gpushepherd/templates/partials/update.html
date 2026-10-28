@@ -3,7 +3,7 @@
    GPU Shepherd restarts. #}
 <div id="update-dlg"{% if u.busy %} hx-get="/ui/update{% if confirm %}?confirm=1{% endif %}" hx-trigger="every 2s" hx-swap="outerHTML" hx-disinherit="*" data-quiet-offline{% endif %}>
 <div class="dlg-head"><strong id="modal-title">{% if u.busy %}{% if u.action == "check" %}Checking for updates…{% else %}Updating GPU Shepherd…{% endif %}{% elif confirm %}Update GPU Shepherd?{% else %}GPU Shepherd {{ version }}{% endif %}</strong>
-  <span class="btns"><button hx-get="/ui/changelog" hx-target="#modal-body" title="Every version and what changed in it">Changelog</button><button data-close-modal>Close</button></span></div>
+  <span class="btns"><button hx-get="/ui/changelog" hx-target="#modal-body" title="Every version and what changed in it">Changelog</button><button hx-get="/ui/credits" hx-target="#modal-body" title="The open-source projects GPU Shepherd is built on and works with">Credits</button><button data-close-modal>Close</button></span></div>
 <div class="dlg-body">
   {% if u.busy or u.just_updated or u.pending_stale or (u.state == "failed" and u.step) %}{% include "partials/update_progress.html" %}{% endif %}
   {% if not u.busy %}

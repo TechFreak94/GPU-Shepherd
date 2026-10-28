@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, drain, first_run, host as host_mod, instance_templates as tpl, model_library, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -222,7 +222,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     problems.append(cat_error)
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "unknown" if unknown else "not created"),
-                    "container": engine.container_name(inst.id),
+                    "container": engine.container_name(inst.id), "has_logins": logins.method(inst) is not None,
                     "gpus": gpus, "assigned": assigned,
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
                     "usage": usage.get(engine.container_name(inst.id)),
@@ -355,6 +355,30 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def dashboard_partial(request: Request):
         return page(request, "partials/dashboard.html", **dashboard_ctx(request))
 
+    def logins_dialog(request: Request, iid: str, result: tuple[str, str] | None = None, error: str = ""):
+        info = svc.logins(iid)
+        return page(request, "partials/logins.html", title=f"Logins: {info['name']}", info=info, result=result,
+                    error=error)
+
+    @app.get("/ui/instances/{iid}/logins", response_class=HTMLResponse)
+    def instance_logins(request: Request, iid: str):
+        try:
+            return logins_dialog(request, iid)
+        except Problem as err:
+            return problem(err)
+
+    @app.post("/ui/instances/{iid}/logins", response_class=HTMLResponse)
+    async def instance_logins_reset(request: Request, iid: str):
+        form = await request.form()
+        try:
+            result = svc.reset_login(iid, str(form.get("user", "")), str(form.get("password", "")))
+        except Problem as err:
+            try:
+                return logins_dialog(request, iid, error=err.msg)
+            except Problem:
+                return problem(err)
+        return logins_dialog(request, iid, result=result)
+
     @app.post("/ui/instances/{iid}/{action}")
     async def instance_action(request: Request, iid: str, action: str):
         if action not in ("start", "stop", "restart"):
@@ -459,6 +483,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
                     servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
+                    speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
                     no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
@@ -508,7 +533,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), str(err), "error")
         slot_fields = [f"{x.key}_{part}" for x in tpl.slots(t) for part in ("file", "ctx")]
         f = {k: str(raw.get(k, "")) for k in ["name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
-                                              "comfyui", "offload", "login_user", "password", "hass_url",
+                                              "comfyui", "speech", "offload", "login_user", "password", "hass_url",
                                               "hass_token", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
         then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None
@@ -782,6 +807,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/ui/update", response_class=HTMLResponse)
     def update_dialog(request: Request, confirm: str = ""):
         return update_page(request, confirm == "1")
+
+    @app.get("/ui/credits", response_class=HTMLResponse)
+    def credits_dialog(request: Request):
+        apps = [t for t in tpl.TEMPLATES if t.license]
+        return page(request, "partials/credits.html", credits=credits, apps=apps, models=model_library.SUGGESTIONS)
 
     @app.get("/ui/app-updates", response_class=HTMLResponse)
     def app_updates_dialog(request: Request):

@@ -1,4 +1,5 @@
 """The App Store's apps: the built-in templates and what they build."""
+import base64
 import pytest
 
 from gpushepherd import instance_templates as tpl
@@ -162,7 +163,8 @@ def test_installed_counts_older_instances():
            "d": Instance(id="d", name="D", image="x", app="hermes")}
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
-                   "librechat": [], "anythingllm": []}
+                   "librechat": [], "anythingllm": [], "langflow": [], "ollama": [], "invokeai": [],
+                   "speaches": []}
 
 
 def test_kind_tags():
@@ -207,6 +209,58 @@ def test_librechat():
         tpl.build(t, f, taken)
     with pytest.raises(ConfigError, match="too long"):
         tpl.build(t, f | {"id": "a" * 40}, m)
+
+
+def test_langflow():
+    m, t = server_machine(), tpl.get("langflow")
+    assert t.experimental and "OpenAI API Base" in t.after_install
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["login_user"] == "admin" and len(f["password"]) >= 8
+    inst, _ = tpl.build(t, f, m)
+    assert inst.ports[0].container == 7860 and inst.gpu.mode == "none" and not inst.requires
+    env = inst.env
+    assert env["LANGFLOW_SUPERUSER"] == "admin" and env["LANGFLOW_SUPERUSER_PASSWORD"] == f["password"]
+    assert env["LANGFLOW_AUTO_LOGIN"] == "false" and env["LANGFLOW_DATABASE_URL"] == "sqlite:////app/data/langflow.db"
+    assert env["OPENAI_API_KEY"] == "sk-abc" and env["LLM_BASE_URL"] == "http://llm:8080/v1"
+    assert env["LANGFLOW_SSRF_ALLOWED_HOSTS"] == "llm" and env["LANGFLOW_PROVIDER_CREDENTIAL_ALLOWED_HOSTS"] == "http://llm"
+    assert len(base64.urlsafe_b64decode(env["LANGFLOW_SECRET_KEY"])) == 32          # a Fernet key
+    assert {v.container: v.host for v in inst.volumes} == {"/app/data": "/a/langflow/data"}
+    assert tpl.seed_files(t, f, m) == {}
+    assert tpl.connected_server(inst, m) == "llm"
+    want = tpl.app_env(t, "llm", m)
+    assert want["LANGFLOW_SSRF_ALLOWED_HOSTS"] == "llm" and "LANGFLOW_SECRET_KEY" not in want
+    bare = tpl.build(t, f | {"server": ""}, m)[0].env
+    assert "OPENAI_API_KEY" not in bare and "LANGFLOW_SSRF_ALLOWED_HOSTS" not in bare
+
+
+def test_speaches_gives_open_webui_a_voice():
+    m = server_machine()
+    sp_t = tpl.get("speaches")
+    sp, _ = tpl.build(sp_t, tpl.defaults(sp_t, m, "/m", "/a"), m)
+    assert sp.gpu.max_gpus == 1 and len(sp.env["API_KEY"]) >= 24 and tpl.STT_MODEL in sp.env["PRELOAD_MODELS"]
+    assert tpl.build(sp_t, tpl.defaults(sp_t, m, "/m", "/a"), m)[0].env["API_KEY"] != sp.env["API_KEY"]
+    m.instances["speaches"] = sp
+    t = tpl.get("open-webui")
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["speech"] == "speaches" and "speech" in tpl.answer_keys(t)
+    env = tpl.build(t, f, m)[0].env
+    assert env["AUDIO_STT_OPENAI_API_BASE_URL"] == env["AUDIO_TTS_OPENAI_API_BASE_URL"] == "http://speaches:8000/v1"
+    assert env["AUDIO_TTS_OPENAI_API_KEY"] == sp.env["API_KEY"] and env["AUDIO_TTS_VOICE"] == tpl.TTS_VOICE
+    assert "AUDIO_STT_ENGINE" not in tpl.build(t, f | {"speech": ""}, m)[0].env
+    with pytest.raises(ConfigError, match="Speaches"):
+        tpl.build(t, f | {"speech": "llm"}, m)
+
+
+def test_ollama_and_invokeai():
+    m = machine()
+    ol = tpl.build(tpl.get("ollama"), tpl.defaults(tpl.get("ollama"), m, "/m", "/a"), m)[0]
+    assert ol.kind == "container" and ol.gpu.max_gpus == 0 and ol.ports[0].container == 11434
+    assert {v.container: v.host for v in ol.volumes} == {"/root/.ollama/models": "/m/ollama"}
+    inv = tpl.build(tpl.get("invokeai"), tpl.defaults(tpl.get("invokeai"), m, "/m", "/a"), m)[0]
+    assert inv.gpu.max_gpus == 1 and inv.gpu.priority == 60
+    assert {v.container: v.host for v in inv.volumes} == {"/invokeai": "/a/invokeai/invokeai",
+                                                         "/invokeai/models": "/m/invokeai"}
+    assert tpl.tag_for(ol) == "Model Server" and tpl.tag_for(inv) == "Image UI"
 
 
 def test_anythingllm():

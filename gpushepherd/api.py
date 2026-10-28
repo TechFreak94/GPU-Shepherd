@@ -123,6 +123,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def delete_instance(request: Request, iid: str):
         return {"message": svc.delete_instance(iid)}
 
+    @r.get("/api/v1/instances/{iid}/logins")
+    @handle
+    def instance_logins(request: Request, iid: str):
+        return svc.logins(iid)
+
+    @r.post("/api/v1/instances/{iid}/logins")
+    @handle
+    async def reset_login(request: Request, iid: str):
+        data = await body(request) if await request.body() else {}
+        msg, password = svc.reset_login(iid, str(data.get("user") or ""), str(data.get("password") or ""))
+        return {"message": msg, "password": password}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     async def instance_action(request: Request, iid: str, action: str):
@@ -162,7 +174,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return {"key": t.key, "title": t.title, "group": t.group, "blurb": t.blurb, "points": list(t.points),
                 "kind": t.kind, "image": t.image, "gpu": t.gpu, "needs": t.needs, "docs": t.docs,
                 "needs_llm_server": bool(t.connects), "installed": [i.id for i in installed],
-                "also_installs": [tpl.get(c).title for c in t.companions], "after_install": t.after_install}
+                "also_installs": [tpl.get(c).title for c in t.companions], "after_install": t.after_install,
+                "experimental": t.experimental, "license": t.license}
 
     @r.get("/api/v1/apps")
     def list_apps():
@@ -183,6 +196,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             if t.connects else {},
             "comfyui": {i.id: i.name for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"}
             if t.connects == "openwebui" else {},
+            "speech": tpl.speech_servers(m) if t.connects == "openwebui" else {},
             "model_slots": {f"{s.key}_file": s.label for s in tpl.slots(t)},
         }
         return out

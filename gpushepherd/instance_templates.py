@@ -15,6 +15,7 @@ instances, folders) and gets pydantic objects back.
 """
 from __future__ import annotations
 
+import base64
 import re
 import secrets
 from dataclasses import dataclass, field
@@ -25,6 +26,10 @@ from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, Of
                      MODEL_ID, SLUG)
 
 LLAMA_SWAP_IMAGE = "ghcr.io/mostlygeek/llama-swap:cuda"
+# what Speaches downloads first, and Open WebUI's voice uses
+STT_MODEL = "Systran/faster-distil-whisper-large-v3"
+TTS_MODEL = "speaches-ai/Kokoro-82M-v1.0-ONNX"
+TTS_VOICE = "af_heart"
 MODELS_IN_CONTAINER = "/models"
 
 # how much bigger than the .gguf file a model is once loaded (KV cache, buffers), for "auto" offload
@@ -73,11 +78,14 @@ class Template:
     data_owner: tuple[int, int] | None = None  # uid:gid the app runs as, for the folders made for it
     needs: str = ""
     docs: str = ""
+    license: str = ""                          # the app's own license, credited in the App Store
     badge: str = ""                            # a few characters for its App Store icon
     tag: str = ""                              # what kind of instance it is, on its dashboard card
     companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
     hidden: bool = False                       # a companion: not offered in the App Store itself
     after_install: str = ""                    # what is left to do in the app itself once it runs
+    experimental: str = ""                     # why it is marked Experimental in the App Store ("" = it isn't)
+    secrets: tuple[str, ...] = ()              # environment variables given a fresh random value when installed
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -100,7 +108,22 @@ TEMPLATES: tuple[Template, ...] = (
                           hint="For chatting with your documents (RAG) in Open WebUI, AnythingLLM and LibreChat. "
                                "It stays loaded beside the other models, on the CPU.")),
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
-        docs="https://github.com/mostlygeek/llama-swap"),
+        license="MIT (llama-swap and llama.cpp)", docs="https://github.com/mostlygeek/llama-swap"),
+    Template(
+        key="ollama", tag="Model Server", badge="OL", title="Ollama", group="Model servers",
+        blurb="Ollama's model server, for apps that only speak Ollama's API.",
+        points=("Uses every free GPU and gives them back when something else needs one",
+                "Models from Ollama's library, kept in the models folder's ollama/ subfolder",
+                "Most apps here use the LLM server instead"),
+        default_id="ollama", default_name="Ollama", description="Ollama model server",
+        image="ollama/ollama:latest", container_port=11434, host_port=11434, gpu="all",
+        env={"OLLAMA_HOST": "0.0.0.0:11434"},
+        models_mount=("ollama", "/root/.ollama/models", False),
+        after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3:8b (CONTAINER is "
+                      "shown on its dashboard card). It answers at http://this-machine:PORT, and has no login or "
+                      "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
+                      "LLM server through its llama.cpp integration instead.",
+        needs="An NVIDIA GPU", license="MIT", docs="https://docs.ollama.com"),
     Template(
         key="open-webui", tag="Chat UI", badge="OW", title="Open WebUI", group="Chat and agents",
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
@@ -110,7 +133,8 @@ TEMPLATES: tuple[Template, ...] = (
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
-        needs="An LLM server to chat with", docs="https://docs.openwebui.com"),
+        needs="An LLM server to chat with", license="Open WebUI License (BSD-3-Clause plus branding terms)",
+        docs="https://docs.openwebui.com"),
     Template(
         key="hermes", tag="Agent UI", badge="H", title="Hermes Agent", group="Chat and agents",
         blurb="An AI agent by Nous Research with memory, skills and scheduled tasks, thinking with your own model server.",
@@ -122,7 +146,7 @@ TEMPLATES: tuple[Template, ...] = (
         env={"HERMES_DASHBOARD": "1"}, login=("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
         appdata=(("data", "/opt/data"),), data_owner=(10000, 10000), connects="hermes",
         needs="A model server whose model can call tools (Qwen3 models can)",
-        docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
+        license="MIT", docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
     Template(
         key="librechat", tag="Chat UI", badge="LC", title="LibreChat", group="Chat and agents",
         blurb="A multi-user ChatGPT-style chat with agents, presets and conversation search, using your own model server.",
@@ -139,7 +163,7 @@ TEMPLATES: tuple[Template, ...] = (
         companions=("librechat-mongodb",), connects="librechat",
         after_install="Open it, sign up and log in: the first account becomes the admin. Then turn sign-ups "
                       "off by setting ALLOW_REGISTRATION=false under Edit, unless others should make accounts.",
-        needs="An LLM server to chat with", docs="https://www.librechat.ai/docs"),
+        needs="An LLM server to chat with", license="MIT", docs="https://www.librechat.ai/docs"),
     Template(
         key="anythingllm", tag="Chat UI", badge="ALL", title="AnythingLLM", group="Chat and agents",
         blurb="Chat with your documents: workspaces, built-in RAG and agents, thinking with your own model server.",
@@ -154,7 +178,41 @@ TEMPLATES: tuple[Template, ...] = (
         data_owner=(1000, 1000), connects="anythingllm",
         after_install="Open it and make a workspace to chat in; the model server is already set up. "
                       "It has no login until you set a password under Settings, Security.",
-        needs="An LLM server to chat with", docs="https://docs.anythingllm.com/installation-docker/overview"),
+        needs="An LLM server to chat with", license="MIT",
+        docs="https://docs.anythingllm.com/installation-docker/overview"),
+    Template(
+        key="langflow", tag="Agent UI", badge="LF", title="Langflow", group="Chat and agents",
+        blurb="Build chatbots, RAG pipelines and agents by wiring blocks together, running on your own model server.",
+        points=("No GPU needed", "Its own login, and the model server's API key saved in it for you",
+                "You type the model server's address into its OpenAI blocks (steps below)"),
+        default_id="langflow", default_name="Langflow", description="Langflow",
+        image="langflowai/langflow:latest", container_port=7860, host_port=7860, gpu="none",
+        # its database lives inside the container unless told otherwise, and is lost with it
+        env={"LANGFLOW_HOST": "0.0.0.0", "LANGFLOW_PORT": "7860", "LANGFLOW_CONFIG_DIR": "/app/data",
+             "LANGFLOW_DATABASE_URL": "sqlite:////app/data/langflow.db", "LANGFLOW_AUTO_LOGIN": "false",
+             "DO_NOT_TRACK": "true"},
+        login=("LANGFLOW_SUPERUSER", "LANGFLOW_SUPERUSER_PASSWORD"),
+        appdata=(("data", "/app/data"),), data_owner=(1000, 0), connects="langflow",
+        experimental="Each flow picks its own model, so GPU Shepherd can't point Langflow's flows at the "
+                     "model server for you: you type its address into them yourself.",
+        after_install="Log in with the user name and password you chose. In a flow, use the OpenAI block: under "
+                      "its advanced settings set OpenAI API Base to the model server's address (LLM_BASE_URL under "
+                      "Edit on this instance), and type chat (or another name the server answers to) as the Model "
+                      "Name. Its OpenAI API Key is already the server's key. For documents, the OpenAI Embeddings "
+                      "block with the same address and the model embed, if the server has an embeddings model.",
+        needs="An LLM server for its flows to use", license="MIT", docs="https://docs.langflow.org"),
+    Template(
+        key="invokeai", tag="Image UI", badge="INV", title="InvokeAI", group="Image and video",
+        blurb="Image generation with a polished canvas: inpainting, layers and a model manager, in the browser.",
+        points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
+                "Models in the models folder's invokeai/ subfolder, installed from its Model Manager"),
+        default_id="invokeai", default_name="InvokeAI", description="Image generation",
+        image="ghcr.io/invoke-ai/invokeai:latest", container_port=9090, host_port=9090, gpu="one", priority=60,
+        env={"INVOKEAI_ROOT": "/invokeai", "INVOKEAI_HOST": "0.0.0.0", "INVOKEAI_PORT": "9090"},
+        appdata=(("invokeai", "/invokeai"),), models_mount=("invokeai", "/invokeai/models", False),
+        after_install="Open it and add models under Model Manager, Starter Models. It has no login: anyone "
+                      "who can reach its port can use it.",
+        needs="An NVIDIA GPU with 8+ GB (12+ GB for SDXL and Flux)", license="Apache-2.0", docs="https://invoke.ai"),
     Template(
         key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
@@ -167,7 +225,21 @@ TEMPLATES: tuple[Template, ...] = (
                  ("output", "/root/ComfyUI/output"), ("user", "/root/ComfyUI/user"), ("cache", "/root/.cache")),
         models_mount=("comfyui", "/root/ComfyUI/models", False),
         needs="An NVIDIA GPU with 8+ GB and driver 580 or newer (CUDA 13 image)",
-        docs="https://github.com/YanWenKun/ComfyUI-Docker"),
+        license="GPL-3.0 (ComfyUI), Mulan PSL v2 (the image)", docs="https://github.com/YanWenKun/ComfyUI-Docker"),
+
+    Template(
+        key="speaches", tag="Speech Server", badge="SP", title="Speaches", group="Speech",
+        blurb="Speech to text (Whisper) and text to speech (Kokoro) with an OpenAI-compatible API.",
+        points=("Takes one GPU, whichever is free", "Gives Open WebUI a voice: pick it when installing Open WebUI",
+                "Downloads its two models the first time it starts"),
+        default_id="speaches", default_name="Speaches", description="Speech to text and text to speech",
+        image="ghcr.io/speaches-ai/speaches:latest-cuda", container_port=8000, host_port=8000, gpu="one",
+        env={"PRELOAD_MODELS": f'["{STT_MODEL}", "{TTS_MODEL}"]', "LOG_LEVEL": "info"}, secrets=("API_KEY",),
+        appdata=(("hf-cache", "/home/ubuntu/.cache/huggingface/hub"),), data_owner=(1000, 1000),
+        after_install="It answers at http://this-machine:PORT/v1 with the key API_KEY (under Edit). Open WebUI "
+                      "installed after it can use it for voice; for an Open WebUI you already have, set Speech to "
+                      "Text and Text to Speech to OpenAI with that address and key in its Admin Panel, Audio.",
+        needs="An NVIDIA GPU with 4+ GB", license="MIT", docs="https://speaches.ai"),
 
     # companions: installed with an app, never on their own
     Template(
@@ -175,7 +247,8 @@ TEMPLATES: tuple[Template, ...] = (
         blurb="MongoDB for LibreChat's accounts and conversations.", points=(), hidden=True,
         default_id="mongodb", default_name="database", description="MongoDB for LibreChat",
         image="mongo:8.0", command=("mongod", "--noauth", "--bind_ip_all"), container_port=27017, host_port=0,
-        gpu="none", appdata=(("mongodb", "/data/db"),), docs="https://www.librechat.ai/docs/local/docker"),
+        gpu="none", appdata=(("mongodb", "/data/db"),), license="SSPL v1 (MongoDB Community Server)",
+        docs="https://www.librechat.ai/docs/local/docker"),
 )
 
 # the model server an app with a connection can install alongside itself, and the model slot it fills
@@ -325,9 +398,10 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
     iid = free_id(t.default_id, set(m.instances))
     name = t.default_name if iid == t.default_id else f"{t.default_name} {iid.rsplit('-', 1)[-1]}"
     comfy = next((i.id for i in m.instances.values() if "comfyui" in (i.image + i.id).lower()), "")
+    speech = next(iter(speech_servers(m)), "")
     return {"name": name, "id": iid, "port": free_port(t.host_port, taken_ports), "gpu": t.gpu,
             "models_dir": models_dir, "appdata_dir": str(Path(appdata_root) / iid),
-            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy,
+            "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy, "speech": speech,
             **{f"{s.key}_file": "" for s in slots(t)}, **{f"{s.key}_ctx": s.ctx_size for s in slots(t)},
             "offload": "auto", "autostart": False,
             "login_user": "admin" if t.login else "", "password": secrets.token_urlsafe(12) if t.login else "",
@@ -344,7 +418,7 @@ def answer_keys(t: Template) -> list[str]:
     if t.connects:
         keys.append("server")
     if t.connects == "openwebui":
-        keys.append("comfyui")
+        keys += ["comfyui", "speech"]
     for s in slots(t):
         keys += [f"{s.key}_file", f"{s.key}_ctx"]
     if slots(t):
@@ -389,7 +463,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
             raise ConfigError(f"an instance called '{cid}' already exists (it would be {t.title}'s {c.default_name})")
         requires.append(cid)
 
-    env = dict(t.env)
+    env = dict(t.env) | {k: secrets.token_urlsafe(24) for k in t.secrets}
     if t.login:
         user, password = str(a.get("login_user", "")).strip(), str(a.get("password", "")).strip()
         if not user or len(password) < 8:
@@ -401,6 +475,8 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         env.update(_hermes(a, m))
     elif t.connects == "librechat":
         env.update(_librechat(a, m, requires))
+    elif t.connects == "langflow":
+        env.update(_langflow(a, m))
 
     inst = Instance(id=iid, name=str(a.get("name", "")).strip() or iid, description=t.description, kind=t.kind,
                     image=t.image, command=list(t.command), env=env,
@@ -537,6 +613,8 @@ def app_env(t: Template, server: str, m: Machine) -> dict[str, str]:
         env |= _hermes(a, m)
     elif t.connects == "librechat" and a["server"]:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
+    elif t.connects == "langflow" and a["server"]:
+        env |= _langflow_server(server, m)
     return env
 
 
@@ -605,6 +683,23 @@ def _librechat(a: dict, m: Machine, requires: list[str]) -> dict[str, str]:
     return env
 
 
+def _langflow(a: dict, m: Machine) -> dict[str, str]:
+    """A fresh key for the secrets it stores (a Fernet key), and the model server."""
+    env = {"LANGFLOW_SECRET_KEY": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()}
+    server = _server(a, m)
+    if server:
+        env |= _langflow_server(server, m)
+    return env
+
+
+def _langflow_server(server: str, m: Machine) -> dict[str, str]:
+    """The server's key, which Langflow saves as its OPENAI_API_KEY variable, and the server's host
+    on its allowlists: Langflow refuses plain-http internal addresses, and sending a key from its
+    environment anywhere but OpenAI, unless the host is listed."""
+    return {"OPENAI_API_KEY": m.servers[server]["api_key"], "LLM_BASE_URL": _server_url(server, m),
+            "LANGFLOW_SSRF_ALLOWED_HOSTS": server, "LANGFLOW_PROVIDER_CREDENTIAL_ALLOWED_HOSTS": f"http://{server}"}
+
+
 def _openwebui(a: dict, m: Machine) -> dict[str, str]:
     env: dict[str, str] = {}
     server = _server(a, m)
@@ -616,6 +711,16 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
         if info.get("embed"):                  # documents are embedded by the model server, not on Open WebUI's CPU
             env |= {"RAG_EMBEDDING_ENGINE": "openai", "RAG_OPENAI_API_BASE_URL": _server_url(server, m),
                     "RAG_OPENAI_API_KEY": info["api_key"], "RAG_EMBEDDING_MODEL": info["embed"]}
+    speech = str(a.get("speech", "")).strip()
+    if speech:
+        if speech not in speech_servers(m):
+            raise ConfigError(f"no Speaches instance '{speech}'")
+        ports = m.instances[speech].ports
+        url = f"http://{speech}:{ports[0].container if ports else 8000}/v1"
+        key = m.instances[speech].env.get("API_KEY") or "none"
+        env |= {"AUDIO_STT_ENGINE": "openai", "AUDIO_STT_OPENAI_API_BASE_URL": url, "AUDIO_STT_OPENAI_API_KEY": key,
+                "AUDIO_STT_MODEL": STT_MODEL, "AUDIO_TTS_ENGINE": "openai", "AUDIO_TTS_OPENAI_API_BASE_URL": url,
+                "AUDIO_TTS_OPENAI_API_KEY": key, "AUDIO_TTS_MODEL": TTS_MODEL, "AUDIO_TTS_VOICE": TTS_VOICE}
     comfy = str(a.get("comfyui", "")).strip()
     if comfy:
         if comfy not in m.instances:
@@ -625,6 +730,11 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
         env |= {"ENABLE_IMAGE_GENERATION": "true", "IMAGE_GENERATION_ENGINE": "comfyui",
                 "COMFYUI_BASE_URL": f"http://{comfy}:{port}"}
     return env
+
+
+def speech_servers(m: Machine) -> dict[str, str]:
+    """Speaches instances an app can use for voice: id -> name."""
+    return {i.id: i.name for i in m.instances.values() if matches(get("speaches"), i)}
 
 
 def slots(t: Template) -> tuple[ModelSlot, ...]:

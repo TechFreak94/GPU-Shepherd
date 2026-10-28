@@ -23,12 +23,12 @@
     <div class="app-head">
       <span class="app-icon {{ gid }}" aria-hidden="true">{{ t.badge }}</span>
       <div><h2 id="app-{{ t.key }}">{{ t.title }}</h2>
-        <div class="small muted">{{ "Every free GPU" if t.gpu == "all" else gpu_choices[t.gpu] }}{% if have %} · <span class="tag accent" title="{{ have|map(attribute='name')|join(', ') }}">{{ have|length }} installed</span>{% endif %}</div></div>
+        <div class="small muted">{{ "Every free GPU" if t.gpu == "all" else gpu_choices[t.gpu] }}{% if t.experimental %} · <span class="tag warn" title="{{ t.experimental }}">Experimental</span>{% endif %}{% if have %} · <span class="tag accent" title="{{ have|map(attribute='name')|join(', ') }}">{{ have|length }} installed</span>{% endif %}</div></div>
     </div>
     <p class="sub">{{ t.blurb }}</p>
     <ul class="points">{% for p in t.points %}<li>{{ p }}</li>{% endfor %}</ul>
     {% if t.connects and not has_server %}<div class="small warn-text">Needs an LLM server, and none is installed yet. Installing it walks you through adding one.</div>{% endif %}
-    <div class="small muted">Needs: {{ t.needs }}{% if t.docs %} · <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}</div>
+    <div class="small muted">Needs: {{ t.needs }}{% if t.docs %} · <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}{% if t.license %} · License: {{ t.license }}{% endif %}</div>
     <div class="btns">
       <a class="btn primary" href="/apps/{{ t.key }}">{{ "Install another" if have else "Install" }}</a>
       <a class="btn" href="/apps/{{ t.key }}?mode=manual" title="Every field by hand, filled in with this app's defaults">Manual</a>

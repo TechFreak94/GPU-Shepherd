@@ -55,6 +55,8 @@ always need the token, so another web page can't make your browser change anythi
 | `DELETE /api/v1/instances/{id}` | Delete it: stop it (a running one waits for its work to finish, in the background) and move its settings, model list and app data folder, plus a helper only it uses (LibreChat's database), to the [trash](#storage-and-trash). `409` while another instance needs it. Model files are never touched. |
 | `POST /api/v1/instances/{id}/start` | Start it. Also `/stop` and `/restart`. Body (optional): `{"confirm": true}`. |
 | `GET /api/v1/instances/{id}/logs` | `{"logs": "..."}`, the container's log. |
+| `GET /api/v1/instances/{id}/logins` | An app's [logins](advanced.md#logins): `where` it keeps them, `accounts` (`user`, `role`, and `password` where it can be read), `running`, `multi_user` and a `status` line. `404` for apps GPU Shepherd doesn't know the logins of. |
+| `POST /api/v1/instances/{id}/logins` | Set a new password: `{"user": "...", "password": "..."}` (no `user` for Hermes Agent and single-user AnythingLLM; no `password` for a made-up one). Answers `message` and the `password` set. |
 
 Starting can take GPUs from other instances, and stopping waits for running work, as on the
 dashboard. The answer is one of:
@@ -79,13 +81,13 @@ GPU Shepherd makes one change at a time. Each start, stop, restart, delete and a
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/apps` | The apps: `key`, `title`, `group`, `blurb`, `needs`, `needs_llm_server`, `installed` (instance IDs), `also_installs` (helpers it comes with, e.g. LibreChat's database) and `after_install` (the step left to do in the app itself). |
-| `GET /api/v1/apps/{key}` | One app, the `answers` its install form starts with, and the `choices` for `gpu`, `offload`, `server`, `comfyui` and the model files. |
+| `GET /api/v1/apps` | The apps: `key`, `title`, `group`, `blurb`, `needs`, `needs_llm_server`, `installed` (instance IDs), `also_installs` (helpers it comes with, e.g. LibreChat's database), `after_install` (the step left to do in the app itself), `experimental` (why it is marked Experimental, or empty), `license` and `docs` (its project page). |
+| `GET /api/v1/apps/{key}` | One app, the `answers` its install form starts with, and the `choices` for `gpu`, `offload`, `server`, `comfyui`, `speech` and the model files. |
 | `POST /api/v1/apps/{key}/install` | Install it (`201`). The body holds only the answers that differ from the defaults, e.g. `{"gpu": "pin:1", "port": 8189}` or `{"chat_file": "Qwen3-8B-Q4_K_M.gguf"}`. For apps that use a model server, `"server": "new"` installs an LLM server with it. Answers `instance`, `models`, `llm_server` (the one installed with it), `companions` (helper instances installed with it) and `downloads` (suggested models it started downloading). |
 | `POST /api/v1/apps/{key}/instance` | The instance an install would make, without saving it (*Manual*): change it and `PUT` it. |
 
 The answers are the install form's fields: `name`, `id`, `port`, `gpu` (`one`, `all`, `none` or
-`pin:N`), `models_dir`, `appdata_dir`, `server`, `comfyui`, `chat_file` / `chat_ctx`,
+`pin:N`), `models_dir`, `appdata_dir`, `server`, `comfyui`, `speech` (a Speaches instance, for Open WebUI), `chat_file` / `chat_ctx`,
 `coder_file` / `coder_ctx` and `embed_file` / `embed_ctx` (model files, relative to the models
 folder or a path inside the container; a [suggested model](advanced.md#suggested-models)'s file is
 downloaded), `offload` (`auto`, `gpu`, `moe`), `login_user` / `password`, `hass_url` /

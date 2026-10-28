@@ -20,9 +20,12 @@ each instance says what it needs, and starting or stopping anything re-plans who
 ## Features
 
 - **App Store**: install an LLM server (with a chat model, a coding model, an embeddings model for
-  chatting with your documents, or any mix), Open WebUI,
-  LibreChat, AnythingLLM, Hermes Agent or ComfyUI. Apps that need a helper container get it too:
-  LibreChat comes with its MongoDB database, which starts and stops with LibreChat.
+  chatting with your documents, or any mix), Ollama, Open WebUI, LibreChat, AnythingLLM, Hermes
+  Agent, Langflow (marked *Experimental*), ComfyUI, InvokeAI or Speaches (speech to text and text
+  to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
+  LibreChat comes with its MongoDB database, which starts and stops with LibreChat. Each card
+  shows the app's license and project page. **Logins** on an app's card lists its accounts and
+  sets a new password when one is forgotten.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
   folders, connects chat and agent apps to your model server (or installs one alongside them) and
   decides whether a model needs system RAM. **Manual** opens every field instead, filled in with
@@ -310,7 +313,7 @@ See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUT
 
 ## Roadmap
 
-- More model-server connectors: Ollama (for Home Assistant's own Assist), vLLM.
+- More model servers: vLLM.
 - Shared GPUs: let several small instances share one GPU with memory budgets.
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).
@@ -321,3 +324,14 @@ See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUT
 
 Apache-2.0 - see [LICENSE](LICENSE). Bundles [htmx](https://htmx.org) (Zero-Clause BSD,
 `gpushepherd/static/htmx.LICENSE.txt`).
+
+## Acknowledgements
+
+GPU Shepherd is built on, and runs, other people's open-source work: FastAPI, htmx, Docker, the
+NVIDIA Container Toolkit, llama.cpp and llama-swap, and every app in the App Store (Open WebUI,
+ComfyUI, Ollama, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Agent). Apps and
+models are downloaded from their own publishers and keep their own licenses, shown on each App
+Store card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and
+what it's used for; the dashboard has the same list under the version number, **Credits**.
+
+![Open-source credits in the dashboard](docs/screenshots/credits.png)

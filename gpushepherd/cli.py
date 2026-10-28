@@ -258,6 +258,26 @@ def cmd_logs(args, c: Client) -> int:
     return 0
 
 
+def cmd_logins(args, c: Client) -> int:
+    if args.reset is not None:
+        password = getpass.getpass("New password (empty: make one up): ") if args.ask else ""
+        r = c.post(f"/api/v1/instances/{args.id}/logins", {"user": args.reset, "password": password})
+        out(args, r, f"{r['message']}\nPassword: {r['password']}")
+        return 0
+    r = c.get(f"/api/v1/instances/{args.id}/logins")
+
+    def show(r):
+        print(f"{r['name']} keeps its logins in {r['where']}.")
+        for a in r["accounts"]:
+            role = f" ({a['role']})" if a["role"] else ""
+            print(f"  {a['user']}{role}" + (f"  password: {a['password']}" if a["password"] else ""))
+        for line in (r["status"], r["note"]):
+            if line:
+                print(line)
+    out(args, r, show)
+    return 0
+
+
 def read_file(name: str) -> dict:
     try:
         text = sys.stdin.read() if name == "-" else Path(name).read_text(encoding="utf-8")
@@ -308,12 +328,16 @@ def cmd_apps(args, c: Client) -> int:
 
         def show(a):
             print(f"{a['title']}: {a['blurb']}")
+            if a.get("experimental"):
+                print(f"Experimental: {a['experimental']}")
             for p in a["points"]:
                 print(f"  - {p}")
             if a["needs"]:
                 print(f"Needs: {a['needs']}")
             if a.get("also_installs"):
                 print(f"Also installs: {', '.join(a['also_installs'])} (starts and stops with it)")
+            if a.get("license"):
+                print(f"License: {a['license']} (images come from the app's own publisher)")
             if a.get("after_install"):
                 print(f"Afterwards: {a['after_install']}")
             print("\nInstall answers (change any with KEY=VALUE):")
@@ -602,7 +626,7 @@ def cmd_token(args, c: Client | None) -> int:
 
 
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
-            "restart": cmd_change, "logs": cmd_logs, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
+            "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "models": cmd_models, "jobs": cmd_jobs,
             "settings": cmd_settings, "storage": cmd_storage, "trash": cmd_trash,
             "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
@@ -622,6 +646,12 @@ def add_commands(sub) -> None:
         p.add_argument("--no-wait", action="store_true", help="don't follow the change's log")
     p = sub.add_parser("logs", help="an instance's container log")
     p.add_argument("id")
+    p = sub.add_parser("logins", help="an app's accounts, and passwords where they can be read; "
+                                      "--reset USER sets a new password")
+    p.add_argument("id")
+    p.add_argument("--reset", metavar="USER", nargs="?", const="",
+                   help="set a new password for this account (no USER for Hermes Agent and AnythingLLM)")
+    p.add_argument("--ask", action="store_true", help="type the new password instead of getting a made-up one")
     p = sub.add_parser("apply", help="create or replace an instance from a YAML or JSON file (- = stdin)")
     p.add_argument("file")
     p.add_argument("--id", help="the instance ID, if the file has none")

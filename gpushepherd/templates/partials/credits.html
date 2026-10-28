@@ -1,0 +1,22 @@
+{# The Credits dialog: open-source projects GPU Shepherd is built on and works with (credits.py),
+   App Store apps and suggested models, each with its license. #}
+{% macro rows(items) %}<table class="table credits"><tbody>
+  {% for c in items %}<tr><td><a class="ext" href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a></td><td class="small">{{ c.license }}</td><td class="small muted">{{ c.use }}</td></tr>{% endfor %}
+</tbody></table>{% endmacro %}
+<div class="dlg-head"><strong id="modal-title">Open-source credits</strong>
+  <span class="btns"><button hx-get="/ui/update" hx-target="#modal-body" title="Version, checking for updates and updating">Updates</button><button data-close-modal>Close</button></span></div>
+<div class="dlg-body">
+  <p class="small muted" style="margin-top:0">GPU Shepherd is open source (Apache-2.0) and stands on the work of many other open-source projects. {{ credits.NOTE }}</p>
+  <h3>Built on</h3>
+  {{ rows(credits.BUILT_ON) }}
+  <h3>Works with</h3>
+  {{ rows(credits.WORKS_WITH) }}
+  <h3>App Store apps</h3>
+  <table class="table credits"><tbody>
+  {% for t in apps %}<tr><td><a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">{{ t.title }}</a></td><td class="small">{{ t.license }}</td><td class="small muted mono">{{ t.image }}</td></tr>{% endfor %}
+  </tbody></table>
+  <h3>Suggested models</h3>
+  <table class="table credits"><tbody>
+  {% for m in models %}<tr><td><a class="ext" href="{{ m.page }}" target="_blank" rel="noopener">{{ m.name }}</a></td><td class="small">{{ m.license }}</td><td class="small muted">{{ m.page.split("huggingface.co/")[-1] }}</td></tr>{% endfor %}
+  </tbody></table>
+</div>

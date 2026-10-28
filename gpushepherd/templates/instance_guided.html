@@ -38,10 +38,11 @@
 <div id="editor">
 <div class="pagehead">
   <div><h1>Install {{ t.title }}</h1>
-  <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}</div></div>
+  <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}{% if t.license %} · License: {{ t.license }}{% endif %}</div></div>
   <a class="btn" href="/apps">Back to the App Store</a>
 </div>
 {% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}
+{% if t.experimental %}<div class="notice need" role="note"><strong>Experimental.</strong> {{ t.experimental }} The steps are under Afterwards, below.</div>{% endif %}
 {% if no_server %}{% with need = t, manual = False %}{% include "partials/needs_server.html" %}{% endwith %}{% endif %}
 {% if then_t %}<div class="notice next" role="status"><strong>Next: {{ then_t.title }}.</strong> Once this LLM server is installed you go on to set up {{ then_t.title }}, already connected to it.</div>{% endif %}
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
@@ -119,6 +120,12 @@
           {% for id, name in comfy %}<option value="{{ id }}" {{ "selected" if f.comfyui == id }}>{{ name }} ({{ id }})</option>{% endfor %}
         </select>
         <div class="hint">Pick your ComfyUI instance to generate images from the chat.</div></div>
+      <div><label for="speech">Voice with</label>
+        <select id="speech" name="speech">
+          <option value="">Nothing (no voice input or read-aloud)</option>
+          {% for id, name in speech %}<option value="{{ id }}" {{ "selected" if f.speech == id }}>{{ name }} ({{ id }})</option>{% endfor %}
+        </select>
+        <div class="hint">{% if speech %}Pick your Speaches instance to talk to the chat and have answers read aloud.{% else %}Install Speaches from the App Store first to talk to the chat.{% endif %}</div></div>
       {% endif %}
     </div>
     <div class="subsection" data-server="{{ new_server }}">

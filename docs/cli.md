@@ -145,12 +145,13 @@ theme is the one exception: it is a choice saved in each browser.
 | `list` | Instances with their app, state, GPUs and ports. | Dashboard cards |
 | `start ID`, `stop ID`, `restart ID` | Start, stop or restart, and follow the change's log. If it also stops or moves other instances, it shows the plan and asks; `-y` goes ahead without asking. `--no-wait` returns at once. A stop waits for running work like the dashboard does. | Start / Stop / Restart |
 | `logs ID` | The container's log. | Logs |
+| `logins ID` | An app's accounts, with passwords where they can be read. `--reset USER` sets a new, made-up password and prints it (`--ask` lets you type one); Hermes Agent and AnythingLLM without multi-user mode take no USER. | Logins |
 | `show ID` | The instance's settings as YAML, the same as `instances/<id>.yaml`. | Edit |
 | `set ID KEY=VALUE...` | Change settings, by the YAML keys in [Instance options](advanced.md#instances): `name=`, `image=`, `autostart=true`, `gpu.mode=elastic`, `gpu.gpus=0,1`, `gpu.priority=70`, `drain.timeout=300`, `open_port=`, ... `ports`, `volumes` and `env` take the editor's lines, separated by `;`: `ports=8188:8188;9000:9000/udp`, `volumes=/srv/x:/data:ro`, `env=A=1;B=2`. `command` takes a command line. An empty value clears an optional field. | Edit, Save |
 | `apply FILE` | Create or replace an instance from a YAML or JSON file, such as `show`'s output (`-` reads standard input). `--id` gives the ID if the file has none. | Edit, *Any Docker image* |
 | `delete ID` | Delete the instance: its settings, model list and app data folder go to the [trash](advanced.md#storage-and-trash) (model files stay). A running one is stopped first and waits for running work. Asks first; `-y` doesn't. | Delete |
 | `apps` | The App Store's apps and what is installed from each. | App Store |
-| `apps show KEY` | An app, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
+| `apps show KEY` | An app, whether it is Experimental, its license, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
 | `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf` (a suggested model, downloaded for you), `apps install open-webui server=new chat_file=...` (installs an LLM server with it), `apps install librechat` (and its database). | Install |
 | `apps manual KEY [KEY=VALUE...]` | Print the instance an install would make, as YAML, without saving it: edit it and `apply` it. | Manual |
 | `models list SERVER` | A model server's models, which are loaded, and its auto names. | Models |
