@@ -8,6 +8,8 @@ Each app keeps its accounts its own way:
     LibreChat       accounts in its MongoDB database
     Langflow        accounts in its database (data/langflow.db); the admin is made at its first
                     start from the instance's environment
+    LLM server      no accounts: llama-swap takes its API key as the password, with any user name,
+                    when a browser opens it (the key is in its model catalogue)
 A password GPU Shepherd can read (the environment, server.env) is shown. A database only keeps a
 hash of each password, so for those the accounts are listed and a new password can be set, by a
 short script run inside the app's running container with the app's own libraries. The new
@@ -26,6 +28,7 @@ from .config import ConfigError, Instance
 
 MIN_PASSWORD = 8
 SINGLE_USER = "(password only)"        # AnythingLLM without multi-user mode: no user name
+ANY_USER = "(any user name)"           # the LLM server: only the password, its API key, is checked
 
 
 @dataclass
@@ -53,6 +56,11 @@ class Method:
 
 def method(inst: Instance) -> Method | None:
     """How an instance's logins are read and reset (None: GPU Shepherd doesn't know its logins)."""
+    if inst.kind == "llama-swap":
+        return Method("llm-server", "its API key", False,
+                      "When your browser asks for a user name and password, type any user name and this API key "
+                      "as the password. Apps connected to it already have the key. To change it, use New API key "
+                      "in its Models page, Server settings; apps connected to it then need the new key too.")
     app = next((t.key for t in tpl.TEMPLATES if tpl.matches(t, inst)), "")    # older ones by their image
     if app == "hermes":
         return Method("hermes", "its environment (the dashboard login)", False,
@@ -76,8 +84,10 @@ def method(inst: Instance) -> Method | None:
 
 # --------------------------------------------------------------------------- what GPU Shepherd can read
 
-def readable(m: Method, inst: Instance, settings_file: str | None) -> list[Account]:
+def readable(m: Method, inst: Instance, settings_file: str | None, api_key: str = "") -> list[Account]:
     """The accounts of a method that keeps them outside a database."""
+    if m.app == "llm-server":
+        return [Account(ANY_USER, "API key", api_key)] if api_key else []
     if m.app == "hermes":
         user = inst.env.get("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "")
         if not user:

@@ -698,7 +698,8 @@ class Shepherd:
         inst, m = self._login_method(iid)
         path = self._settings_file(inst) if m.app == "anythingllm" else None
         settings = path.read_text(encoding="utf-8") if path else None
-        accounts, running, multi = logins.readable(m, inst, settings), self._running(iid), False
+        api_key = self.store.catalog(iid).api_key if m.app == "llm-server" else ""
+        accounts, running, multi = logins.readable(m, inst, settings, api_key), self._running(iid), False
         if m.in_container and running:
             listed, multi = logins.parse_accounts(self._login_script(inst, m))
             if m.app != "anythingllm" or multi:
@@ -711,13 +712,16 @@ class Shepherd:
                       else f"No accounts yet: the first one is made in {inst.name} itself.")
         return {"instance": iid, "name": inst.name, "where": m.where, "note": m.note, "running": running,
                 "multi_user": multi, "status": status, "accounts": [asdict(a) for a in accounts],
-                "can_reset": not m.in_container or running or m.app == "anythingllm"}
+                "can_reset": m.app != "llm-server" and (not m.in_container or running or m.app == "anythingllm")}
 
     @checked
     def reset_login(self, iid: str, user: str = "", password: str = "") -> tuple[str, str]:
         """Give an app account a new password (a made-up one when none is given). Returns what to
         tell the user and the password."""
         inst, m = self._login_method(iid)
+        if m.app == "llm-server":
+            raise Problem(f"{inst.name}'s password is its API key: give it a new one with New API key in its "
+                          "Models page, Server settings.", status=409)
         password = password.strip() or secrets.token_urlsafe(12)
         logins.check_password(password)
         user = user.strip()

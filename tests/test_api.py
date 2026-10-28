@@ -356,7 +356,11 @@ def test_old_trash_is_emptied_by_itself(stack):
 def test_app_logins(stack):
     app, client, backend, data = stack
     base = "/api/v1/instances"
-    assert client.get(f"{base}/llm/logins").status_code == 404           # a model server has no logins
+    # the LLM server: any user name, its API key as the password (llama-swap's browser login)
+    got = client.get(f"{base}/llm/logins").json()
+    key = client.get(f"{base}/llm/models").json()["settings"]["api_key"]
+    assert got["accounts"][0]["password"] == key and got["accounts"][0]["user"] == "(any user name)" and not got["can_reset"]
+    assert "New API key" in client.post(f"{base}/llm/logins", json={"password": "long-enough"}).json()["error"]
 
     # Hermes Agent: one login in its environment, shown; a new one restarts it
     r = client.post("/api/v1/apps/hermes/install", json={"id": "agent", "server": "llm", "password": "first-pass"})
@@ -410,4 +414,7 @@ def test_cli_logins(run, stack):
     assert code == 0 and "admin (dashboard)  password: first-pass" in text and "environment" in text
     code, text = run("logins", "agent", "--reset")
     assert code == 0 and "Password: " in text and "first-pass" not in text
-    assert run("logins", "llm")[0] == 1
+    code, text = run("logins", "llm")
+    assert code == 0 and "(any user name) (API key)  password: sk-" in text
+    assert run("logins", "llm", "--reset")[0] == 1
+    assert run("logins", "nope")[0] == 1
