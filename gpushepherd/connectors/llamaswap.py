@@ -81,6 +81,8 @@ def render(catalog: Catalog, gpu_count: int, threads: int) -> str:
     cfg = {
         "healthCheckTimeout": catalog.health_timeout,
         "logLevel": "info",
+        # llama-server's own output too, so the container log says why a model failed to start
+        "logToStdout": "proxy,upstream",
         "sendLoadingState": True,
         "globalTTL": 0,
         "apiKeys": ["${env.%s}" % API_KEY_ENV],
