@@ -20,9 +20,12 @@ each instance says what it needs, and starting or stopping anything re-plans who
 ## Features
 
 - **App Store**: install an LLM server (with a chat model, a coding model, an embeddings model for
-  chatting with your documents, or any mix), Open WebUI,
-  LibreChat, AnythingLLM, Hermes Agent or ComfyUI. Apps that need a helper container get it too:
-  LibreChat comes with its MongoDB database, which starts and stops with LibreChat.
+  chatting with your documents, or any mix), Ollama, Open WebUI, LibreChat, AnythingLLM, Hermes
+  Agent, Langflow (marked *Experimental*), ComfyUI, InvokeAI or Speaches (speech to text and text
+  to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
+  LibreChat comes with its MongoDB database, which starts and stops with LibreChat. Each card
+  shows the app's license and project page. **Logins** on an app's card lists its accounts and
+  sets a new password when one is forgotten.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
   folders, connects chat and agent apps to your model server (or installs one alongside them) and
   decides whether a model needs system RAM. **Manual** opens every field instead, filled in with
@@ -310,7 +313,7 @@ See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUT
 
 ## Roadmap
 
-- More model-server connectors: Ollama (for Home Assistant's own Assist), vLLM.
+- More model servers: vLLM.
 - Shared GPUs: let several small instances share one GPU with memory budgets.
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).

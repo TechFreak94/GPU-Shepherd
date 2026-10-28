@@ -308,9 +308,13 @@ servers, the models you picked), so every field above can be changed afterwards.
 |---|---|---|
 | LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
-| Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model. |
+| Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model. *Voice with* picks a Speaches instance for speech to text and text to speech (`AUDIO_STT_*`, `AUDIO_TTS_*` with engine `openai`). |
 | LibreChat | none | `librechat/librechat`, plus its database: a second instance `<id>-mongodb` (`mongo:8.0`, no port on the host, data in the app data folder's `mongodb/`) that it *starts with*. Fresh secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`), `MONGO_URI`, sign-ups on, cookies that work over plain http (`SESSION_COOKIE_SECURE=false`), and a `librechat.yaml` in its app data folder with one endpoint, *Local models*, whose address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment. Images, uploads and logs go to its app data folder. |
 | AnythingLLM | none | `mintplexlabs/anythingllm` with its storage in the app data folder, and a `server.env` there mounted as its settings file (`/app/server/.env`) that points it at the model server (`generic-openai`, the `chat` model and its context size), with built-in vector store and the server's embeddings model when it has one (`EMBEDDING_ENGINE='generic-openai'`), else AnythingLLM's own. Its web scraper runs without `SYS_ADMIN` (`ANYTHINGLLM_CHROMIUM_ARGS`) and telemetry is off. |
+| Ollama | every free GPU (elastic) | `ollama/ollama` with its models in the models folder's `ollama/` subfolder. No models are pulled for you, and it has no login or API key. |
+| Langflow | none | `langflowai/langflow` with its database and settings in the app data folder (`LANGFLOW_DATABASE_URL`, `LANGFLOW_CONFIG_DIR`), an admin user name and password you choose (`LANGFLOW_SUPERUSER`, `LANGFLOW_SUPERUSER_PASSWORD`), a fresh `LANGFLOW_SECRET_KEY`, and the model server's key and address (`OPENAI_API_KEY`, `LLM_BASE_URL`) with that address allowed through its SSRF guard. Marked *Experimental*: you type the address into each flow's OpenAI block yourself. |
+| InvokeAI | one free GPU (elastic, maximum 1), priority 60 | `invoke-ai/invokeai` with its root in the app data folder and its models in the models folder's `invokeai/` subfolder. |
+| Speaches | one free GPU (elastic, maximum 1) | `speaches-ai/speaches` (CUDA) with a fresh `API_KEY`, its Hugging Face cache in the app data folder, and two models downloaded on first start: `Systran/faster-distil-whisper-large-v3` (speech to text) and `speaches-ai/Kokoro-82M-v1.0-ONNX` (text to speech). |
 | Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
 
 ![Installing the LLM server: suggested models for each name, best fit first](screenshots/llm-install-models.png)
@@ -330,12 +334,27 @@ afterwards repeat:
 - **AnythingLLM**: make a workspace and chat. It has no login until you set a password under its
   Settings, Security. AnythingLLM owns `server.env` after the first start (it rewrites it when you
   change settings in its page), so change its model there rather than under Edit.
+- **Langflow**: log in with the user name and password you chose. In a flow's OpenAI block, set
+  *OpenAI API Base* (advanced settings) to `LLM_BASE_URL` from its Edit page and the model name to
+  `chat`; the API key is already filled in.
+- **Ollama**: pull a model with `docker exec CONTAINER ollama pull MODEL`. Its port has no login.
+- **InvokeAI**: add models under Model Manager, Starter Models. It has no login.
+
+### Logins
+
+**Logins** on the card of Open WebUI, LibreChat, AnythingLLM, Langflow or Hermes Agent lists the
+app's accounts and sets a new password for one (type it, or leave it empty for a made-up one).
+Passwords GPU Shepherd can read (Hermes Agent's environment, AnythingLLM's `server.env` without
+multi-user mode) are shown; apps that keep accounts in a database store only a hash, so for those
+the app must be running and a short script inside its container sets the new password. Hermes
+Agent and single-user AnythingLLM restart to pick it up. The same is in the API and the
+`gpu-shepherd logins` command.
 
 The App Store doesn't offer LobeChat (its current version needs PostgreSQL, S3 file storage, an
 auth key set and a fixed public address before it starts) or Odysseus (its model servers can only
 be added inside the app); install those with *Any Docker image* or Docker Compose.
 
-Open WebUI, LibreChat, AnythingLLM and Hermes Agent can also install a new LLM server alongside themselves
+Open WebUI, LibreChat, AnythingLLM, Langflow and Hermes Agent can also install a new LLM server alongside themselves
 (*A new LLM server, installed with it*), with a chat model you pick from the models folder.
 It is offered first when there is no model server yet, and the install page says so, with an
 *Install an LLM server first* button: that installs the LLM server and then comes back to the app,
