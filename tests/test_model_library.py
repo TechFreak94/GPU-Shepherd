@@ -51,6 +51,11 @@ def test_offload_keeps_experts_on_the_gpus_that_fit_them():
     assert 0 < rules[2] < rules[1] <= moe.layers                  # more GPUs, fewer layers in RAM
     assert ml.offload(moe, [24.0]) == []                           # fits a 24 GB GPU whole
     assert ml.offload(ml.get("qwen3.8-27b"), [8.0, 8.0]) == []     # dense: nothing to move
+    muse = ml.get("muse-glimmer-30b")                             # dense, just too big for 2x 8 GB
+    assert ml.fit(muse, [8.0, 8.0], 64).text.startswith("2 GPUs with 43 of its 52 layers")
+    assert not ml.fit(muse, [8.0], 64).ok                          # most of it in RAM: too slow
+    assert [(r.min_gpus, r.gpu_layers) for r in ml.offload(muse, [8.0, 8.0])] == [(1, 21), (2, 43)]
+    assert ml.offload(muse, [24.0]) == []
     assert [(r.min_gpus, r.gpu_layers) for r in ml.offload(ml.get("qwen3-embedding-0.6b"), [8.0])] == [(1, 0)]
 
 
