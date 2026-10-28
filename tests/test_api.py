@@ -160,6 +160,26 @@ def test_models_load_and_unload(stack):
     assert client.post("/api/v1/instances/llm/models/nope/load").status_code == 404
 
 
+def test_models_with_missing_files_are_flagged(stack, tmp_path_factory):
+    app, client, _, data = stack
+    models = tmp_path_factory.mktemp("models")
+    path = data / "instances" / "llm.yaml"
+    path.write_text(path.read_text().replace("host: /srv/models", f"host: {models}"))
+    (models / "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf").write_bytes(b"GGUF")
+    missing = client.get("/api/v1/instances/llm/models").json()["missing"]
+    assert missing == {"qwen3-coder-next": ["/models/Qwen3-Coder-Next-UD-Q4_K_XL.gguf"]}
+    client.post("/api/v1/instances/llm/start")
+    wait(app)
+    r = client.post("/api/v1/instances/llm/models/qwen3-coder-next/load")
+    assert r.status_code == 409 and "Qwen3-Coder-Next-UD-Q4_K_XL.gguf" in r.json()["error"]
+    browser = TestClient(app)
+    browser.post("/login", data={"user": "admin", "password": "correct-horse"})
+    assert "file missing" in browser.get("/instances/llm/models").text
+    # a folder GPU Shepherd can't see says nothing either way
+    path.write_text(path.read_text().replace(f"host: {models}", "host: /nonexistent/models"))
+    assert client.get("/api/v1/instances/llm/models").json()["missing"] == {}
+
+
 def test_settings_password_and_updates(stack):
     _, client, _, data = stack
     assert client.patch("/api/v1/settings", json={"bind_address": "127.0.0.1"}).json()["settings"]["bind_address"] == "127.0.0.1"

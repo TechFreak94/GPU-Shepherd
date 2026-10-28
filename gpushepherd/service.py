@@ -890,11 +890,30 @@ class Shepherd:
         note = " Restart the server to use it." if st and st.running else ""
         return f"Added {model.id}" + (f"; downloading it ({s.download_gb:.1f} GB)." if fetching else ".") + note
 
+    def missing_files(self, iid: str) -> dict[str, list[str]]:
+        """Model id -> its files (paths inside the container) that aren't on disk. llama-server quits
+        straight away without them, which chat apps only show as "upstream command exited
+        prematurely". Files still downloading, and folders GPU Shepherd can't see, aren't counted."""
+        inst, cat = self.server(iid)
+        downloading = self._downloading({iid: inst})
+        missing: dict[str, list[str]] = {}
+        for m in cat.models:
+            for f in (m.file, m.mmproj, m.mtp_draft):
+                p = budget.host_path(inst, f) if f else None
+                if p is None or f in downloading or not _volume_visible(inst, f):
+                    continue
+                if not p.is_file():
+                    missing.setdefault(m.id, []).append(f)
+        return missing
+
     def load_model(self, iid: str, mid: str) -> str:
         """Load a model in the background (large ones take minutes from disk)."""
         _, cat = self.server(iid)
         if mid not in {m.id for m in cat.models}:
             raise Problem(f"unknown model {mid}", status=404)
+        if gone := self.missing_files(iid).get(mid):
+            raise Problem(f"{mid} can't load: {', '.join(gone)} is not in the models folder. Download it, "
+                          "or fix the path with Edit.", "warn", 409)
         client = self.llama_client(iid)
         busy = self.loading.setdefault(iid, set())
         if mid in busy:
@@ -1058,3 +1077,12 @@ def parse_auto_rules(text: str) -> list[AutoRule]:
             raise Problem(f"rule '{part}': write it as 2=model-id (2 or more GPUs use model-id)")
         parsed.append(AutoRule(min_gpus=int(m.group(1)), model=m.group(2)))
     return parsed
+
+
+
+def _volume_visible(inst: Instance, inside: str) -> bool:
+    """Whether GPU Shepherd can see the host folder of the volume a container path is in."""
+    for v in inst.volumes:
+        if inside.startswith(v.container.rstrip("/") + "/"):
+            return Path(v.host).is_dir()
+    return False

@@ -631,7 +631,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         preview_gpus = gpu_count or max(len(engine.snapshot().gpus), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
-                "models_error": err, "files": files, "file_notes": notes,
+                "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads),

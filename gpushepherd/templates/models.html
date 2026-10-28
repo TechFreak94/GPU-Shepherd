@@ -29,13 +29,15 @@
     {% for m in cat.models %}
       <tr>
         <td><strong>{{ m.name or m.id }}</strong><div class="mono muted">{{ m.id }}</div></td>
-        <td class="mono" style="overflow-wrap:anywhere">{{ m.file }}</td>
+        <td class="mono" style="overflow-wrap:anywhere">{{ m.file }}
+          {% if missing.get(m.id) %}<div class="small warn-text" style="font-family:inherit">Not in the models folder, so it can't load: {{ missing[m.id]|join(", ") }}. Download it, or fix the path with Edit.</div>{% endif %}</td>
         <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span></td>
         <td class="small">{% for a in m.aliases %}<span class="tag">{{ a }}</span>{% endfor %}
           {% for alias, target in resolved.items() if target == m.id %}<span class="tag accent">{{ alias }}</span>{% endfor %}</td>
         <td class="small">
           {% if m.id in loading %}<span class="busy-t">loading…</span>
           {% elif m.id in loaded %}<span class="pill on">loaded</span>
+          {% elif missing.get(m.id) %}<span class="warn-text">file missing</span>
           {% elif running %}<span class="muted">not loaded</span>{% else %}<span class="muted">-</span>{% endif %}
         </td>
         <td><div class="btns" style="justify-content:flex-end">
