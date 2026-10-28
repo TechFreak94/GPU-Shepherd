@@ -673,11 +673,23 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 msg = svc.cancel_download(iid, key)
             elif op == "discard":
                 msg = svc.discard_download(iid, key)
+            elif op == "forget":
+                msg = svc.forget_link(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:
             return problem(err)
         return toast(suggestions_part(request, iid), msg)
+
+    @app.post("/instances/{iid}/models/from-link")
+    async def model_from_link(request: Request, iid: str):
+        form = await request.form()
+        try:
+            msg = svc.add_from_link(iid, str(form.get("url", "")), str(form.get("name", "")),
+                                    str(form.get("mmproj_url", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.get("/instances/{iid}/models/edit", response_class=HTMLResponse)
     def model_form(request: Request, iid: str, model: str = ""):

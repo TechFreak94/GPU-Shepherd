@@ -411,6 +411,9 @@ def cmd_models(args, c: Client) -> int:
         out(args, c.get(f"{base}/suggestions"), lambda rows: table(
             [[x["key"], x["name"], x["fit"], x["status"], "yes" if x["in_catalog"] else "-"] for x in rows],
             ["KEY", "MODEL", "ON THIS MACHINE", "DOWNLOAD", "ADDED"]))
+    elif a == "add-link":
+        out(args, c.post(f"{base}/models/from-link", {"url": args.link, "name": args.name or "",
+                                                      "mmproj_url": args.mmproj or ""}))
     elif a in ("add-suggested", "download", "stop-download", "discard-download"):
         op = {"add-suggested": "add", "download": "download", "stop-download": "cancel",
               "discard-download": "discard"}[a]
@@ -693,6 +696,11 @@ def add_commands(sub) -> None:
         q = msub.add_parser(name, help=what)
         q.add_argument("server")
         q.add_argument("key", help="its key, from `models suggested`")
+    q = msub.add_parser("add-link", help="add a model by the link of its .gguf file, downloading it like a suggested one")
+    q.add_argument("server")
+    q.add_argument("link", help="e.g. https://huggingface.co/owner/Model-GGUF/resolve/main/Model-Q4_K_M.gguf")
+    q.add_argument("--name", help="its name (default: from the file name)")
+    q.add_argument("--mmproj", help="the link of its vision projector (.gguf), so it reads images")
     q = msub.add_parser("unload", help="unload a model, or every model")
     q.add_argument("server")
     q.add_argument("model", nargs="?")

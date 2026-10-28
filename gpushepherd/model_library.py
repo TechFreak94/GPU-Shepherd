@@ -14,7 +14,9 @@ This module is pure: callers pass in the GPUs' memory and the RAM size.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 from .config import CatalogModel, OffloadRule
 
@@ -158,13 +160,62 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
 )
 
 
-def get(key: str) -> Suggestion | None:
-    return next((s for s in SUGGESTIONS if s.key == key), None)
+def get(key: str, extra: tuple[Suggestion, ...] = ()) -> Suggestion | None:
+    """A suggestion by key; `extra` are the user's own, added from a link."""
+    return next((s for s in SUGGESTIONS + tuple(extra) if s.key == key), None)
 
 
-def for_file(path: str, models_root: str = "/models") -> Suggestion | None:
+def for_file(path: str, models_root: str = "/models", extra: tuple[Suggestion, ...] = ()) -> Suggestion | None:
     """The suggestion a model file (path inside the container) was downloaded for, if any."""
-    return next((s for s in SUGGESTIONS if path == f"{models_root}/{s.path(s.model)}"), None)
+    return next((s for s in SUGGESTIONS + tuple(extra) if path == f"{models_root}/{s.path(s.model)}"), None)
+
+
+# --------------------------------------------------------------------------- models added from a link
+LINKED = "Added from a link."           # the blurb of a model added from a link
+SPLIT = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.I)
+
+
+def gguf_link(url: str) -> str:
+    """A download link for a .gguf file, from what people copy: a Hugging Face file page (/blob/)
+    becomes its download link (/resolve/), and ?download=true and the like are dropped."""
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("https", "http") or not parts.netloc:
+        raise ValueError("The link must start with https://")
+    path = parts.path
+    if parts.netloc in ("huggingface.co", "www.huggingface.co"):
+        path = re.sub(r"^(/[^/]+/[^/]+)/blob/", r"\1/resolve/", path)
+        if "/resolve/" not in path:
+            raise ValueError("Use the link of the .gguf file itself (on the model page: Files, then the file), "
+                             "not the model page.")
+    if not path.lower().endswith(".gguf"):
+        raise ValueError("The link must point at a .gguf file.")
+    if SPLIT.search(path):
+        raise ValueError("That model is split into several .gguf files; models in one file are supported.")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9.]+", "-", text.lower())).strip("-.")[:60] or "model"
+
+
+def from_link(url: str, name: str = "", gb: float = 0.0, mmproj_url: str = "", mmproj_gb: float = 0.0,
+              key: str = "") -> Suggestion:
+    """A model the user added by its download link, set up like a suggested one: its own folder,
+    downloaded the same way. Its settings are llama.cpp's defaults, to tune on the Models page."""
+    url = gguf_link(url)
+    file = url.rsplit("/", 1)[1]
+    stem = file[:-5]
+    parts = urlsplit(url)
+    m = re.match(r"^(/[^/]+/[^/]+)/resolve/", parts.path)
+    page = urlunsplit((parts.scheme, parts.netloc, m.group(1), "", "")) if m else url.rsplit("/", 1)[0]
+    mmproj = None
+    if mmproj_url.strip():
+        mmproj_url = gguf_link(mmproj_url)
+        mmproj = File(name=mmproj_url.rsplit("/", 1)[1], url=mmproj_url, gb=round(mmproj_gb, 2))
+        if mmproj.name == file:
+            raise ValueError("The vision projector must be a different file from the model.")
+    return Suggestion(key=key or _slug(stem), name=name.strip() or stem, blurb=LINKED, uses=("chat", "coder"),
+                      model=File(name=file, url=url, gb=round(gb, 2)), page=page, mmproj=mmproj)
 
 
 @dataclass(frozen=True)
@@ -202,6 +253,8 @@ def fit(s: Suggestion, gpu_mem_gb: list[float], ram_gb: float) -> Fit:
     partly in system RAM. A dense model split that way is too slow to recommend, unless only a few
     of its layers (a fifth at most) have to go to RAM."""
     need = _need(s)
+    if not s.model.gb:                       # added from a link whose size wasn't known
+        return Fit(True, 0, 0, "Size not known")
     if s.gpu_layers == 0:                    # runs on the CPU
         return Fit(True, 0, round(need, 1), f"Runs on the CPU, about {max(round(need), 1)} GB of RAM")
     if not gpu_mem_gb:

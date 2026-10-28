@@ -274,7 +274,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return {"message": svc.cancel_download(iid, key)}
         if op == "discard":
             return {"message": svc.discard_download(iid, key)}
+        if op == "forget":
+            return {"message": svc.forget_link(iid, key)}
         raise Problem("unknown operation", status=404)
+
+    @r.post("/api/v1/instances/{iid}/models/from-link")
+    @handle
+    async def model_from_link(request: Request, iid: str):
+        body = await request.json()
+        if not isinstance(body, dict) or not body.get("url"):
+            raise Problem('send {"url": "https://.../model.gguf"} (and optionally "name", "mmproj_url")')
+        msg = svc.add_from_link(iid, str(body["url"]), str(body.get("name", "")), str(body.get("mmproj_url", "")))
+        return JSONResponse({"message": msg}, status_code=201)
 
     @r.get("/api/v1/app-updates")
     @handle

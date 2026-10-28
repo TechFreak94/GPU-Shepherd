@@ -856,3 +856,18 @@ def test_restart_from_the_models_page_goes_back_there(stack):
     # the message has "…" in it, which a header can only carry encoded
     assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith(
         "/instances/llm/models?msg=Restarting LLM server")
+
+
+def test_models_page_adds_a_model_from_a_link(stack, monkeypatch):
+    app, client, _, data = stack
+    login(client)
+    from gpushepherd import service
+    monkeypatch.setattr(service, "_remote_gb", lambda url: 0)
+    assert "Add a model from a link" in client.get("/instances/llm/models").text
+    r = client.post("/instances/llm/models/from-link", headers=HX,
+                    data={"url": "https://huggingface.co/someone/X-GGUF/resolve/main/X-Q4_K_M.gguf", "name": "X"})
+    assert r.status_code == 204 and "Added x-q4-k-m" in unquote(r.headers["HX-Redirect"])
+    part = client.get("/instances/llm/suggestions", headers=HX).text
+    assert "your link" in part and "Size not known" in part
+    r = client.post("/instances/llm/models/from-link", headers=HX, data={"url": "https://example.com/x.bin"})
+    assert "must point at a .gguf file" in r.headers.get("HX-Trigger", "")

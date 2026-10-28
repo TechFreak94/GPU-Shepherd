@@ -11,6 +11,7 @@
           {% for u in s.uses %}<span class="tag">{{ {"chat": "chat", "coder": "coding", "embed": "embeddings"}[u] }}</span>{% endfor %}
           {% if s.vision %}<span class="tag" title="Reads images (its vision projector is downloaded with it)">images</span>{% endif %}
           {% if s.moe %}<span class="tag" title="Mixture of experts: its expert layers can sit in system RAM and it stays quick">MoE</span>{% endif %}
+          {% if s.linked %}<span class="tag" title="You added it from a link">your link</span>{% endif %}
           {% if s.mtp %}<span class="tag" title="Multi-token prediction: guesses a few tokens ahead, for faster answers">MTP</span>{% endif %}
           <div class="small muted">{{ s.blurb }} <a class="ext" href="{{ s.page }}" target="_blank" rel="noopener">Model page</a></div></td>
         <td class="small {{ '' if s.fits else 'warn-text' }}">{{ s.fit }}</td>
@@ -29,6 +30,10 @@
           {% if s.partial %}
             <button hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/discard" hx-target="#suggestions" hx-swap="outerHTML"
               hx-confirm="Delete what was downloaded of {{ s.name }} so far?" title="Deletes the unfinished files to free the space">Discard</button>
+          {% endif %}
+          {% if s.linked and not s.in_catalog %}
+            <button hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/forget" hx-target="#suggestions" hx-swap="outerHTML"
+              title="Takes it off this list; downloaded files stay">Forget</button>
           {% endif %}
           {% if not s.in_catalog %}
             <button class="{{ 'primary' if s.fits else '' }}" hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/add"

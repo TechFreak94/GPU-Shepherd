@@ -18,6 +18,7 @@ import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import httpx
 from pydantic import ValidationError
 
 from . import (app_updates, auth, budget, downloads, host, instance_templates as tpl, logins, model_library, storage,
@@ -401,7 +402,8 @@ class Shepherd:
     def _downloading(self, instances: dict[str, Instance]) -> set[str]:
         running = {n for n, h in self.backend.helpers(DOWNLOAD_KIND).items() if h.running}
         folders = storage.model_folders(instances, tpl.MODELS_IN_CONTAINER)
-        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS if self.downloads.name(s) in running
+        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS + self._linked()
+                if self.downloads.name(s) in running
                 for f in s.files for m in folders}
 
     def remove_unused_images(self) -> str:
@@ -550,7 +552,7 @@ class Shepherd:
         """Start downloading the suggested models among `models` that aren't in the models folder yet."""
         out, folder = [], self.models_dir(server)
         for m in models:
-            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER)
+            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER, self._linked())
             if s and folder and self.downloads.status(s, folder).state != "ready":
                 try:
                     self.downloads.start(s, folder)
@@ -827,22 +829,65 @@ class Shepherd:
         folder = self.models_dir(inst)
         files = {x.file for x in cat.models}
         out = []
-        for s in model_library.SUGGESTIONS:
+        linked = self._linked()
+        for s in model_library.SUGGESTIONS + linked:
             f = model_library.fit(s, m.gpu_mem_gb, m.ram_gb)
             st = self.downloads.status(s, folder)
             out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
                         "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
                         "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
-                        "pct": st.pct, "partial": st.partial, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
+                        "pct": st.pct, "partial": st.partial, "linked": s in linked, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
                         "files": [{"path": f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}", "url": x.url, "gb": x.gb}
                                   for x in s.files]})
         return sorted(out, key=lambda x: x.pop("rank"))
 
     def _suggestion(self, key: str) -> model_library.Suggestion:
-        s = model_library.get(key)
+        s = model_library.get(key, self._linked())
         if not s:
             raise Problem(f"no suggested model '{key}'", status=404)
         return s
+
+    def _linked(self) -> tuple[model_library.Suggestion, ...]:
+        """The models added from a link, set up like suggested ones."""
+        out = []
+        for x in self.store.linked_models():
+            try:
+                out.append(model_library.from_link(str(x["url"]), str(x.get("name", "")), float(x.get("gb") or 0),
+                                                   str(x.get("mmproj_url", "")), float(x.get("mmproj_gb") or 0),
+                                                   key=str(x.get("key", ""))))
+            except (ValueError, TypeError):
+                log.warning("linked-models.yaml: skipping %s", x.get("url"))
+        return tuple(out)
+
+    def add_from_link(self, iid: str, url: str, name: str = "", mmproj_url: str = "") -> str:
+        """Add a model by the download link of its .gguf file (and optionally its vision projector's):
+        it is listed with the suggested models, added to this server's catalogue and downloaded."""
+        try:
+            s = model_library.from_link(url, name, mmproj_url=mmproj_url)
+        except ValueError as err:
+            raise Problem(str(err)) from err
+        rows = self.store.linked_models()
+        same = next((x for x in rows if x.get("url") == s.model.url), None)
+        if same:
+            key = str(same.get("key"))       # the same link again
+        else:
+            taken = {x.key for x in model_library.SUGGESTIONS + self._linked()}
+            key = tpl.free_id(s.key, taken)
+            rows.append({"key": key, "name": s.name, "url": s.model.url, "gb": _remote_gb(s.model.url),
+                         "mmproj_url": s.mmproj.url if s.mmproj else "",
+                         "mmproj_gb": _remote_gb(s.mmproj.url) if s.mmproj else 0})
+            self.store.save_linked_models(rows)
+        return self.add_suggestion(iid, key)
+
+    def forget_link(self, iid: str, key: str) -> str:
+        """Take a model added from a link off the list (its files and catalogue entry stay)."""
+        self.server(iid)
+        rows = self.store.linked_models()
+        left = [x for x in rows if x.get("key") != key]
+        if len(left) == len(rows):
+            raise Problem(f"no model added from a link as '{key}'", status=404)
+        self.store.save_linked_models(left)
+        return "Taken off the list. Its files and catalogue entry are kept."
 
     def download_suggestion(self, iid: str, key: str) -> str:
         inst, _ = self.server(iid)
@@ -1086,3 +1131,13 @@ def _volume_visible(inst: Instance, inside: str) -> bool:
         if inside.startswith(v.container.rstrip("/") + "/"):
             return Path(v.host).is_dir()
     return False
+
+
+def _remote_gb(url: str) -> float:
+    """A file's size from its server, in GB (0 when it doesn't say)."""
+    try:
+        r = httpx.head(url, follow_redirects=True, timeout=10)
+        size = int(r.headers.get("x-linked-size") or r.headers.get("content-length") or 0) if r.status_code < 400 else 0
+    except (httpx.HTTPError, ValueError):
+        size = 0
+    return round(size / 1e9, 2)

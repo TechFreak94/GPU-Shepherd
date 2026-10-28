@@ -317,6 +317,42 @@ def test_installing_with_a_suggested_model_downloads_it(stack, tmp_path_factory)
     assert "shepherd-download-qwen3.5-9b" in backend.helper_runs
 
 
+def test_models_added_from_a_link_download_like_suggested_ones(run, stack, tmp_path_factory, monkeypatch):
+    app, client, backend, data = stack
+    from gpushepherd import service
+    monkeypatch.setattr(service, "_remote_gb", lambda url: 2.5 if "mmproj" not in url else 0.5)
+    models = tmp_path_factory.mktemp("models")
+    path = data / "instances" / "llm.yaml"
+    path.write_text(path.read_text().replace("host: /srv/models", f"host: {models}"))
+    base = "/api/v1/instances/llm/models/from-link"
+    hf = "https://huggingface.co/someone/Tiny-Chat-GGUF"
+    r = client.post(base, json={"url": f"{hf}/blob/main/Tiny-Chat-Q4_K_M.gguf?download=true",
+                                "mmproj_url": f"{hf}/resolve/main/mmproj-F16.gguf"})
+    assert r.status_code == 201 and "Added tiny-chat-q4-k-m; downloading it (3.0 GB)" in r.json()["message"]
+    cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
+    m = next(x for x in cat["models"] if x["id"] == "tiny-chat-q4-k-m")
+    assert m["file"] == "/models/tiny-chat-q4-k-m/Tiny-Chat-Q4_K_M.gguf"
+    assert m["mmproj"] == "/models/tiny-chat-q4-k-m/mmproj-F16.gguf"
+    row = next(x for x in client.get("/api/v1/instances/llm/suggestions").json() if x["key"] == "tiny-chat-q4-k-m")
+    assert row["linked"] and row["in_catalog"] and row["page"] == hf
+    assert row["files"][0]["url"] == f"{hf}/resolve/main/Tiny-Chat-Q4_K_M.gguf"
+    for _ in range(100):
+        if "shepherd-download-tiny-chat-q4-k-m" in backend.helper_runs:
+            break
+        time.sleep(0.01)
+    assert "shepherd-download-tiny-chat-q4-k-m" in backend.helper_runs
+    # the same link again is already there; a model page or a split model is refused with a reason
+    assert client.post(base, json={"url": f"{hf}/resolve/main/Tiny-Chat-Q4_K_M.gguf"}).status_code == 409
+    r = client.post(base, json={"url": hf})
+    assert r.status_code == 400 and "the .gguf file itself" in r.json()["error"]
+    r = client.post(base, json={"url": f"{hf}/resolve/main/Big-00001-of-00003.gguf"})
+    assert r.status_code == 400 and "split" in r.json()["error"]
+    code, text = run("models", "add-link", "llm", f"{hf}/resolve/main/Tiny-Chat-Q8_0.gguf", "--name", "Tiny Q8")
+    assert code == 0 and "Added tiny-chat-q8-0" in text, text
+    assert client.post("/api/v1/instances/llm/suggestions/tiny-chat-q8-0/forget").status_code == 200
+    assert "tiny-chat-q8-0" not in (data / "linked-models.yaml").read_text()
+
+
 def test_delete_moves_an_app_and_its_database_to_the_trash(stack):
     app, client, backend, data = stack
     svc = app.state.svc
