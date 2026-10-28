@@ -333,3 +333,5 @@ ComfyUI, Ollama, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Ag
 models are downloaded from their own publishers and keep their own licenses, shown on each App
 Store card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and
 what it's used for; the dashboard has the same list under the version number, **Credits**.
+
+![Open-source credits in the dashboard](docs/screenshots/credits.png)

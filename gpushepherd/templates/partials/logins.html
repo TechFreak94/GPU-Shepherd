@@ -17,7 +17,7 @@
   <form hx-post="/ui/instances/{{ info.instance }}/logins" hx-target="#modal-body" style="display:flex;flex-wrap:wrap;gap:8px;align-items:end">
     <label>User{% if info.accounts|length > 1 or info.multi_user %}<br>
       <select name="user">{% for a in info.accounts %}<option value="{{ a.user }}">{{ a.user }}</option>{% endfor %}</select>
-      {% else %}<br><input name="user" value="{{ info.accounts[0].user if info.accounts else '' }}" placeholder="optional" autocomplete="off">{% endif %}</label>
+      {% else %}<br><input name="user" type="text" value="{{ info.accounts[0].user if info.accounts else '' }}" placeholder="optional" autocomplete="off">{% endif %}</label>
     <label>New password<br><input name="password" type="text" placeholder="leave empty to make one up" autocomplete="off"></label>
     <button class="primary">Set new password</button>
   </form>

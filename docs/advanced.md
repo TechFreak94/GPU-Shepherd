@@ -350,6 +350,8 @@ the app must be running and a short script inside its container sets the new pas
 Agent and single-user AnythingLLM restart to pick it up. The same is in the API and the
 `gpu-shepherd logins` command.
 
+![Logins for Hermes Agent: its dashboard user and a new password](screenshots/logins.png)
+
 The App Store doesn't offer LobeChat (its current version needs PostgreSQL, S3 file storage, an
 auth key set and a fixed public address before it starts) or Odysseus (its model servers can only
 be added inside the app); install those with *Any Docker image* or Docker Compose.
