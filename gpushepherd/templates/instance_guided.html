@@ -38,7 +38,7 @@
 <div id="editor">
 <div class="pagehead">
   <div><h1>Install {{ t.title }}</h1>
-  <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}</div></div>
+  <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}{% if t.license %} · License: {{ t.license }}{% endif %}</div></div>
   <a class="btn" href="/apps">Back to the App Store</a>
 </div>
 {% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}

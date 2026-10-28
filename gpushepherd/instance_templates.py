@@ -78,6 +78,7 @@ class Template:
     data_owner: tuple[int, int] | None = None  # uid:gid the app runs as, for the folders made for it
     needs: str = ""
     docs: str = ""
+    license: str = ""                          # the app's own license, credited in the App Store
     badge: str = ""                            # a few characters for its App Store icon
     tag: str = ""                              # what kind of instance it is, on its dashboard card
     companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
@@ -107,7 +108,7 @@ TEMPLATES: tuple[Template, ...] = (
                           hint="For chatting with your documents (RAG) in Open WebUI, AnythingLLM and LibreChat. "
                                "It stays loaded beside the other models, on the CPU.")),
         needs="An NVIDIA GPU; models larger than its memory can use system RAM",
-        docs="https://github.com/mostlygeek/llama-swap"),
+        license="MIT (llama-swap and llama.cpp)", docs="https://github.com/mostlygeek/llama-swap"),
     Template(
         key="ollama", tag="Model Server", badge="OL", title="Ollama", group="Model servers",
         blurb="Ollama's model server, for apps that only speak Ollama's API.",
@@ -122,7 +123,7 @@ TEMPLATES: tuple[Template, ...] = (
                       "shown on its dashboard card). It answers at http://this-machine:PORT, and has no login or "
                       "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
                       "LLM server through its llama.cpp integration instead.",
-        needs="An NVIDIA GPU", docs="https://docs.ollama.com"),
+        needs="An NVIDIA GPU", license="MIT", docs="https://docs.ollama.com"),
     Template(
         key="open-webui", tag="Chat UI", badge="OW", title="Open WebUI", group="Chat and agents",
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
@@ -132,7 +133,8 @@ TEMPLATES: tuple[Template, ...] = (
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
-        needs="An LLM server to chat with", docs="https://docs.openwebui.com"),
+        needs="An LLM server to chat with", license="Open WebUI License (BSD-3-Clause plus branding terms)",
+        docs="https://docs.openwebui.com"),
     Template(
         key="hermes", tag="Agent UI", badge="H", title="Hermes Agent", group="Chat and agents",
         blurb="An AI agent by Nous Research with memory, skills and scheduled tasks, thinking with your own model server.",
@@ -144,7 +146,7 @@ TEMPLATES: tuple[Template, ...] = (
         env={"HERMES_DASHBOARD": "1"}, login=("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
         appdata=(("data", "/opt/data"),), data_owner=(10000, 10000), connects="hermes",
         needs="A model server whose model can call tools (Qwen3 models can)",
-        docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
+        license="MIT", docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
     Template(
         key="librechat", tag="Chat UI", badge="LC", title="LibreChat", group="Chat and agents",
         blurb="A multi-user ChatGPT-style chat with agents, presets and conversation search, using your own model server.",
@@ -161,7 +163,7 @@ TEMPLATES: tuple[Template, ...] = (
         companions=("librechat-mongodb",), connects="librechat",
         after_install="Open it, sign up and log in: the first account becomes the admin. Then turn sign-ups "
                       "off by setting ALLOW_REGISTRATION=false under Edit, unless others should make accounts.",
-        needs="An LLM server to chat with", docs="https://www.librechat.ai/docs"),
+        needs="An LLM server to chat with", license="MIT", docs="https://www.librechat.ai/docs"),
     Template(
         key="anythingllm", tag="Chat UI", badge="ALL", title="AnythingLLM", group="Chat and agents",
         blurb="Chat with your documents: workspaces, built-in RAG and agents, thinking with your own model server.",
@@ -176,7 +178,8 @@ TEMPLATES: tuple[Template, ...] = (
         data_owner=(1000, 1000), connects="anythingllm",
         after_install="Open it and make a workspace to chat in; the model server is already set up. "
                       "It has no login until you set a password under Settings, Security.",
-        needs="An LLM server to chat with", docs="https://docs.anythingllm.com/installation-docker/overview"),
+        needs="An LLM server to chat with", license="MIT",
+        docs="https://docs.anythingllm.com/installation-docker/overview"),
     Template(
         key="langflow", tag="Agent UI", badge="LF", title="Langflow", group="Chat and agents",
         blurb="Build chatbots, RAG pipelines and agents by wiring blocks together, running on your own model server.",
@@ -197,7 +200,7 @@ TEMPLATES: tuple[Template, ...] = (
                       "Edit on this instance), and type chat (or another name the server answers to) as the Model "
                       "Name. Its OpenAI API Key is already the server's key. For documents, the OpenAI Embeddings "
                       "block with the same address and the model embed, if the server has an embeddings model.",
-        needs="An LLM server for its flows to use", docs="https://docs.langflow.org"),
+        needs="An LLM server for its flows to use", license="MIT", docs="https://docs.langflow.org"),
     Template(
         key="invokeai", tag="Image UI", badge="INV", title="InvokeAI", group="Image and video",
         blurb="Image generation with a polished canvas: inpainting, layers and a model manager, in the browser.",
@@ -209,7 +212,7 @@ TEMPLATES: tuple[Template, ...] = (
         appdata=(("invokeai", "/invokeai"),), models_mount=("invokeai", "/invokeai/models", False),
         after_install="Open it and add models under Model Manager, Starter Models. It has no login: anyone "
                       "who can reach its port can use it.",
-        needs="An NVIDIA GPU with 8+ GB (12+ GB for SDXL and Flux)", docs="https://invoke.ai"),
+        needs="An NVIDIA GPU with 8+ GB (12+ GB for SDXL and Flux)", license="Apache-2.0", docs="https://invoke.ai"),
     Template(
         key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
@@ -222,7 +225,7 @@ TEMPLATES: tuple[Template, ...] = (
                  ("output", "/root/ComfyUI/output"), ("user", "/root/ComfyUI/user"), ("cache", "/root/.cache")),
         models_mount=("comfyui", "/root/ComfyUI/models", False),
         needs="An NVIDIA GPU with 8+ GB and driver 580 or newer (CUDA 13 image)",
-        docs="https://github.com/YanWenKun/ComfyUI-Docker"),
+        license="GPL-3.0 (ComfyUI), Mulan PSL v2 (the image)", docs="https://github.com/YanWenKun/ComfyUI-Docker"),
 
     Template(
         key="speaches", tag="Speech Server", badge="SP", title="Speaches", group="Speech",
@@ -236,7 +239,7 @@ TEMPLATES: tuple[Template, ...] = (
         after_install="It answers at http://this-machine:PORT/v1 with the key API_KEY (under Edit). Open WebUI "
                       "installed after it can use it for voice; for an Open WebUI you already have, set Speech to "
                       "Text and Text to Speech to OpenAI with that address and key in its Admin Panel, Audio.",
-        needs="An NVIDIA GPU with 4+ GB", docs="https://speaches.ai"),
+        needs="An NVIDIA GPU with 4+ GB", license="MIT", docs="https://speaches.ai"),
 
     # companions: installed with an app, never on their own
     Template(
@@ -244,7 +247,8 @@ TEMPLATES: tuple[Template, ...] = (
         blurb="MongoDB for LibreChat's accounts and conversations.", points=(), hidden=True,
         default_id="mongodb", default_name="database", description="MongoDB for LibreChat",
         image="mongo:8.0", command=("mongod", "--noauth", "--bind_ip_all"), container_port=27017, host_port=0,
-        gpu="none", appdata=(("mongodb", "/data/db"),), docs="https://www.librechat.ai/docs/local/docker"),
+        gpu="none", appdata=(("mongodb", "/data/db"),), license="SSPL v1 (MongoDB Community Server)",
+        docs="https://www.librechat.ai/docs/local/docker"),
 )
 
 # the model server an app with a connection can install alongside itself, and the model slot it fills

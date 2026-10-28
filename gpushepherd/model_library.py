@@ -47,6 +47,7 @@ class Suggestion:
     uses: tuple[str, ...]    # install-form slots it suits: chat, coder, embed
     model: File
     page: str                # the model's download page
+    license: str = ""        # the model's license, from its model card
     moe: bool = False        # mixture of experts: expert layers can live in system RAM at good speed
     layers: int = 0          # MoE: its layer count, the most expert layers that can go to RAM
     mmproj: File | None = None     # vision projector: lets it read images
@@ -86,14 +87,14 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
     Suggestion(
         key="qwen3.5-9b", name="Qwen3.5 9B",
         blurb="All-round chat that reads images and calls tools; 256K context. Fits one 8 GB GPU.",
-        uses=("chat", "coder"), page=f"{HF}/unsloth/Qwen3.5-9B-GGUF",
+        uses=("chat", "coder"), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3.5-9B-GGUF",
         model=_hf("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-UD-Q4_K_XL.gguf", 5.97),
         mmproj=_hf("unsloth/Qwen3.5-9B-GGUF", "mmproj-F16.gguf", 0.92),
         sampling=QWEN_INSTRUCT, thinking="off"),
     Suggestion(
         key="gemma-4-e4b", name="Gemma 4 E4B",
         blurb="Light, quick chat from Google that reads images and audio. Fits one 8 GB GPU with room for context.",
-        uses=("chat",), page=f"{HF}/unsloth/gemma-4-E4B-it-GGUF",
+        uses=("chat",), license="Apache-2.0", page=f"{HF}/unsloth/gemma-4-E4B-it-GGUF",
         model=_hf("unsloth/gemma-4-E4B-it-GGUF", "gemma-4-E4B-it-UD-Q4_K_XL.gguf", 5.13),
         mmproj=_hf("unsloth/gemma-4-E4B-it-GGUF", "mmproj-F16.gguf", 0.99),
         draft=_hf("unsloth/gemma-4-E4B-it-GGUF", "mtp-gemma-4-E4B-it.gguf", 0.1), mtp=2,
@@ -101,7 +102,7 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
     Suggestion(
         key="gemma-4-12b", name="Gemma 4 12B",
         blurb="Stronger Gemma chat with images and audio; 256K context. For a 12 GB GPU or two 8 GB GPUs.",
-        uses=("chat",), page=f"{HF}/unsloth/gemma-4-12b-it-GGUF",
+        uses=("chat",), license="Apache-2.0", page=f"{HF}/unsloth/gemma-4-12b-it-GGUF",
         model=_hf("unsloth/gemma-4-12b-it-GGUF", "gemma-4-12b-it-UD-Q4_K_XL.gguf", 7.37),
         mmproj=_hf("unsloth/gemma-4-12b-it-GGUF", "mmproj-F16.gguf", 0.18),
         draft=_hf("unsloth/gemma-4-12b-it-GGUF", "mtp-gemma-4-12b-it.gguf", 0.47), mtp=2,
@@ -110,14 +111,14 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         key="qwen3-coder-30b-a3b", name="Qwen3 Coder 30B-A3B",
         blurb="Coding model for agents and editors. A mixture of experts: on one 8 GB GPU its experts sit in "
               "about 13 GB of RAM and it still answers at reading speed.",
-        uses=("coder",), page=f"{HF}/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", moe=True, layers=48,
+        uses=("coder",), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", moe=True, layers=48,
         model=_hf("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf", 17.67),
         sampling=QWEN_CODER, ctx_size=65536),
     Suggestion(
         key="qwen3.8-27b", name="Qwen3.8 27B",
         blurb="Newest dense Qwen (August 2026): the best answers here for chat and coding, with images. "
               "Needs two 8 GB GPUs or one 16 GB GPU; slower than the A3B models.",
-        uses=("chat", "coder"), page=f"{HF}/unsloth/Qwen3.8-27B-GGUF",
+        uses=("chat", "coder"), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3.8-27B-GGUF",
         model=_hf("unsloth/Qwen3.8-27B-GGUF", "Qwen3.8-27B-UD-Q3_K_XL.gguf", 13.15),
         mmproj=_hf("unsloth/Qwen3.8-27B-GGUF", "mmproj-F16.gguf", 0.93),
         sampling=QWEN_THINKING),
@@ -125,7 +126,7 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         key="qwen3.6-35b-a3b", name="Qwen3.6 35B-A3B",
         blurb="Fast mixture-of-experts chat and coding with images. Fits two 8 GB GPUs, or one GPU with "
               "its experts in RAM.",
-        uses=("chat", "coder"), page=f"{HF}/unsloth/Qwen3.6-35B-A3B-GGUF", moe=True, layers=40,
+        uses=("chat", "coder"), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3.6-35B-A3B-GGUF", moe=True, layers=40,
         model=_hf("unsloth/Qwen3.6-35B-A3B-GGUF", "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf", 16.85),
         mmproj=_hf("unsloth/Qwen3.6-35B-A3B-GGUF", "mmproj-F16.gguf", 0.9),
         sampling=QWEN_THINKING),
@@ -133,14 +134,14 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         key="qwen3-coder-next", name="Qwen3 Coder Next 80B-A3B",
         blurb="The strongest coding model here, for long agent sessions. Its experts live in system RAM: "
               "needs about 40 GB of free RAM beside two 8 GB GPUs (64 GB machines).",
-        uses=("coder",), page=f"{HF}/unsloth/Qwen3-Coder-Next-GGUF", moe=True, layers=48,
+        uses=("coder",), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3-Coder-Next-GGUF", moe=True, layers=48,
         model=_hf("unsloth/Qwen3-Coder-Next-GGUF", "Qwen3-Coder-Next-UD-Q4_K_XL.gguf", 49.61),
         sampling=QWEN_CODER_NEXT, ctx_size=65536),
     Suggestion(
         key="qwen3-embedding-0.6b", name="Qwen3 Embedding 0.6B",
         blurb="Turns documents into vectors for chat-with-your-files (RAG) in Open WebUI, AnythingLLM and "
               "LibreChat. Runs on the CPU and stays loaded, so it never swaps the chat model out.",
-        uses=("embed",), page=f"{HF}/Qwen/Qwen3-Embedding-0.6B-GGUF",
+        uses=("embed",), license="Apache-2.0", page=f"{HF}/Qwen/Qwen3-Embedding-0.6B-GGUF",
         model=_hf("Qwen/Qwen3-Embedding-0.6B-GGUF", "Qwen3-Embedding-0.6B-Q8_0.gguf", 0.64),
         role="embed", keep_loaded=True, gpu_layers=0, ctx_size=8192, kv_cache="f16",
         extra_args="--pooling last --ubatch-size 8192"),

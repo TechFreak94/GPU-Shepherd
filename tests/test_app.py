@@ -616,6 +616,10 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
     assert "librechat-mongodb" not in page                     # companions are not on the store
     assert page.count(">Experimental</span>") == 1 and "Experimental." in client.get("/apps/langflow").text
+    assert "License: MIT" in client.get("/apps/langflow").text and "License: Apache-2.0" in page
+    assert ">Credits</button>" in client.get("/ui/update").text
+    cr = client.get("/ui/credits").text
+    assert "htmx" in cr and "Langflow" in cr and "SSPL" in cr and "unsloth/Qwen3.5-9B-GGUF" in cr
     form = client.get("/apps/librechat").text
     assert "LibreChat database" in form and "mongo:8.0" in form and "the first account becomes the admin" in form
     r = client.post("/instances/guided", headers=HX, data={

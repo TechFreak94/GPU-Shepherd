@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -807,6 +807,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/ui/update", response_class=HTMLResponse)
     def update_dialog(request: Request, confirm: str = ""):
         return update_page(request, confirm == "1")
+
+    @app.get("/ui/credits", response_class=HTMLResponse)
+    def credits_dialog(request: Request):
+        apps = [t for t in tpl.TEMPLATES if t.license]
+        return page(request, "partials/credits.html", credits=credits, apps=apps, models=model_library.SUGGESTIONS)
 
     @app.get("/ui/app-updates", response_class=HTMLResponse)
     def app_updates_dialog(request: Request):

@@ -321,3 +321,12 @@ See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUT
 
 Apache-2.0 - see [LICENSE](LICENSE). Bundles [htmx](https://htmx.org) (Zero-Clause BSD,
 `gpushepherd/static/htmx.LICENSE.txt`).
+
+## Acknowledgements
+
+GPU Shepherd is built on, and runs, other people's open-source work: FastAPI, htmx, Docker, the
+NVIDIA Container Toolkit, llama.cpp and llama-swap, and every app in the App Store (Open WebUI,
+ComfyUI, Ollama, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Agent). Apps and
+models are downloaded from their own publishers and keep their own licenses, shown on each App
+Store card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and
+what it's used for; the dashboard has the same list under the version number, **Credits**.
