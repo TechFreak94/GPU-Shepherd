@@ -3,6 +3,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 import yaml
@@ -119,7 +120,7 @@ def test_create_edit_and_validation(stack):
             "ports": "9000:9000", "volumes": "/srv/whisper:/data", "env": "MODEL=large", "command": "serve --fast",
             "gpu_mode": "fixed", "gpu_list": "1", "priority": "60", "min_gpus": "1", "max_gpus": "0", "open_path": "/"}
     r = client.post("/instances/save", headers=HX, data=form)
-    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/?msg=Saved Whisper")
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/?msg=Saved Whisper")
     saved = yaml.safe_load((data / "instances" / "whisper.yaml").read_text())
     assert saved["gpu"] == {"mode": "fixed", "gpus": [1], "min_gpus": 1, "max_gpus": 0, "priority": 60}
     assert saved["command"] == ["serve", "--fast"]
@@ -245,7 +246,7 @@ def test_password_change(stack):
     assert "wrong" in r.headers["HX-Trigger"]
     r = client.post("/settings/password", headers=HX, data={"current": "correct-horse", "new": "brand-new-pass",
                                                              "again": "brand-new-pass"})
-    assert r.headers["HX-Redirect"].startswith("/settings")
+    assert unquote(r.headers["HX-Redirect"]).startswith("/settings")
     client.post("/logout", headers=HX)
     r = client.post("/login", data={"user": "admin", "password": "brand-new-pass"}, follow_redirects=False)
     assert r.status_code == 303
@@ -358,8 +359,8 @@ def test_guided_setup(stack, tmp_path_factory):
                "models_dir": str(models), "coder_file": "/models/Big-MoE-Q4.gguf", "coder_ctx": "65536",
                "chat_file": "/models/Qwen3-8B-Q4.gguf", "chat_ctx": "32768", "offload": "auto", "action": "create"}
     r = client.post("/instances/guided", headers=HX, data=answers)
-    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/instances/coder/models")
-    assert "with qwen3-8b-q4, big-moe-q4" in r.headers["HX-Redirect"]
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/instances/coder/models")
+    assert "with qwen3-8b-q4, big-moe-q4" in unquote(r.headers["HX-Redirect"])
     inst = yaml.safe_load((data / "instances" / "coder.yaml").read_text())
     assert inst["kind"] == "llama-swap" and inst["gpu"]["mode"] == "elastic"
     assert inst["volumes"] == [{"host": str(models), "container": "/models", "read_only": True}]
@@ -445,7 +446,7 @@ def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
     r = client.post("/instances/guided", headers=HX, data={
         "template": "llm-server", "then": "hermes", "name": "LLM server", "id": "llm", "port": "8080", "gpu": "all",
         "models_dir": str(models), "offload": "auto", "action": "create"})
-    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/apps/hermes?msg=Installed LLM server")
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/apps/hermes?msg=Installed LLM server")
     page = client.get(r.headers["HX-Redirect"]).text
     assert "needs an LLM server" not in page and '<option value="llm" selected>' in page
     assert "Now set up Hermes Agent" in page
@@ -472,7 +473,7 @@ def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
 
     r = client.post("/instances/guided", headers=HX, data=answers | {"password": "long-enough-pw"})
     assert r.status_code == 204, re.findall(r"error-box.*?</div>", r.text)
-    assert "Installed Hermes and LLM server" in r.headers["HX-Redirect"]
+    assert "Installed Hermes and LLM server" in unquote(r.headers["HX-Redirect"])
     srv = yaml.safe_load((data / "instances" / "llm.yaml").read_text())
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
     assert srv["kind"] == "llama-swap" and srv["app"] == "llm-server" and srv["ports"][0]["host"] == 8080
@@ -625,7 +626,7 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     r = client.post("/instances/guided", headers=HX, data={
         "template": "librechat", "name": "LibreChat", "id": "librechat", "port": "3080", "gpu": "none",
         "appdata_dir": str(data / "appdata" / "librechat"), "server": "llm", "action": "create"})
-    assert r.status_code == 204 and "Installed LibreChat and LibreChat database" in r.headers["HX-Redirect"]
+    assert r.status_code == 204 and "Installed LibreChat and LibreChat database" in unquote(r.headers["HX-Redirect"])
     inst = yaml.safe_load((data / "instances" / "librechat.yaml").read_text())
     db = yaml.safe_load((data / "instances" / "librechat-mongodb.yaml").read_text())
     assert inst["requires"] == ["librechat-mongodb"] and db["app"] == "librechat-mongodb" and db["ports"] == []
@@ -660,7 +661,7 @@ def test_anythingllm_settings_file(stack):
     r = client.post("/instances/guided", headers=HX, data={
         "template": "anythingllm", "name": "AnythingLLM", "id": "anythingllm", "port": "3001", "gpu": "none",
         "appdata_dir": str(data / "appdata" / "anythingllm"), "server": "llm", "action": "create"})
-    assert r.status_code == 204 and "make a workspace" in r.headers["HX-Redirect"]
+    assert r.status_code == 204 and "make a workspace" in unquote(r.headers["HX-Redirect"])
     env = (data / "appdata" / "anythingllm" / "server.env").read_text()
     assert "GENERIC_OPEN_AI_BASE_PATH='http://llm:8080/v1'" in env and "GENERIC_OPEN_AI_MODEL_PREF='chat'" in env
     assert (data / "appdata" / "anythingllm" / "storage").is_dir()
@@ -682,7 +683,7 @@ def test_suggested_models_page(stack, tmp_path_factory):
 
     backend.helper_seconds = 60                   # a download that keeps running
     r = client.post("/instances/llm/suggestions/qwen3.5-9b/add", headers=HX)
-    assert r.status_code == 204 and "Added qwen3.5-9b; downloading it (6.9 GB)" in r.headers["HX-Redirect"]
+    assert r.status_code == 204 and "Added qwen3.5-9b; downloading it (6.9 GB)" in unquote(r.headers["HX-Redirect"])
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
     added = next(m for m in cat["models"] if m["id"] == "qwen3.5-9b")
     assert added["file"] == "/models/qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf" and added["thinking"] == "off"
@@ -813,9 +814,9 @@ def test_storage_cleanup_routes(stack):
     _, client, _, _ = stack
     login(client)
     r = client.post("/storage/images/remove-unused", headers=HX)
-    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/storage?msg=")
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/storage?msg=")
     r = client.post("/storage/trash/days", headers=HX, data={"days": "7"})
-    assert r.headers["HX-Redirect"].startswith("/storage?msg=")
+    assert unquote(r.headers["HX-Redirect"]).startswith("/storage?msg=")
     assert 'value="7"' in client.get("/storage").text
     r = client.post("/storage/trash/days", headers=HX, data={"days": "x"})
     assert r.status_code == 204 and "toast" in r.headers["HX-Trigger"]
@@ -843,3 +844,15 @@ def test_logins_dialog(stack):
     assert "Logins: Hermes" in dlg and "<strong>admin</strong>" in dlg
     r = client.post("/ui/instances/hermes/logins", data={"user": "admin", "password": "brand-new-pass-1"}, headers=HX)
     assert "Saved" in r.text and "brand-new-pass-1" in r.text
+
+
+def test_restart_from_the_models_page_goes_back_there(stack):
+    app, client, _, _ = stack
+    login(client)
+    act(client, app, "llm", "start", confirm=True)
+    r = client.post("/ui/instances/llm/restart", headers=HX,
+                    data={"confirm": "1", "back": "/instances/llm/models"})
+    wait(app)
+    # the message has "…" in it, which a header can only carry encoded
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith(
+        "/instances/llm/models?msg=Restarting LLM server")
