@@ -46,11 +46,13 @@ def test_fit_for_machines():
     assert order.index("qwen3.5-9b") < order.index("qwen3-coder-30b-a3b") < order.index("qwen3.8-27b")
 
 
-def test_offload_keeps_experts_on_the_gpus_that_fit_them():
-    moe = ml.get("qwen3.6-35b-a3b")
-    rules = {r.min_gpus: r.cpu_moe for r in ml.offload(moe, [8.0, 8.0])}
-    assert 0 < rules[2] < rules[1] <= moe.layers                  # more GPUs, fewer layers in RAM
-    assert ml.offload(moe, [24.0]) == []                           # fits a 24 GB GPU whole
+def test_offload_rules_only_where_llama_cpp_does_not_fit_it_itself():
+    # MoE: llama.cpp's own fit keeps the experts that don't fit in RAM and balances the GPUs;
+    # --n-cpu-moe would turn that off and overfill the last GPU
+    moe = ml.get("qwen3-coder-30b-a3b")
+    assert ml.offload(moe, [8.0, 8.0]) == [] and ml.offload(moe, [8.0]) == []
+    m = ml.catalog_model(moe, [8.0, 8.0])
+    assert "--n-cpu-moe" not in render(Catalog(instance_id="x", models=[m]), 2, 8)
     assert ml.offload(ml.get("qwen3.8-27b"), [8.0, 8.0]) == []     # dense: nothing to move
     muse = ml.get("muse-glimmer-30b")                             # dense: one 8 GB GPU is too small
     assert ml.fit(muse, [8.0, 8.0], 64).text == "Fits on 2 GPUs"

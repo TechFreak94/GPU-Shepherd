@@ -935,6 +935,16 @@ class Shepherd:
         note = " Restart the server to use it." if st and st.running else ""
         return f"Added {model.id}" + (f"; downloading it ({s.download_gb:.1f} GB)." if fetching else ".") + note
 
+    def start_failures(self, iid: str) -> dict[str, str]:
+        """Model id -> why it last failed to start on this running server (from its log), for
+        loads asked for from the Models page and from chat apps alike."""
+        inst, cat = self.server(iid)
+        st = self.backend.states().get(iid)
+        if not (st and st.running):
+            return {}
+        text = self.backend.logs(self.engine.container_name(iid), tail=3000)
+        return llamaswap.start_failures(text, {m.id for m in cat.models})
+
     def missing_files(self, iid: str) -> dict[str, list[str]]:
         """Model id -> its files (paths inside the container) that aren't on disk. llama-server quits
         straight away without them, which chat apps only show as "upstream command exited

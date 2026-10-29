@@ -232,7 +232,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                 "settings": {"threads": cat.threads, "llama_server": cat.llama_server,
                              "health_timeout": cat.health_timeout, "api_key": cat.api_key},
                 "loaded": loaded, "loading": sorted(svc.loading.get(iid, set())), "error": err,
-                "files": files, "file_notes": notes, "missing": svc.missing_files(iid)}
+                "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
+                "start_failures": svc.start_failures(iid)}
 
     @r.put("/api/v1/instances/{iid}/models/{mid}")
     @handle

@@ -124,14 +124,15 @@ def ram_needed(inst: Instance, cat: Catalog | None, gpus: int, vram: int, peak: 
 
 
 def too_big(inst: Instance, cat: Catalog, gpus: int, vram: int) -> list[str]:
-    """Models that won't fit the GPUs they get and have no setting to keep part of them in RAM."""
+    """Models that won't fit the GPUs they get and have no setting to keep part of them in RAM.
+    llama.cpp then keeps what doesn't fit in RAM by itself, which only a MoE model runs well with."""
     out = []
     for m in cat.models:
         size = model_size(inst, m)
         if size and vram and size > VRAM_USABLE * vram and not m.offload_for(gpus) and m.role == "chat":
             out.append(f"{m.id} ({size / GB:.1f} GB) is bigger than the GPU memory {inst.name} gets with "
-                       f"{gpus} GPU{'s' if gpus != 1 else ''} ({vram / GB:.1f} GB) and has no RAM offload "
-                       f"setting for that, so it will fail to load. Add one on its Models page.")
+                       f"{gpus} GPU{'s' if gpus != 1 else ''} ({vram / GB:.1f} GB): llama.cpp keeps the rest in "
+                       f"system RAM, so it answers slowly unless it is a mixture-of-experts model.")
     return out
 
 

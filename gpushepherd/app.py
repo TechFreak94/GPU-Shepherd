@@ -639,6 +639,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
+                "failures": svc.start_failures(iid),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads),
@@ -785,7 +786,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             if op == "unload":
                 return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}),
                              svc.unload_model(iid, mid))
-            return toast(Response(status_code=204), svc.load_model(iid, mid))
+            # back to the page, which follows the load until it is done or has failed
+            return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models",
+                                                                              svc.load_model(iid, mid))})
         except Problem as err:
             return problem(err)
 

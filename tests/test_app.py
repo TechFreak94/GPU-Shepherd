@@ -871,3 +871,17 @@ def test_models_page_adds_a_model_from_a_link(stack, monkeypatch):
     assert "your link" in part and "Size not known" in part
     r = client.post("/instances/llm/models/from-link", headers=HX, data={"url": "https://example.com/x.bin"})
     assert "must point at a .gguf file" in r.headers.get("HX-Trigger", "")
+
+
+def test_models_page_says_why_a_model_did_not_start(stack, monkeypatch):
+    app, client, backend, data = stack
+    login(client)
+    act(client, app, "llm", "start")
+    monkeypatch.setattr(backend, "logs", lambda name, tail=300: (
+        "0.1 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 1520.00 MiB on device 1: "
+        "cudaMalloc failed: out of memory\n"
+        "[WARN] group: starting qwen3-coder-next failed: upstream command exited prematurely\n"))
+    page = client.get("/instances/llm/models").text
+    assert "failed to start" in page and "Didn't start: Out of GPU memory: it needed 1.6 GB more" in page
+    r = client.post("/instances/llm/models/qwen3-coder-next/load", headers=HX)
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/instances/llm/models")

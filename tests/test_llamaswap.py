@@ -3,7 +3,7 @@ import yaml
 from pydantic import ValidationError
 
 from gpushepherd.config import AutoAlias, AutoRule, Catalog, CatalogModel, OffloadRule
-from gpushepherd.connectors.llamaswap import render, resolved_aliases
+from gpushepherd.connectors.llamaswap import render, resolved_aliases, start_failures
 
 
 def catalog():
@@ -60,3 +60,26 @@ def test_offload_rules_are_sorted_and_unique():
     assert m.offload_for(1).gpu_layers == 0 and m.offload_for(3).cpu_moe == 5
     with pytest.raises(ValidationError):
         CatalogModel(id="x", file="/m/x.gguf", offload=[{"min_gpus": 1}, {"min_gpus": 1, "cpu_moe": 2}])
+
+
+LOG = """\
+[INFO] <coder> Health check passed on http://localhost:5801/health
+0.12.345.678 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 1520.00 MiB on device 1: cudaMalloc failed: out of memory
+0.12.345.700 E alloc_tensor_range: failed to allocate CUDA1 buffer of size 1593835520
+[WARN] group: starting coder failed: upstream command exited prematurely
+0.01.000.000 E gguf_init_from_file: failed to open GGUF file '/models/gone.gguf' (No such file or directory)
+[WARN] group: starting gone failed: upstream command exited prematurely
+[WARN] group: starting quiet failed: health check timed out
+[WARN] group: starting stranger failed: upstream command exited prematurely
+[INFO] <quiet> Health check passed on http://localhost:5802/health
+"""
+
+
+def test_start_failures_name_the_reason_and_clear_once_a_model_starts():
+    failed = start_failures(LOG, {"coder", "gone", "quiet"})
+    assert set(failed) == {"coder", "gone"}                  # quiet started later; stranger isn't in the catalogue
+    assert failed["coder"].startswith("Out of GPU memory: it needed 1.6 GB more on one GPU.")
+    assert "No such file or directory" in failed["gone"]
+    assert start_failures(LOG + "[INFO] <coder> Health check passed\n", {"coder"}) == {}
+    assert start_failures("[WARN] group: starting x failed: health check timed out\n", {"x"}) == \
+        {"x": "health check timed out"}
