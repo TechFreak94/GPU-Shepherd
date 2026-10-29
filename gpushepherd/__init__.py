@@ -2,4 +2,4 @@
 
 # Bumped automatically for every pull request merged into main (.github/workflows/release.yml);
 # CHANGELOG.md says what each version changed. Keep this line's format: update.sh reads it too.
-__version__ = "0.13.7"
+__version__ = "0.13.8"

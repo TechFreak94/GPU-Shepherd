@@ -4,6 +4,14 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.8 - 2026-10-29
+
+- The LLM server's Logins card explains its browser login: any user name, the API key as password. (#35)
+- When a model can't start, the LLM server's log now shows llama-server's own error, and the Models page marks models whose file is missing. (#35)
+- New suggested model: Muse Glimmer 30B, sized to run fully on two 8 GB GPUs. (#35)
+- Add any model to the LLM server from the link of its .gguf file, on the Models page, the API or the CLI. (#35)
+- Fixed: restarting the LLM server from its Models page showed an error (the restart itself worked). (#35)
+
 ## 0.13.7 - 2026-10-28
 
 - App Store: Langflow, marked Experimental. (#34)
