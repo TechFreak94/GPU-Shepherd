@@ -35,7 +35,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 
 | Field | YAML | What it does |
 |---|---|---|
-| GPU use | `gpu.mode` | `none`: no GPU. `fixed`: always exactly the GPUs listed. `elastic`: needs at least *Minimum GPUs*, takes every free GPU up to *Maximum GPUs*, and gives them back when something else needs one. |
+| GPU use | `gpu.mode` | `none`: no GPU. `fixed`: always exactly the GPUs listed. `elastic`: needs at least *Minimum GPUs*, takes every free GPU up to *Maximum GPUs* (an LLM server: only as many as its models can use), and gives them back when something else needs one. |
 | Use GPUs / Preferred GPUs | `gpu.gpus` | Fixed: the GPUs it always uses (by `nvidia-smi` index). Elastic: optional, the GPUs it takes first when it has a choice. |
 | Minimum GPUs | `gpu.min_gpus` | Elastic only. Fewer than this and it can't start. |
 | Maximum GPUs | `gpu.max_gpus` | Elastic only. `0` = no limit. `1` makes "one GPU, whichever is free". |

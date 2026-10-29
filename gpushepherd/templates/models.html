@@ -32,7 +32,8 @@
         <td class="mono" style="overflow-wrap:anywhere">{{ m.file }}
           {% if missing.get(m.id) %}<div class="small warn-text" style="font-family:inherit">Not in the models folder, so it can't load: {{ missing[m.id]|join(", ") }}. Download it, or fix the path with Edit.</div>{% endif %}
           {% if failures.get(m.id) and m.id not in loaded %}<div class="small warn-text" style="font-family:inherit">Didn't start: {{ failures[m.id] }}</div>{% endif %}</td>
-        <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span></td>
+        <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span>
+          {% if running and placement.get(m.id) %}<br><span class="muted">Runs on {{ gpu_text(placement[m.id]) }}</span>{% endif %}</td>
         <td class="small">{% for a in m.aliases %}<span class="tag">{{ a }}</span>{% endfor %}
           {% for alias, target in resolved.items() if target == m.id %}<span class="tag accent">{{ alias }}</span>{% endfor %}</td>
         <td class="small">
@@ -116,6 +117,8 @@
     <div><label for="llama_server">llama-server path in the image</label><input type="text" id="llama_server" name="llama_server" value="{{ cat.llama_server }}" placeholder="detected on first start">
     </div>
   </div>
+  <label class="check" style="margin-top:12px"><input type="checkbox" name="fit_gpus" {{ "checked" if cat.fit_gpus }}> Use only the GPUs each model needs</label>
+  <div class="hint">A model runs on the fewest GPUs that hold it, and the server leaves GPUs its models can't use free for other apps. Off: every model is split over all the server's GPUs.</div>
   <div style="margin-top:12px"><label>API key</label><div class="mono" style="overflow-wrap:anywhere">{{ cat.api_key }}</div>
     <div class="hint">Clients send it as "Authorization: Bearer …". Base URL: http://&lt;server&gt;:{{ (inst.ports|selectattr('container', 'equalto', 8080)|map(attribute='host')|first) or "port" }}/v1 - other instances use http://{{ inst.id }}:8080/v1</div>
     <label class="check" style="margin-top:8px"><input type="checkbox" name="new_key"> Generate a new key (clients must be updated)</label></div>

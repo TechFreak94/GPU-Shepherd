@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import drain, gpu as gpu_mod
+from . import budget, drain, gpu as gpu_mod, placement
 from .backend import Backend, ContainerSpec, ContainerState
 from .config import Catalog, ConfigError, Instance, Store
 from .connectors import llamaswap
@@ -65,7 +65,36 @@ class Engine:
     def plan(self, action: str, target: str | None, extra_wanted: set[str] | None = None) -> Plan:
         snap = self.snapshot()
         gpu_ids = [g.index for g in snap.gpus]
-        return make_plan(gpu_ids, snap.instances, snap.allocations, action, target, extra_wanted)
+        return make_plan(gpu_ids, snap.instances, snap.allocations, action, target, extra_wanted,
+                         self.usable(snap))
+
+    # ------------------------------------------------------------------ model servers on the GPUs
+    def model_needs(self, inst: Instance, cat: Catalog) -> dict[str, int]:
+        return {m.id: budget.model_memory(inst, m) for m in cat.models}
+
+    def usable(self, snap: Snapshot) -> dict[str, int]:
+        """Elastic model servers -> the most GPUs their models can use (placement.wants)."""
+        mem = [int(g.mem_total * 2**20) for g in sorted(snap.gpus, key=lambda g: g.index)]
+        out = {}
+        for iid, inst in snap.instances.items():
+            if inst.kind != "llama-swap" or inst.gpu.mode != "elastic":
+                continue
+            try:
+                cat = self.store.catalog(iid)
+            except ConfigError:
+                continue
+            n = placement.wants(cat, self.model_needs(inst, cat), mem)
+            if n is not None:
+                out[iid] = n
+        return out
+
+    def placement(self, inst: Instance, cat: Catalog, gpus: list[int]) -> dict[str, list[int]]:
+        """Model id -> positions of the server's GPUs it runs on (placement.place)."""
+        mem_of = {g.index: int(g.mem_total * 2**20) for g in gpu_mod.query()[0]}
+        mem = [mem_of.get(g, 0) for g in gpus]
+        if not all(mem):
+            return {}
+        return placement.place(cat, self.model_needs(inst, cat), mem)
 
     def autostart_plan(self) -> Plan:
         instances, _ = self.store.instances()
@@ -135,7 +164,7 @@ class Engine:
         if inst.kind == "llama-swap":
             catalog = self._ensure_llama_server(inst, self.store.catalog(inst.id), log)
             threads = catalog.threads or gpu_mod.physical_cores()
-            text = llamaswap.render(catalog, len(gpus), threads)
+            text = llamaswap.render(catalog, len(gpus), threads, self.placement(inst, catalog, gpus))
             out = self.store.generated_dir(inst.id) / "llama-swap.yaml"
             out.write_text(text, encoding="utf-8")
             host_file = str(self.host_data_dir / "generated" / inst.id / "llama-swap.yaml")

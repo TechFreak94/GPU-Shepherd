@@ -780,6 +780,19 @@ class Shepherd:
         except Exception:  # noqa: BLE001
             return {}, "The model server is not answering yet (it may still be starting)."
 
+    def placement(self, iid: str, cat: Catalog) -> dict[str, list[int]]:
+        """For a running model server: model id -> the GPUs (machine numbering) it runs on, for the
+        models that use fewer than all of the server's GPUs."""
+        st = self.backend.states().get(iid)
+        if not (st and st.running and st.gpus):
+            return {}
+        try:
+            inst = self.store.instance(iid)
+            return {mid: [st.gpus[p] for p in pos]
+                    for mid, pos in self.engine.placement(inst, cat, st.gpus).items()}
+        except Exception:  # noqa: BLE001 - only shown
+            return {}
+
     @checked
     def save_model(self, iid: str, model: CatalogModel, original: str = "", check: bool = True) -> str:
         """Add a model, or replace `original` (renaming it when the ID changed; auto names follow).
@@ -1028,7 +1041,8 @@ class Shepherd:
 
     @checked
     def server_settings(self, iid: str, threads: int | None = None, llama_server: str | None = None,
-                        health_timeout: int | None = None, new_key: bool = False) -> str:
+                        health_timeout: int | None = None, new_key: bool = False,
+                        fit_gpus: bool | None = None) -> str:
         """The model server's own settings; None leaves a setting as it is."""
         _, cat = self.server(iid)
         if threads is not None:
@@ -1037,6 +1051,8 @@ class Shepherd:
             cat.llama_server = str(llama_server).strip()
         if health_timeout is not None:
             cat.health_timeout = int(health_timeout)
+        if fit_gpus is not None:
+            cat.fit_gpus = bool(fit_gpus)
         if new_key:
             cat.api_key = "sk-" + secrets.token_hex(20)
         self.store.save_catalog(Catalog.model_validate(cat.model_dump()))

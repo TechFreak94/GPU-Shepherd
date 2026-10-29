@@ -640,7 +640,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "failures": svc.start_failures(iid),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
-                "preview": llamaswap.render(cat, preview_gpus, threads),
+                "preview": llamaswap.render(cat, preview_gpus, threads,
+                                            engine.placement(inst, cat, st.gpus if running else
+                                                             [g.index for g in engine.snapshot().gpus])),
+                "placement": svc.placement(iid, cat),
                 "pending": bool(running and st.config_hash != engine.config_hash(inst)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
 
@@ -743,7 +746,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         f = {k: str(raw.get(k, "")) for k in ("id", "name", "description", "file", "ctx_size", "parallel",
                                                "sampling", "extra_args", "kv_cache", "mmproj", "aliases_text",
                                                "role", "thinking", "mtp", "mtp_draft", "split_mode", "tensor_split",
-                                               "ttl")}
+                                               "ttl", "gpus")}
         f |= {k: raw.get(k) == "on" for k in ("keep_loaded", "preload")}
         posted = posted_offload(raw)
         f["offload_rows"] = offload_rows(posted)
@@ -757,6 +760,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                  offload=offload_rules(posted), role=f["role"] or "chat",
                                  thinking=f["thinking"] or "auto", mtp=int(f["mtp"] or 0), mtp_draft=f["mtp_draft"],
                                  split_mode=f["split_mode"] or "layer", tensor_split=f["tensor_split"],
+                                 gpus=int(f["gpus"] or 0),
                                  ttl=int(f["ttl"] or 0), keep_loaded=f["keep_loaded"], preload=f["preload"])
             msg = svc.save_model(iid, model, original)
         except (Problem, ValueError, ConfigError) as err:
@@ -797,6 +801,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = svc.server_settings(iid, threads=int(raw.get("threads") or 0),
                                       llama_server=str(raw.get("llama_server", "")),
                                       health_timeout=int(raw.get("health_timeout") or 900),
+                                      fit_gpus=raw.get("fit_gpus") == "on",
                                       new_key=raw.get("new_key") == "on")
         except ValueError:
             return toast(Response(status_code=204), "Threads and the start-up wait are whole numbers.", "error")

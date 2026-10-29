@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from . import gguf
 from .config import Catalog, CatalogModel, Instance
 
 GB = 1e9
@@ -92,6 +93,16 @@ def file_size(inst: Instance, inside: str) -> int:
 
 def model_size(inst: Instance, m: CatalogModel) -> int:
     return sum(file_size(inst, f) for f in (m.file, m.mmproj, m.mtp_draft) if f)
+
+
+def model_memory(inst: Instance, m: CatalogModel) -> int:
+    """GPU memory a model needs to run whole on the GPUs: its weights (and MTP draft; the vision
+    projector stays in RAM) plus its context's KV cache. 0 if its file isn't there."""
+    weights = sum(file_size(inst, f) for f in (m.file, m.mtp_draft) if f)
+    if not weights:
+        return 0
+    p = host_path(inst, m.file)
+    return weights + gguf.kv_bytes(str(p) if p else "", m.ctx_size, m.kv_cache)
 
 
 def loaded_together(cat: Catalog, sizes: dict[str, int]) -> list[CatalogModel]:

@@ -230,7 +230,9 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return {"models": [m.model_dump(mode="json") for m in cat.models],
                 "auto_aliases": [a.model_dump(mode="json") for a in cat.auto_aliases],
                 "settings": {"threads": cat.threads, "llama_server": cat.llama_server,
-                             "health_timeout": cat.health_timeout, "api_key": cat.api_key},
+                             "health_timeout": cat.health_timeout, "fit_gpus": cat.fit_gpus,
+                             "api_key": cat.api_key},
+                "placement": svc.placement(iid, cat),
                 "loaded": loaded, "loading": sorted(svc.loading.get(iid, set())), "error": err,
                 "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
                 "start_failures": svc.start_failures(iid)}
@@ -307,11 +309,12 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     async def server_settings(request: Request, iid: str):
         data = await body(request)
-        unknown = set(data) - {"threads", "llama_server", "health_timeout", "new_api_key"}
+        unknown = set(data) - {"threads", "llama_server", "health_timeout", "fit_gpus", "new_api_key"}
         if unknown:
             raise Problem(f"unknown setting(s): {', '.join(sorted(unknown))}")
         return {"message": svc.server_settings(iid, threads=data.get("threads"), llama_server=data.get("llama_server"),
                                                health_timeout=data.get("health_timeout"),
+                                               fit_gpus=data.get("fit_gpus"),
                                                new_key=bool(data.get("new_api_key")))}
 
     @r.put("/api/v1/instances/{iid}/auto-aliases")

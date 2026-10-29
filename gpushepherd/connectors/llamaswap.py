@@ -2,10 +2,13 @@
 
 GPU Shepherd owns llama-swap's config file: it is rendered from the model catalogue that you
 edit in the UI (catalogs/<id>.yaml) every time the container is (re)created. The container
-only sees the GPUs it was given, so no CUDA_VISIBLE_DEVICES juggling is needed.
+only sees the GPUs it was given, numbered from 0.
 
 "Auto aliases" are model names that resolve to different models depending on how many GPUs
 the server currently has - e.g. "coder" = a big MoE model with 2 GPUs, a smaller one with 1.
+
+A model that needs fewer GPUs than the server has runs on just those (CUDA_VISIBLE_DEVICES in
+its llama-swap entry; see placement.py for which ones).
 """
 from __future__ import annotations
 
@@ -28,7 +31,9 @@ DETECT_SCRIPT = ("command -v llama-server || { [ -x /app/llama-server ] && echo 
                  "|| find / -name llama-server -type f 2>/dev/null | head -n 1")
 
 
-def render(catalog: Catalog, gpu_count: int, threads: int) -> str:
+def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, list[int]] | None = None) -> str:
+    """llama-swap's config. `devices`: model id -> the GPUs (0 = the server's first) it runs on,
+    for models that use fewer than all of them (placement.place)."""
     server = catalog.llama_server or "/app/llama-server"
     auto_for: dict[str, list[str]] = {}
     for auto in catalog.auto_aliases:
@@ -54,12 +59,14 @@ def render(catalog: Catalog, gpu_count: int, threads: int) -> str:
             if m.mtp_draft:
                 args += ["--model-draft", shlex.quote(m.mtp_draft)]
             args += ["--spec-type", "draft-mtp", "--spec-draft-n-max", str(m.mtp)]
-        if gpu_count > 1 and m.split_mode != "layer":
+        own = (devices or {}).get(m.id)
+        used = len(own) if own else gpu_count
+        if used > 1 and m.split_mode != "layer":
             args += ["--split-mode", m.split_mode]
-        if gpu_count > 1 and m.tensor_split:
+        if used > 1 and m.tensor_split:
             shares = m.tensor_split.split(",")
             if len(shares) >= gpu_count:     # one share per GPU it has now; the first ones when it has fewer
-                args += ["--tensor-split", ",".join(shares[:gpu_count])]
+                args += ["--tensor-split", ",".join(shares[p] for p in (own or range(gpu_count)))]
         rule = m.offload_for(gpu_count)
         if rule and rule.gpu_layers is not None:
             args += ["--n-gpu-layers", str(rule.gpu_layers)]
@@ -77,6 +84,8 @@ def render(catalog: Catalog, gpu_count: int, threads: int) -> str:
             entry["aliases"] = aliases
         if m.ttl:
             entry["ttl"] = m.ttl
+        if own:                              # the container sees only the server's GPUs, numbered from 0
+            entry["env"] = ["CUDA_VISIBLE_DEVICES=" + ",".join(map(str, own))]
         models[m.id] = entry
 
     cfg = {

@@ -455,7 +455,8 @@ def cmd_models(args, c: Client) -> int:
             s = c.get(f"{base}/models")["settings"]
             out(args, s)
             return 0
-        body = {k: (int(v) if k in ("threads", "health_timeout") and v.strip().isdigit() else v)
+        body = {k: (int(v) if k in ("threads", "health_timeout") and v.strip().isdigit()
+                    else v.strip().lower() in ("1", "true", "yes", "on") if k == "fit_gpus" else v)
                 for k, v in changes.items()} | ({"new_api_key": True} if args.new_api_key else {})
         out(args, c.call("PATCH", f"{base}/server-settings", body))
     elif a in ("auto-set", "auto-delete"):
