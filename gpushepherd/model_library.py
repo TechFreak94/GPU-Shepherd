@@ -14,7 +14,9 @@ This module is pure: callers pass in the GPUs' memory and the RAM size.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 from .config import CatalogModel, OffloadRule
 
@@ -23,6 +25,7 @@ HF = "https://huggingface.co"
 LOAD_OVERHEAD = 1.2
 RAM_HEADROOM = 0.75          # share of the RAM a model may use; the rest is for everything else
 GPU_SHARE = 0.75             # share of the GPUs' memory a MoE model's layers may fill (the rest: context)
+DENSE_ON_GPU = 0.8           # a dense model that keeps this share of its layers on the GPUs is still quick
 
 # the makers' recommended sampling, by model family and mode
 QWEN_THINKING = "--temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0"
@@ -49,7 +52,8 @@ class Suggestion:
     page: str                # the model's download page
     license: str = ""        # the model's license, from its model card
     moe: bool = False        # mixture of experts: expert layers can live in system RAM at good speed
-    layers: int = 0          # MoE: its layer count, the most expert layers that can go to RAM
+    layers: int = 0          # its layer count: MoE expert layers that can go to RAM; dense, set it to
+                             # let a few layers go to RAM when the GPUs are just too small
     mmproj: File | None = None     # vision projector: lets it read images
     draft: File | None = None      # MTP draft file; with it, mtp is turned on
     mtp: int = 0
@@ -123,6 +127,14 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         mmproj=_hf("unsloth/Qwen3.8-27B-GGUF", "mmproj-F16.gguf", 0.93),
         sampling=QWEN_THINKING),
     Suggestion(
+        key="muse-glimmer-30b", name="Muse Glimmer 30B",
+        blurb="Dense agent and coding model that reads images (screenshots, charts); 128K context. Needs two "
+              "8 GB GPUs or one 16 GB GPU (a 3-bit build, so it fits whole: about 30 tokens/s on two RTX 3070s).",
+        uses=("chat", "coder"), license="Apache-2.0", page=f"{HF}/unsloth/Muse-Glimmer-30B-GGUF", layers=52,
+        model=_hf("unsloth/Muse-Glimmer-30B-GGUF", "Muse-Glimmer-30B-UD-IQ3_XXS.gguf", 13.13),
+        mmproj=_hf("unsloth/Muse-Glimmer-30B-GGUF", "mmproj-Muse-Glimmer-30B-Q8_0.gguf", 2.05),
+        sampling=GEMMA),
+    Suggestion(
         key="qwen3.6-35b-a3b", name="Qwen3.6 35B-A3B",
         blurb="Fast mixture-of-experts chat and coding with images. Fits two 8 GB GPUs, or one GPU with "
               "its experts in RAM.",
@@ -148,13 +160,62 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
 )
 
 
-def get(key: str) -> Suggestion | None:
-    return next((s for s in SUGGESTIONS if s.key == key), None)
+def get(key: str, extra: tuple[Suggestion, ...] = ()) -> Suggestion | None:
+    """A suggestion by key; `extra` are the user's own, added from a link."""
+    return next((s for s in SUGGESTIONS + tuple(extra) if s.key == key), None)
 
 
-def for_file(path: str, models_root: str = "/models") -> Suggestion | None:
+def for_file(path: str, models_root: str = "/models", extra: tuple[Suggestion, ...] = ()) -> Suggestion | None:
     """The suggestion a model file (path inside the container) was downloaded for, if any."""
-    return next((s for s in SUGGESTIONS if path == f"{models_root}/{s.path(s.model)}"), None)
+    return next((s for s in SUGGESTIONS + tuple(extra) if path == f"{models_root}/{s.path(s.model)}"), None)
+
+
+# --------------------------------------------------------------------------- models added from a link
+LINKED = "Added from a link."           # the blurb of a model added from a link
+SPLIT = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.I)
+
+
+def gguf_link(url: str) -> str:
+    """A download link for a .gguf file, from what people copy: a Hugging Face file page (/blob/)
+    becomes its download link (/resolve/), and ?download=true and the like are dropped."""
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("https", "http") or not parts.netloc:
+        raise ValueError("The link must start with https://")
+    path = parts.path
+    if parts.netloc in ("huggingface.co", "www.huggingface.co"):
+        path = re.sub(r"^(/[^/]+/[^/]+)/blob/", r"\1/resolve/", path)
+        if "/resolve/" not in path:
+            raise ValueError("Use the link of the .gguf file itself (on the model page: Files, then the file), "
+                             "not the model page.")
+    if not path.lower().endswith(".gguf"):
+        raise ValueError("The link must point at a .gguf file.")
+    if SPLIT.search(path):
+        raise ValueError("That model is split into several .gguf files; models in one file are supported.")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9.]+", "-", text.lower())).strip("-.")[:60] or "model"
+
+
+def from_link(url: str, name: str = "", gb: float = 0.0, mmproj_url: str = "", mmproj_gb: float = 0.0,
+              key: str = "") -> Suggestion:
+    """A model the user added by its download link, set up like a suggested one: its own folder,
+    downloaded the same way. Its settings are llama.cpp's defaults, to tune on the Models page."""
+    url = gguf_link(url)
+    file = url.rsplit("/", 1)[1]
+    stem = file[:-5]
+    parts = urlsplit(url)
+    m = re.match(r"^(/[^/]+/[^/]+)/resolve/", parts.path)
+    page = urlunsplit((parts.scheme, parts.netloc, m.group(1), "", "")) if m else url.rsplit("/", 1)[0]
+    mmproj = None
+    if mmproj_url.strip():
+        mmproj_url = gguf_link(mmproj_url)
+        mmproj = File(name=mmproj_url.rsplit("/", 1)[1], url=mmproj_url, gb=round(mmproj_gb, 2))
+        if mmproj.name == file:
+            raise ValueError("The vision projector must be a different file from the model.")
+    return Suggestion(key=key or _slug(stem), name=name.strip() or stem, blurb=LINKED, uses=("chat", "coder"),
+                      model=File(name=file, url=url, gb=round(gb, 2)), page=page, mmproj=mmproj)
 
 
 @dataclass(frozen=True)
@@ -181,11 +242,19 @@ def _in_ram(s: Suggestion, vram: float) -> float:
     return max(s.model.gb + (s.draft.gb if s.draft else 0) - vram * GPU_SHARE + 1, 0)
 
 
+def _dense_layers(s: Suggestion, vram: float) -> int:
+    """How many layers of a dense model fit in `vram` GB of GPUs, keeping room for the context."""
+    return min(s.layers, math.floor(s.layers * vram / _need(s)))
+
+
 def fit(s: Suggestion, gpu_mem_gb: list[float], ram_gb: float) -> Fit:
     """Whether a suggestion runs here, and how: on the fewest GPUs it fits (the smallest ones, as the
     planner may hand out any), or for a mixture-of-experts model, on every GPU with its experts
-    partly in system RAM. A dense model split that way is too slow to recommend."""
+    partly in system RAM. A dense model split that way is too slow to recommend, unless only a few
+    of its layers (a fifth at most) have to go to RAM."""
     need = _need(s)
+    if not s.model.gb:                       # added from a link whose size wasn't known
+        return Fit(True, 0, 0, "Size not known")
     if s.gpu_layers == 0:                    # runs on the CPU
         return Fit(True, 0, round(need, 1), f"Runs on the CPU, about {max(round(need), 1)} GB of RAM")
     if not gpu_mem_gb:
@@ -195,7 +264,14 @@ def fit(s: Suggestion, gpu_mem_gb: list[float], ram_gb: float) -> Fit:
         if sum(smallest[:n]) >= need:
             return Fit(True, n, 0, f"Fits on {_gpus(n)}")
     if not s.moe:
-        return Fit(False, len(smallest), 0, f"Too big for your GPUs (needs about {round(need)} GB)")
+        n, on_gpu = len(smallest), _dense_layers(s, sum(smallest)) if s.layers else 0
+        if not s.layers or on_gpu < s.layers * DENSE_ON_GPU:
+            return Fit(False, n, 0, f"Too big for your GPUs (needs about {round(need)} GB)")
+        ram = max(round(s.model.gb * (s.layers - on_gpu) / s.layers), 1)
+        if ram_gb and ram > ram_gb * RAM_HEADROOM:
+            return Fit(False, n, ram, f"Too big: needs about {ram} GB of RAM beside your GPUs")
+        text = f"{_gpus(n)} with {on_gpu} of its {s.layers} layers, the rest (about {ram} GB) in RAM"
+        return Fit(True, n, ram, text[0].upper() + text[1:])
     n = len(smallest)
     ram = round(_in_ram(s, sum(smallest)))
     ok = not ram_gb or ram <= ram_gb * RAM_HEADROOM
@@ -217,9 +293,13 @@ def offload(s: Suggestion, gpu_mem_gb: list[float]) -> list[OffloadRule]:
     raising or lowering the number on the Models page tunes it."""
     if s.gpu_layers is not None:
         return [OffloadRule(min_gpus=1, gpu_layers=s.gpu_layers)]
-    if not s.moe or not gpu_mem_gb:
+    if not s.layers or not gpu_mem_gb:
         return []
     smallest = sorted(gpu_mem_gb)
+    if not s.moe:                            # dense: the layers that don't fit stay in RAM
+        rules = [OffloadRule(min_gpus=n, gpu_layers=None if sum(smallest[:n]) >= _need(s)
+                             else _dense_layers(s, sum(smallest[:n]))) for n in range(1, len(smallest) + 1)]
+        return [] if all(r.gpu_layers is None for r in rules) else rules
     rules = []
     for n in range(1, len(smallest) + 1):
         vram = sum(smallest[:n])

@@ -342,6 +342,10 @@ afterwards repeat:
 
 ### Logins
 
+The LLM server's own page asks for a user name and password when opened in a browser: type any
+user name and its API key as the password. **Logins** on its card shows that key (it is also on its
+Models page, Server settings, where *New API key* changes it).
+
 **Logins** on the card of Open WebUI, LibreChat, AnythingLLM, Langflow or Hermes Agent lists the
 app's accounts and sets a new password for one (type it, or leave it empty for a made-up one).
 Passwords GPU Shepherd can read (Hermes Agent's environment, AnythingLLM's `server.env` without

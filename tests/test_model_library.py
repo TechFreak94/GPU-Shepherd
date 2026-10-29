@@ -1,5 +1,6 @@
 """Suggested models, their downloads, and the model settings they fill in."""
 import time
+from dataclasses import replace
 
 import pytest
 import yaml
@@ -51,6 +52,14 @@ def test_offload_keeps_experts_on_the_gpus_that_fit_them():
     assert 0 < rules[2] < rules[1] <= moe.layers                  # more GPUs, fewer layers in RAM
     assert ml.offload(moe, [24.0]) == []                           # fits a 24 GB GPU whole
     assert ml.offload(ml.get("qwen3.8-27b"), [8.0, 8.0]) == []     # dense: nothing to move
+    muse = ml.get("muse-glimmer-30b")                             # dense: one 8 GB GPU is too small
+    assert ml.fit(muse, [8.0, 8.0], 64).text == "Fits on 2 GPUs"
+    assert not ml.fit(muse, [8.0], 64).ok                          # most of it in RAM: too slow
+    assert [(r.min_gpus, r.gpu_layers) for r in ml.offload(muse, [8.0, 8.0])] == [(1, 26), (2, None)]
+    assert ml.offload(muse, [24.0]) == []
+    just_too_big = replace(muse, model=replace(muse.model, gb=15.88))  # a few layers go to RAM
+    assert ml.fit(just_too_big, [8.0, 8.0], 64).text.startswith("2 GPUs with 43 of its 52 layers")
+    assert [(r.min_gpus, r.gpu_layers) for r in ml.offload(just_too_big, [8.0, 8.0])] == [(1, 21), (2, 43)]
     assert [(r.min_gpus, r.gpu_layers) for r in ml.offload(ml.get("qwen3-embedding-0.6b"), [8.0])] == [(1, 0)]
 
 

@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -53,6 +54,12 @@ class DemoLlamaClient:
 
     def unload(self, model=None):
         DemoLlamaClient.loaded.clear()
+
+
+def with_msg(path: str, msg: str) -> str:
+    """A page address that shows `msg` as a notice. Encoded: headers only take latin-1, and the
+    messages have "…", app names and "&" in them."""
+    return f"{path}?msg={quote(msg, safe='')}"
 
 
 def gib(n: float | int | None) -> str:
@@ -296,7 +303,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             resp.headers["HX-Trigger-After-Swap"] = "open-modal"
             return resp
         if back:
-            return Response(status_code=204, headers={"HX-Redirect": f"{back}?msg={c.text}"})
+            return Response(status_code=204, headers={"HX-Redirect": with_msg(back, c.text)})
         resp = page(request, "partials/dashboard.html", **dashboard_ctx(request))
         resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": c.text, "kind": "info"}, "close-modal": True})
         return resp
@@ -501,7 +508,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         try:
             t = tpl.get(key)
         except ConfigError as err:
-            return RedirectResponse(f"/apps?msg={err}", status_code=303)
+            return RedirectResponse(with_msg("/apps", str(err)), status_code=303)
         if t.key != key:                      # renamed app (the chat and coding servers are one LLM server now)
             return RedirectResponse(f"/apps/{t.key}" + ("?mode=manual" if mode == "manual" else ""), status_code=303)
         if mode != "manual":
@@ -559,22 +566,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         if then:                              # installed for another app: go on to that one, now connected to it
             what = f" with {', '.join(x.id for x in models)}" if models else ""
             return Response(status_code=204, headers={
-                "HX-Redirect": f"/apps/{then.key}?msg=Installed {inst.name}{what}.{fetching} Now set up {then.title}: it will use {inst.name}."})
+                "HX-Redirect": with_msg(f"/apps/{then.key}", f"Installed {inst.name}{what}.{fetching} Now set up {then.title}: it will use {inst.name}.")})
         if inst.kind == "llama-swap":
             what = f"with {', '.join(x.id for x in models)}" if models else "- add a model below"
             return Response(status_code=204, headers={
-                "HX-Redirect": f"/instances/{inst.id}/models?msg=Installed {inst.name} {what}.{fetching} Press Start on the dashboard to run it."})
+                "HX-Redirect": with_msg(f"/instances/{inst.id}/models", f"Installed {inst.name} {what}.{fetching} Press Start on the dashboard to run it.")})
         also = "".join(f" and {x.name}" for x in [bundle, *done.companions] if x)
         after = f" {t.after_install}" if t.after_install else ""
         return Response(status_code=204, headers={
-            "HX-Redirect": f"/?msg=Installed {inst.name}{also}. Press Start to run it.{after}{fetching}#inst-{inst.id}"})
+            "HX-Redirect": with_msg("/", f"Installed {inst.name}{also}. Press Start to run it.{after}{fetching}") + f"#inst-{inst.id}"})
 
     @app.get("/instances/{iid}/edit", response_class=HTMLResponse)
     def edit_instance(request: Request, iid: str):
         try:
             return editor(request, form_from_instance(store.instance(iid)), editing=True)
         except ConfigError as err:
-            return RedirectResponse(f"/?msg={err}", status_code=303)
+            return RedirectResponse(with_msg("/", str(err)), status_code=303)
 
     @app.post("/instances/save")
     async def save_instance(request: Request):
@@ -610,7 +617,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
-        return Response(status_code=204, headers={"HX-Redirect": f"/?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/", msg)})
 
     @app.post("/instances/{iid}/delete")
     def delete_instance(iid: str):
@@ -618,7 +625,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = svc.delete_instance(iid)
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/", msg)})
 
     # ------------------------------------------------------------------ model catalogue
     def models_ctx(iid: str) -> dict:
@@ -631,7 +638,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         preview_gpus = gpu_count or max(len(engine.snapshot().gpus), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
-                "models_error": err, "files": files, "file_notes": notes,
+                "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads),
@@ -643,7 +650,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         try:
             return page(request, "models.html", **models_ctx(iid))
         except Problem as err:
-            return RedirectResponse(f"/?msg={err.msg}", status_code=303)
+            return RedirectResponse(with_msg("/", err.msg), status_code=303)
 
     @app.get("/instances/{iid}/suggestions", response_class=HTMLResponse)
     def suggestions_part(request: Request, iid: str):
@@ -659,18 +666,30 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         try:
             if op == "add":
                 msg = svc.add_suggestion(iid, key)
-                return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
+                return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
             if op == "download":
                 msg = svc.download_suggestion(iid, key)
             elif op == "cancel":
                 msg = svc.cancel_download(iid, key)
             elif op == "discard":
                 msg = svc.discard_download(iid, key)
+            elif op == "forget":
+                msg = svc.forget_link(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:
             return problem(err)
         return toast(suggestions_part(request, iid), msg)
+
+    @app.post("/instances/{iid}/models/from-link")
+    async def model_from_link(request: Request, iid: str):
+        form = await request.form()
+        try:
+            msg = svc.add_from_link(iid, str(form.get("url", "")), str(form.get("name", "")),
+                                    str(form.get("mmproj_url", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.get("/instances/{iid}/models/edit", response_class=HTMLResponse)
     def model_form(request: Request, iid: str, model: str = ""):
@@ -748,7 +767,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             resp.headers["HX-Retarget"] = "#editor"
             resp.headers["HX-Reselect"] = "#editor"
             return resp
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/models/{mid}/delete")
     def delete_model(iid: str, mid: str):
@@ -756,7 +775,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = svc.delete_model(iid, mid)
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/models/{mid}/{op}")
     def model_op(iid: str, mid: str, op: str):
@@ -782,7 +801,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), "Threads and the start-up wait are whole numbers.", "error")
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/catalog/auto")
     async def catalog_auto(request: Request, iid: str):
@@ -796,7 +815,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return toast(Response(status_code=204), message(err), "error")
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/instances/{iid}/models?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     # ------------------------------------------------------------------ updates (done by update.sh on the host)
     def update_page(request: Request, confirm: bool = False) -> Response:
@@ -887,7 +906,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = svc.change_password(*(str(raw.get(k, "")) for k in ("current", "new", "again")))
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/settings?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", msg)})
 
     @app.post("/settings/general")
     async def general_settings(request: Request):
@@ -896,13 +915,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = svc.set_containers(str(raw.get("bind_address", "")), str(raw.get("network", "")))
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/settings?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", msg)})
 
     @app.post("/settings/api-token")
     def api_token_new():
         auth.new_api_token(store)
         log.info("API token replaced from the dashboard")
-        return Response(status_code=204, headers={"HX-Redirect": "/settings?msg=New API token made. The old one no longer works."})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", "New API token made. The old one no longer works.")})
 
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)
@@ -915,7 +934,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = action()
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": f"/storage?msg={msg}"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/storage", msg)})
 
     @app.post("/storage/images/remove-unused")
     def storage_remove_images():

@@ -5,6 +5,7 @@ Layout of the data directory (SHEPHERD_DATA_DIR):
     settings.yaml              app settings (login, network, defaults)
     instances/<id>.yaml        one file per instance (a container the app manages)
     catalogs/<id>.yaml         model catalogue for each model-server instance
+    linked-models.yaml         models added from a link on a Models page (listed with the suggested ones)
     generated/<id>/...         files the app renders for containers (do not edit)
 
 Everything the UI saves lands in these files, so they can be backed up, diffed and kept in
@@ -485,6 +486,23 @@ class Store:
     def save_catalog(self, cat: Catalog) -> None:
         _atomic_write(self.catalog_path(cat.instance_id),
                       _dump(cat, f"# Model catalogue for '{cat.instance_id}' (contains its API key)\n"), 0o600)
+
+    # models added from a link (shown with the suggested models)
+    @property
+    def linked_models_path(self) -> Path:
+        return self.root / "linked-models.yaml"
+
+    def linked_models(self) -> list[dict]:
+        """[{key, name, url, gb, mmproj_url, mmproj_gb}]; a bad file reads as none."""
+        try:
+            raw = yaml.safe_load(self.linked_models_path.read_text(encoding="utf-8")) or []
+        except (OSError, yaml.YAMLError):
+            return []
+        return [x for x in raw if isinstance(x, dict) and x.get("url")] if isinstance(raw, list) else []
+
+    def save_linked_models(self, rows: list[dict]) -> None:
+        _atomic_write(self.linked_models_path, "# Models added from a link on a model server's Models page\n"
+                      + yaml.safe_dump(rows, sort_keys=False, allow_unicode=True, width=200))
 
     def generated_dir(self, iid: str) -> Path:
         path = self.root / "generated" / iid
