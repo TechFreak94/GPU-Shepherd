@@ -21,8 +21,8 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, budget, downloads, host, instance_templates as tpl, logins, model_library, storage,
-               updates)
+from . import (app_updates, auth, budget, downloads, gpu as gpu_mod, host, instance_templates as tpl, logins,
+               model_library, storage, tuning, updates)
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import llamaswap
@@ -105,6 +105,9 @@ class Shepherd:
     downloads: Downloads | None = None
     trash: Trash | None = None
     peaks: budget.Peaks | None = None
+    measurements: tuning.Measurements | None = None
+    decisions: tuning.Decisions | None = None
+    _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
 
     def __post_init__(self):
         if self.downloads is None:
@@ -113,6 +116,10 @@ class Shepherd:
             self.trash = Trash(self.store.root, HelperFileOps(self.backend))
         if self.peaks is None:
             self.peaks = budget.Peaks(self.store.root)
+        if self.measurements is None:
+            self.measurements = tuning.Measurements(self.store.root)
+        if self.decisions is None:
+            self.decisions = tuning.Decisions(self.store.root)
 
     @property
     def backend(self):
@@ -780,6 +787,98 @@ class Shepherd:
         except Exception:  # noqa: BLE001
             return {}, "The model server is not answering yet (it may still be starting)."
 
+    # ------------------------------------------------------------------ tuning (tuning.py)
+    def measure(self) -> None:
+        """Note how much GPU memory and speed the running model servers' models use (called every
+        minute or so). A model's memory is only counted while nothing else shares its GPUs."""
+        states = self.backend.states()
+        gpus = {g.index: g for g in gpu_mod.query()[0]}
+        for iid, inst in self.store.instances()[0].items():
+            st = states.get(iid)
+            if inst.kind != "llama-swap" or not (st and st.running and st.gpus):
+                continue
+            try:
+                cat = self.store.catalog(iid)
+                client = self.llama_client(iid)
+                loaded = {m for m, s in client.running({m.id for m in cat.models}).items() if s == "ready"}
+                placed = self.engine.placement(inst, cat, st.gpus)
+                on = {m.id: [st.gpus[p] for p in placed.get(m.id, range(len(st.gpus)))] for m in cat.models
+                      if m.id in loaded}
+                for mid, its in on.items():
+                    if any(set(its) & set(o) for other, o in on.items() if other != mid):
+                        continue
+                    used = sum(int(gpus[g].mem_used * 2**20) for g in its if g in gpus)
+                    if used:
+                        self.measurements.record(iid, mid, len(its), vram=used)
+                speeds, newest = tuning.metrics_speeds(client.metrics(), self._metrics_seen.get(iid, -1.0))
+                self._metrics_seen[iid] = newest
+                for mid, tps in speeds:
+                    if mid in {m.id for m in cat.models}:
+                        k = len(placed.get(mid, [])) or len(st.gpus)
+                        self.measurements.record(iid, mid, k, tps=tps)
+                if cat.auto_tune:
+                    for s in self.tuning(iid):
+                        if s["status"] == "new":
+                            self.tuning_decide(iid, s["key"], "apply")
+            except Exception as err:  # noqa: BLE001 - measuring must never get in the way
+                log.debug("measuring %s failed: %s", iid, err)
+
+    def start_measuring(self, interval: float = 60.0) -> None:
+        def loop():
+            while True:
+                threading.Event().wait(interval)
+                self.measure()
+        threading.Thread(target=loop, daemon=True, name="measure").start()
+
+    def _suggestions(self, iid: str) -> tuple[Instance, Catalog, list[tuning.Suggestion]]:
+        inst, cat = self.server(iid)
+        gpus = sorted(gpu_mod.query()[0], key=lambda g: g.index)       # the most it may get
+        if inst.gpu.mode == "fixed":
+            gpus = [g for g in gpus if g.index in inst.gpu.gpus]
+        elif inst.gpu.max_gpus:
+            gpus = gpus[:inst.gpu.max_gpus]
+        mem = [int(g.mem_total * 2**20) for g in gpus]
+        current = tuning.suggest(cat, self.measurements.get(iid), self.engine.model_needs(inst, cat), mem)
+        return inst, cat, tuning.listing(current, self.decisions.for_server(iid))
+
+    @checked
+    def tuning(self, iid: str) -> list[dict]:
+        """Suggested adjustments for a model server: new ones, applied ones (with what they replaced,
+        to undo) and dismissed ones (to apply after all)."""
+        return [s.as_dict() for s in self._suggestions(iid)[2]]
+
+    @checked
+    def tuning_decide(self, iid: str, key: str, action: str) -> str:
+        """apply, dismiss or undo a suggestion."""
+        if action not in ("apply", "dismiss", "undo"):
+            raise Problem(f"unknown action '{action}': use apply, dismiss or undo")
+        inst, cat, listed = self._suggestions(iid)
+        s = next((x for x in listed if x.key == key), None)
+        if s is None:
+            raise Problem(f"no suggestion '{key}' (it may no longer apply)", status=404)
+        if action == "dismiss":
+            self.decisions.put(s, "dismissed")
+            return f"Dismissed: {s.title}. It stays listed, so you can apply it later."
+        if action == "undo" and s.status != "applied":
+            raise Problem("only an applied suggestion can be undone")
+        value = s.old if action == "undo" else s.value
+        if action == "apply":
+            s.old = cat.fit_gpus if s.field == "fit_gpus" else next(
+                (m.gpus for m in cat.models if m.id == s.model), s.old)
+        if s.field == "fit_gpus":
+            cat.fit_gpus = value
+        else:
+            model = next((m for m in cat.models if m.id == s.model), None)
+            if model is None:
+                raise Problem(f"{s.model} is no longer on {inst.name}", status=404)
+            model.gpus = int(value or 0)
+        self.store.save_catalog(Catalog.model_validate(cat.model_dump()))
+        self.decisions.put(s, "dismissed" if action == "undo" else "applied")
+        st = self.backend.states().get(iid)
+        later = " It takes effect when the server restarts." if st and st.running else ""
+        return (f"Undone: {s.title}. It stays listed, so you can apply it again." if action == "undo"
+                else f"Applied: {s.title}.") + later
+
     def placement(self, iid: str, cat: Catalog) -> dict[str, list[int]]:
         """For a running model server: model id -> the GPUs (machine numbering) it runs on, for the
         models that use fewer than all of the server's GPUs."""
@@ -1042,7 +1141,7 @@ class Shepherd:
     @checked
     def server_settings(self, iid: str, threads: int | None = None, llama_server: str | None = None,
                         health_timeout: int | None = None, new_key: bool = False,
-                        fit_gpus: bool | None = None) -> str:
+                        fit_gpus: bool | None = None, auto_tune: bool | None = None) -> str:
         """The model server's own settings; None leaves a setting as it is."""
         _, cat = self.server(iid)
         if threads is not None:
@@ -1053,6 +1152,8 @@ class Shepherd:
             cat.health_timeout = int(health_timeout)
         if fit_gpus is not None:
             cat.fit_gpus = bool(fit_gpus)
+        if auto_tune is not None:
+            cat.auto_tune = bool(auto_tune)
         if new_key:
             cat.api_key = "sk-" + secrets.token_hex(20)
         self.store.save_catalog(Catalog.model_validate(cat.model_dump()))

@@ -412,6 +412,12 @@ def cmd_models(args, c: Client) -> int:
         out(args, c.get(f"{base}/suggestions"), lambda rows: table(
             [[x["key"], x["name"], x["fit"], x["status"], "yes" if x["in_catalog"] else "-"] for x in rows],
             ["KEY", "MODEL", "ON THIS MACHINE", "DOWNLOAD", "ADDED"]))
+    elif a == "tuning":
+        out(args, c.get(f"{base}/tuning"), lambda rows: (
+            table([[x["key"], x["status"], x["title"]] for x in rows], ["KEY", "STATUS", "SUGGESTION"]),
+            [print(f"\n{x['key']}: {x['reason']}") for x in rows]))
+    elif a in ("tuning-apply", "tuning-dismiss", "tuning-undo"):
+        out(args, c.post(f"{base}/tuning", {"key": args.key, "action": a.split("-")[1]}))
     elif a == "add-link":
         out(args, c.post(f"{base}/models/from-link", {"url": args.link, "name": args.name or "",
                                                       "mmproj_url": args.mmproj or ""}))
@@ -456,7 +462,7 @@ def cmd_models(args, c: Client) -> int:
             out(args, s)
             return 0
         body = {k: (int(v) if k in ("threads", "health_timeout") and v.strip().isdigit()
-                    else v.strip().lower() in ("1", "true", "yes", "on") if k == "fit_gpus" else v)
+                    else v.strip().lower() in ("1", "true", "yes", "on") if k in ("fit_gpus", "auto_tune") else v)
                 for k, v in changes.items()} | ({"new_api_key": True} if args.new_api_key else {})
         out(args, c.call("PATCH", f"{base}/server-settings", body))
     elif a in ("auto-set", "auto-delete"):
@@ -698,6 +704,14 @@ def add_commands(sub) -> None:
         q = msub.add_parser(name, help=what)
         q.add_argument("server")
         q.add_argument("key", help="its key, from `models suggested`")
+    msub.add_parser("tuning", help="suggested adjustments from how the models ran, and what was decided") \
+        .add_argument("server")
+    for name, what in (("tuning-apply", "apply a suggested adjustment"),
+                       ("tuning-dismiss", "dismiss one (it stays listed, to apply later)"),
+                       ("tuning-undo", "undo an applied one")):
+        q = msub.add_parser(name, help=what)
+        q.add_argument("server")
+        q.add_argument("key", help="its key, from `models tuning`")
     q = msub.add_parser("add-link", help="add a model by the link of its .gguf file, downloading it like a suggested one")
     q.add_argument("server")
     q.add_argument("link", help="e.g. https://huggingface.co/owner/Model-GGUF/resolve/main/Model-Q4_K_M.gguf")
@@ -710,7 +724,7 @@ def add_commands(sub) -> None:
     q.add_argument("server")
     q.add_argument("model")
     q.add_argument("changes", nargs="*", metavar="KEY=VALUE")
-    q = msub.add_parser("settings", help="show or change threads, llama_server, health_timeout")
+    q = msub.add_parser("settings", help="show or change threads, llama_server, health_timeout, fit_gpus, auto_tune")
     q.add_argument("server")
     q.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     q.add_argument("--new-api-key", action="store_true", help="give the server a new API key")

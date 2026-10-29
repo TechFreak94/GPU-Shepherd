@@ -298,7 +298,10 @@ class Catalog(BaseModel):
     threads: int = Field(default=0, ge=0, le=512)        # 0 = physical cores
     llama_server: str = ""                               # path inside the image; "" = detect
     health_timeout: int = Field(default=900, ge=15, le=7200)
-    fit_gpus: bool = True                                # models use only the GPUs they need (placement.py)
+    # models use only the GPUs they need (placement.py); None = not chosen yet: off, and offered
+    # as a suggestion (tuning.py). New servers start with it on.
+    fit_gpus: bool | None = None
+    auto_tune: bool = False                              # apply tuning suggestions without asking
     models: list[CatalogModel] = []
     auto_aliases: list[AutoAlias] = []
 
@@ -480,7 +483,7 @@ class Store:
     def catalog(self, iid: str) -> Catalog:
         path = self.catalog_path(iid)
         if not path.exists():
-            cat = Catalog(instance_id=iid)
+            cat = Catalog(instance_id=iid, fit_gpus=True)
             self.save_catalog(cat)
             return cat
         return _load(path, Catalog)

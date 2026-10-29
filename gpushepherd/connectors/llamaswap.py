@@ -235,6 +235,19 @@ class LlamaSwapClient:
         return sum(found.values()), found
 
     def _events_in_flight(self, wait: float) -> dict[str, int] | None:
+        data = self._event("inflight", wait)
+        return None if data is None else _count_in_flight(data)
+
+    def metrics(self, wait: float = 3.0) -> list[dict]:
+        """llama-swap's recent answers (model, tokens_per_second, output_tokens, timestamp...),
+        which it sends as soon as /api/events is opened. [] if it doesn't."""
+        data = self._event("metrics", wait)
+        if isinstance(data, dict):
+            data = data.get("metrics", [data])
+        return data if isinstance(data, list) else []
+
+    def _event(self, kind: str, wait: float):
+        """The data of the first /api/events message of this type, or None."""
         deadline = time.monotonic() + wait
         try:
             with httpx.stream("GET", self.base + "/api/events", headers=self.headers,
@@ -244,8 +257,9 @@ class LlamaSwapClient:
                 for line in r.iter_lines():
                     if line.startswith("data:"):
                         msg = json.loads(line[5:])
-                        if isinstance(msg, dict) and msg.get("type") == "inflight":
-                            return _count_in_flight(json.loads(msg.get("data") or "{}"))
+                        if isinstance(msg, dict) and msg.get("type") == kind:
+                            data = msg.get("data") or "{}"
+                            return json.loads(data) if isinstance(data, str) else data
                     if time.monotonic() > deadline:
                         break
         except (httpx.HTTPError, ValueError):

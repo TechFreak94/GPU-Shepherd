@@ -105,6 +105,7 @@
     </div>
     {% if c.waiting %}<p class="meta"><span class="tag warn" title="Waiting for this to finish before it is stopped">Finishing: {{ c.waiting.detail }}</span></p>{% endif %}
     {% if c.pending %}<p class="meta"><span class="tag warn">Saved changes not applied - restart to apply</span></p>{% endif %}
+    {% if c.tuning_new|default(0) > 0 %}<p class="meta"><a class="tag accent" href="/instances/{{ i.id }}/models" title="Worked out from how the models ran. Nothing changes until you apply it.">{{ c.tuning_new }} suggested adjustment{{ "s" if c.tuning_new != 1 }}</a></p>{% endif %}
 
     <dl class="facts">
       <div class="fact">

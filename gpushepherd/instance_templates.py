@@ -538,7 +538,7 @@ def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Ca
         d["id"] = free_id(d["id"], set(m.instances) | {d["id"]})
     d |= {f"{BUNDLED_SLOT}_file": str(a.get(f"{BUNDLED_SLOT}_file", "")), "gpu": t.gpu}
     srv, models = build(t, d, m)
-    cat = Catalog(instance_id=srv.id, models=models)
+    cat = Catalog(instance_id=srv.id, models=models, fit_gpus=True)
     m.instances[srv.id] = srv
     m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": BUNDLED_SLOT if models else "",
                          "ctx": models[0].ctx_size if models else 0}

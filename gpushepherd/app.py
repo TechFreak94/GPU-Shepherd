@@ -55,6 +55,9 @@ class DemoLlamaClient:
     def unload(self, model=None):
         DemoLlamaClient.loaded.clear()
 
+    def metrics(self, wait=0):
+        return []
+
 
 def with_msg(path: str, msg: str) -> str:
     """A page address that shows `msg` as a notice. Encoded: headers only take latin-1, and the
@@ -243,6 +246,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     "waiting": (jobs.current.waiting.get(inst.id) if jobs.current else None)}
             if cat is not None:
                 card["model_count"] = len(cat.models)
+                try:
+                    card["tuning_new"] = sum(1 for s in svc.tuning(inst.id) if s["status"] == "new")
+                except Exception:  # noqa: BLE001 - only a hint
+                    card["tuning_new"] = 0
                 if card["running"]:
                     card["aliases"] = llamaswap.resolved_aliases(cat, len(gpus))
                     try:
@@ -643,7 +650,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
                                                              [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat),
+                "placement": svc.placement(iid, cat), "tuning": svc.tuning(iid),
                 "pending": bool(running and st.config_hash != engine.config_hash(inst)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
 
@@ -794,14 +801,25 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Problem as err:
             return problem(err)
 
+    @app.post("/instances/{iid}/tuning")
+    async def tuning_decide(request: Request, iid: str):
+        raw = await request.form()
+        try:
+            msg = svc.tuning_decide(iid, str(raw.get("key", "")), str(raw.get("action", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
+
     @app.post("/instances/{iid}/catalog/settings")
     async def catalog_settings(request: Request, iid: str):
         raw = await request.form()
         try:
+            unset = svc.server(iid)[1].fit_gpus is None    # left unticked: still offered as a suggestion
             msg = svc.server_settings(iid, threads=int(raw.get("threads") or 0),
                                       llama_server=str(raw.get("llama_server", "")),
                                       health_timeout=int(raw.get("health_timeout") or 900),
-                                      fit_gpus=raw.get("fit_gpus") == "on",
+                                      fit_gpus=True if raw.get("fit_gpus") == "on" else None if unset else False,
+                                      auto_tune=raw.get("auto_tune") == "on",
                                       new_key=raw.get("new_key") == "on")
         except ValueError:
             return toast(Response(status_code=204), "Threads and the start-up wait are whole numbers.", "error")
@@ -990,5 +1008,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 jobs.submit("Autostart", lambda job: engine.execute(p, job, job))
         except Exception as err:  # noqa: BLE001
             log.warning("autostart skipped: %s", err)
+    if autostart is not False:            # tests turn the background work off
+        svc.start_measuring()
 
     return app

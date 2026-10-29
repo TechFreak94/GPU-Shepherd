@@ -64,7 +64,7 @@ def test_reads_kv_shape(tmp_path):
 
 
 def cat(*models, **kw):
-    return Catalog(instance_id="llm", models=list(models), **kw)
+    return Catalog(instance_id="llm", models=list(models), **({"fit_gpus": True} | kw))
 
 
 def m(mid, **kw):

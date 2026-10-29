@@ -135,6 +135,12 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         msg, password = svc.reset_login(iid, str(data.get("user") or ""), str(data.get("password") or ""))
         return {"message": msg, "password": password}
 
+    @r.post("/api/v1/instances/{iid}/tuning")
+    @handle
+    async def tuning_decide(request: Request, iid: str):
+        data = await body(request)
+        return {"message": svc.tuning_decide(iid, str(data.get("key", "")), str(data.get("action", "")))}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     async def instance_action(request: Request, iid: str, action: str):
@@ -231,6 +237,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                 "auto_aliases": [a.model_dump(mode="json") for a in cat.auto_aliases],
                 "settings": {"threads": cat.threads, "llama_server": cat.llama_server,
                              "health_timeout": cat.health_timeout, "fit_gpus": cat.fit_gpus,
+                             "auto_tune": cat.auto_tune,
                              "api_key": cat.api_key},
                 "placement": svc.placement(iid, cat),
                 "loaded": loaded, "loading": sorted(svc.loading.get(iid, set())), "error": err,
@@ -309,13 +316,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     async def server_settings(request: Request, iid: str):
         data = await body(request)
-        unknown = set(data) - {"threads", "llama_server", "health_timeout", "fit_gpus", "new_api_key"}
+        unknown = set(data) - {"threads", "llama_server", "health_timeout", "fit_gpus", "auto_tune", "new_api_key"}
         if unknown:
             raise Problem(f"unknown setting(s): {', '.join(sorted(unknown))}")
         return {"message": svc.server_settings(iid, threads=data.get("threads"), llama_server=data.get("llama_server"),
                                                health_timeout=data.get("health_timeout"),
-                                               fit_gpus=data.get("fit_gpus"),
+                                               fit_gpus=data.get("fit_gpus"), auto_tune=data.get("auto_tune"),
                                                new_key=bool(data.get("new_api_key")))}
+
+    @r.get("/api/v1/instances/{iid}/tuning")
+    @handle
+    def get_tuning(request: Request, iid: str):
+        return svc.tuning(iid)
 
     @r.put("/api/v1/instances/{iid}/auto-aliases")
     @handle
