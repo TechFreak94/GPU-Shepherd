@@ -136,5 +136,23 @@ def too_big(inst: Instance, cat: Catalog, gpus: int, vram: int) -> list[str]:
     return out
 
 
+def model_check(name: str, size: int, gpu_mem: list[int], ram: int, cpu_moe: bool = False) -> tuple[str, list[str]]:
+    """Checks for a model added by hand, `size` bytes of files on a machine with `gpu_mem` bytes per
+    GPU and `ram` bytes of RAM (0 = unknown). Returns why it can't load here at all ("" if it can)
+    and warnings about how it will run."""
+    vram, notes = VRAM_USABLE * sum(gpu_mem), []
+    if size and ram and size > vram + ram - HEADROOM - OVERHEAD:
+        return (f"{name} is {gb(size)}, more than this machine can hold: about {gb(vram)} of GPU memory "
+                f"and {gb(max(ram - HEADROOM - OVERHEAD, 0))} of free system RAM. Pick a smaller quantization "
+                "(a lower Q number) of it."), []
+    if size and gpu_mem and size > vram:
+        notes.append(f"{name} ({gb(size)}) is bigger than all the GPUs hold ({gb(vram)}): llama.cpp keeps the "
+                     "rest in system RAM, so it answers slowly unless it is a mixture-of-experts model.")
+    if cpu_moe and len(gpu_mem) > 1:
+        notes.append(f"{name}'s experts-in-RAM setting turns off llama.cpp's own split across the GPUs and can run "
+                     "the last GPU out of memory. Leave the GPU / RAM split empty unless it doesn't load without it.")
+    return "", notes
+
+
 def gb(n: float) -> str:
     return f"{n / GB:.1f} GB"

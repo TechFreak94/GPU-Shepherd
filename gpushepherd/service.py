@@ -646,7 +646,7 @@ class Shepherd:
         if u.kind == "embed-model":
             return self.add_suggestion(iid, app_updates.EMBED_MODEL)
         if u.kind == "model":
-            msg = self.save_model(iid, u.model)
+            msg = self.save_model(iid, u.model, check=False)
         elif u.kind == "file":
             path = self._settings_file(inst)
             if not path:
@@ -781,10 +781,13 @@ class Shepherd:
             return {}, "The model server is not answering yet (it may still be starting)."
 
     @checked
-    def save_model(self, iid: str, model: CatalogModel, original: str = "") -> str:
-        """Add a model, or replace `original` (renaming it when the ID changed; auto names follow)."""
-        _, cat = self.server(iid)
+    def save_model(self, iid: str, model: CatalogModel, original: str = "", check: bool = True) -> str:
+        """Add a model, or replace `original` (renaming it when the ID changed; auto names follow).
+        A model set up by hand is checked against this machine first (see check_model)."""
+        inst, cat = self.server(iid)
         model = CatalogModel.model_validate(model.model_dump())
+        before = next((m for m in cat.models if m.id == (original or model.id)), None)
+        notes = self.check_model(inst, model, new_file=not before or before.file != model.file) if check else []
         if not original and any(m.id == model.id for m in cat.models):
             original = model.id
         elif original and not any(m.id == original for m in cat.models):
@@ -802,7 +805,23 @@ class Shepherd:
         cat = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in models],
                                       "auto_aliases": [a.model_dump() for a in cat.auto_aliases]})
         self.store.save_catalog(cat)
-        return f"Saved {model.id}."
+        return " ".join([f"Saved {model.id}.", *notes])
+
+    def check_model(self, inst: Instance, model: CatalogModel, new_file: bool = True) -> list[str]:
+        """Warnings for a model added or changed by hand: its file isn't there, it is bigger than the
+        GPUs, or it has a setting that breaks llama.cpp's own GPU split. A new file too big for the
+        GPUs and RAM together is refused, as it can never load."""
+        m = self.machine()
+        gpu_mem = [int(g * 2**30) for g in m.gpu_mem_gb]
+        size = budget.model_size(inst, model)
+        cpu_moe = any(r.cpu_moe and (r.min_gpus > 1 or len(gpu_mem) > 1) for r in model.offload)
+        refusal, notes = budget.model_check(model.id, size, gpu_mem, int(m.ram_gb * 2**30), cpu_moe)
+        if refusal and new_file:
+            raise Problem(refusal, "warn", 422)
+        if not budget.file_size(inst, model.file) and _volume_visible(inst, model.file) \
+                and model.file not in self._downloading({inst.id: inst}):
+            notes.insert(0, f"{model.file} isn't in the models folder yet, so {model.id} can't load until it is.")
+        return notes
 
     def delete_model(self, iid: str, mid: str) -> str:
         _, cat = self.server(iid)
@@ -873,9 +892,14 @@ class Shepherd:
         else:
             taken = {x.key for x in model_library.SUGGESTIONS + self._linked()}
             key = tpl.free_id(s.key, taken)
-            rows.append({"key": key, "name": s.name, "url": s.model.url, "gb": _remote_gb(s.model.url),
-                         "mmproj_url": s.mmproj.url if s.mmproj else "",
-                         "mmproj_gb": _remote_gb(s.mmproj.url) if s.mmproj else 0})
+            sizes = (_remote_gb(s.model.url), _remote_gb(s.mmproj.url) if s.mmproj else 0)
+            m = self.machine()
+            refusal, _ = budget.model_check(s.name, int(sum(sizes) * 1e9), [int(g * 2**30) for g in m.gpu_mem_gb],
+                                            int(m.ram_gb * 2**30))
+            if refusal:
+                raise Problem(refusal, "warn", 422)
+            rows.append({"key": key, "name": s.name, "url": s.model.url, "gb": sizes[0],
+                         "mmproj_url": s.mmproj.url if s.mmproj else "", "mmproj_gb": sizes[1]})
             self.store.save_linked_models(rows)
         return self.add_suggestion(iid, key)
 
@@ -929,7 +953,7 @@ class Shepherd:
         model.id = tpl.free_id(model.id, taken)
         if s.role == "embed" and "embed" not in taken:
             model.aliases = ["embed"]
-        self.save_model(iid, model)
+        self.save_model(iid, model, check=False)
         fetching = self.fetch_suggested(inst, [model])
         st = self.backend.states().get(iid)
         note = " Restart the server to use it." if st and st.running else ""
