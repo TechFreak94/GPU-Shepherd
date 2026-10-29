@@ -18,6 +18,7 @@ import httpx
 import yaml
 
 from .config import CatalogModel, ConfigError, parse_command, parse_env, parse_ports, parse_volumes
+from .scheduler import gpu_list
 
 # instance fields set as text, as the dashboard's form takes them (lines separated by ";" here)
 TEXT_FIELDS = {"ports": parse_ports, "volumes": parse_volumes, "env": parse_env, "command": parse_command}
@@ -102,7 +103,7 @@ def gb(n) -> str:
 
 
 def gpus_text(gpus: list[int]) -> str:
-    return ",".join(map(str, gpus)) if gpus else "-"
+    return gpu_list(gpus) if gpus else "-"
 
 
 def ask(question: str) -> bool:

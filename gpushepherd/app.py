@@ -476,9 +476,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         have = {x["container_path"] for x in files}
         files = [x for x in files if not x["name"].startswith(("mmproj", "mtp-"))]   # these go with a model
         gpus = engine.snapshot().gpus
-        choices = [(k, v) for k, v in tpl.GPU_CHOICES.items()]
-        choices[-1:-1] = [(f"pin:{g.index}", f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)")
-                          for g in gpus] if len(gpus) > 1 else []
+        choices = list(tpl.gpu_choices(gpus).items())
         comfy = [(i.id, i.name) for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"]
         keys = {sl.key for sl in tpl.slots(t)}
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],

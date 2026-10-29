@@ -4,6 +4,7 @@ import pytest
 
 from gpushepherd import instance_templates as tpl
 from gpushepherd.config import ConfigError, Instance, PortMap
+from gpushepherd.gpu import Gpu
 
 
 def machine(**kw):
@@ -42,6 +43,20 @@ def test_gpu_choices():
     pinned = tpl.build(t, f | {"gpu": "pin:1"}, m)[0].gpu
     assert pinned.mode == "fixed" and pinned.gpus == [1]
     assert tpl.build(t, f | {"gpu": "none"}, m)[0].gpu.mode == "none"
+    capped = tpl.build(t, f | {"gpu": "up:3"}, m)[0].gpu
+    assert (capped.mode, capped.min_gpus, capped.max_gpus) == ("elastic", 1, 3)
+    with pytest.raises(ConfigError):
+        tpl.build(t, f | {"gpu": "up:x"}, m)
+
+
+def test_gpu_choices_grow_with_the_machine():
+    def gpus(n):
+        return [Gpu(i, "Test GPU", 0, 8192, 0) for i in range(n)]
+    assert list(tpl.gpu_choices(gpus(1))) == ["one", "all", "none"]
+    assert list(tpl.gpu_choices(gpus(2))) == ["one", "all", "pin:0", "pin:1", "none"]
+    four = tpl.gpu_choices(gpus(4))
+    assert list(four) == ["one", "up:2", "up:3", "all", "pin:0", "pin:1", "pin:2", "pin:3", "none"]
+    assert four["up:3"].startswith("Up to 3 free GPUs") and "8 GB" in four["pin:3"]
 
 
 def test_comfyui_folders():

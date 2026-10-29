@@ -46,6 +46,19 @@ def test_fit_for_machines():
     assert order.index("qwen3.5-9b") < order.index("qwen3-coder-30b-a3b") < order.index("qwen3.8-27b")
 
 
+def test_fit_and_offload_on_many_gpus():
+    four = [8.0] * 4
+    assert ml.fit(ml.get("qwen3.5-9b"), four, 64).text == "Fits on one GPU"
+    assert ml.fit(ml.get("qwen3-coder-30b-a3b"), four, 64).text == "Fits on 3 GPUs"
+    big = ml.fit(ml.get("qwen3-coder-next"), four, 64)
+    assert big.ok and big.gpus == 4 and big.text.startswith("4 GPUs + about")
+    assert ml.fit(ml.get("qwen3-coder-next"), [24.0] * 8, 64).text.startswith("Fits on")
+    # a dense model with layers in RAM on one GPU: a rule for every count up to the machine's
+    rules = ml.offload(ml.get("muse-glimmer-30b"), four)
+    assert [r.min_gpus for r in rules] == [1, 2, 3, 4] and rules[0].gpu_layers
+    assert all(r.gpu_layers is None for r in rules[1:])
+
+
 def test_offload_rules_only_where_llama_cpp_does_not_fit_it_itself():
     # MoE: llama.cpp's own fit keeps the experts that don't fit in RAM and balances the GPUs;
     # --n-cpu-moe would turn that off and overfill the last GPU

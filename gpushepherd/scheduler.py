@@ -74,7 +74,19 @@ class Plan:
 def gpu_text(gpus: list[int]) -> str:
     if not gpus:
         return "no GPU"
-    return ("GPU " if len(gpus) == 1 else "GPUs ") + ",".join(str(g) for g in gpus)
+    return ("GPU " if len(gpus) == 1 else "GPUs ") + gpu_list(gpus)
+
+
+def gpu_list(gpus: list[int]) -> str:
+    """GPU indices with runs of three or more shortened, as on a big machine: "0-3,6"."""
+    parts, run = [], []
+    for g in sorted(gpus) + [None]:
+        if run and (g is None or g != run[-1] + 1):
+            parts += [f"{run[0]}-{run[-1]}"] if len(run) > 2 else [str(x) for x in run]
+            run = []
+        if g is not None:
+            run.append(g)
+    return ",".join(parts)
 
 
 def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, list[int]],

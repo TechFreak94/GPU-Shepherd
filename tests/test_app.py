@@ -885,3 +885,23 @@ def test_models_page_says_why_a_model_did_not_start(stack, monkeypatch):
     assert "failed to start" in page and "Didn't start: Out of GPU memory: it needed 1.6 GB more" in page
     r = client.post("/instances/llm/models/qwen3-coder-next/load", headers=HX)
     assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/instances/llm/models")
+
+
+def test_four_gpu_machine(stack, monkeypatch):
+    app, client, backend, data = stack
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "4x8192:Test GPU")
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    login(client)
+    form = client.get("/apps/comfyui").text
+    assert 'value="up:3"' in form and 'value="pin:3"' in form
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "comfyui", "name": "ComfyUI 2", "id": "comfyui-2", "port": "8189", "gpu": "up:2",
+        "models_dir": "/srv/models", "appdata_dir": str(data / "appdata" / "comfyui-2"), "action": "create"})
+    assert r.status_code == 204, r.text
+    assert yaml.safe_load((data / "instances" / "comfyui-2.yaml").read_text())["gpu"]["max_gpus"] == 2
+    act(client, app, "llm", "start")
+    assert gpus_of(backend, "llm") == [0, 1, 2, 3]
+    assert "GPUs 0-3" in client.get("/", headers=HX).text
+    act(client, app, "comfyui-2", "start", confirm=True)
+    # ComfyUI's priority is higher, so it grows to its cap of 2 and the LLM server keeps the rest
+    assert gpus_of(backend, "comfyui-2") == [2, 3] and gpus_of(backend, "llm") == [0, 1]

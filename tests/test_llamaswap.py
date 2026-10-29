@@ -83,3 +83,13 @@ def test_start_failures_name_the_reason_and_clear_once_a_model_starts():
     assert start_failures(LOG + "[INFO] <coder> Health check passed\n", {"coder"}) == {}
     assert start_failures("[WARN] group: starting x failed: health check timed out\n", {"x"}) == \
         {"x": "health check timed out"}
+
+
+def test_tensor_split_on_many_gpus():
+    cat = catalog()
+    cat.models[0].tensor_split = "1,1,2,2"
+    cmd = {n: yaml.safe_load(render(cat, n, 8))["models"]["qwen"]["cmd"] for n in (1, 3, 4, 6)}
+    assert "--tensor-split" not in cmd[1]
+    assert "--tensor-split 1,1,2" in cmd[3] and "--tensor-split 1,1,2,2" in cmd[4]
+    assert "--tensor-split" not in cmd[6]           # fewer shares than GPUs: llama.cpp splits by memory
+    assert "for 6 GPU(s)" in render(cat, 6, 8)

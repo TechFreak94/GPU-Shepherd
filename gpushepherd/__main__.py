@@ -28,6 +28,8 @@ def main() -> None:
                     help="no Docker needed: fake GPUs and containers, seeded with a preset")
     ap.add_argument("--demo-preset", default="starter", metavar="NAME",
                     help="preset the demo starts with (a folder in gpushepherd/presets; default: starter)")
+    ap.add_argument("--demo-gpus", type=int, default=2, metavar="N",
+                    help="how many 8 GB GPUs the demo fakes (default: 2)")
     ap.add_argument("--reset-password", action="store_true",
                     help="give the admin a new password, print it and exit (the running web UI uses it at once)")
     ap.add_argument("--version", action="version", version=f"gpu-shepherd {__version__}")
@@ -54,7 +56,9 @@ def main() -> None:
         return
     if args.demo:
         os.environ["SHEPHERD_DEMO"] = "1"
-        os.environ.setdefault("SHEPHERD_FAKE_GPUS", "2x8192:NVIDIA GeForce RTX 3070")
+        if not 1 <= args.demo_gpus <= 64:
+            ap.error("--demo-gpus: give a number from 1 to 64")
+        os.environ.setdefault("SHEPHERD_FAKE_GPUS", f"{args.demo_gpus}x8192:NVIDIA GeForce RTX 3070")
         os.environ.setdefault("SHEPHERD_ADMIN_PASSWORD", "demo-password")
         data_dir = tempfile.mkdtemp(prefix="gpushepherd-demo-")
         preset = PRESETS / args.demo_preset

@@ -86,8 +86,8 @@ GPU Shepherd makes one change at a time. Each start, stop, restart, delete and a
 | `POST /api/v1/apps/{key}/install` | Install it (`201`). The body holds only the answers that differ from the defaults, e.g. `{"gpu": "pin:1", "port": 8189}` or `{"chat_file": "Qwen3-8B-Q4_K_M.gguf"}`. For apps that use a model server, `"server": "new"` installs an LLM server with it. Answers `instance`, `models`, `llm_server` (the one installed with it), `companions` (helper instances installed with it) and `downloads` (suggested models it started downloading). |
 | `POST /api/v1/apps/{key}/instance` | The instance an install would make, without saving it (*Manual*): change it and `PUT` it. |
 
-The answers are the install form's fields: `name`, `id`, `port`, `gpu` (`one`, `all`, `none` or
-`pin:N`), `models_dir`, `appdata_dir`, `server`, `comfyui`, `speech` (a Speaches instance, for Open WebUI), `chat_file` / `chat_ctx`,
+The answers are the install form's fields: `name`, `id`, `port`, `gpu` (`one`, `all`, `up:N` (at most N),
+`none` or `pin:N`), `models_dir`, `appdata_dir`, `server`, `comfyui`, `speech` (a Speaches instance, for Open WebUI), `chat_file` / `chat_ctx`,
 `coder_file` / `coder_ctx` and `embed_file` / `embed_ctx` (model files, relative to the models
 folder or a path inside the container; a [suggested model](advanced.md#suggested-models)'s file is
 downloaded), `offload` (`auto`, `gpu`, `moe`), `login_user` / `password`, `hass_url` /
