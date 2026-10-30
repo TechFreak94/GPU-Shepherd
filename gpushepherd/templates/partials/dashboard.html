@@ -150,7 +150,7 @@
           {% for mid, r in c.offload.items() %}<span class="tl">{{ mid }}:
             {%- if r.gpu_layers is not none %} {{ r.gpu_layers }} layers on GPU{% endif %}
             {%- if r.cpu_moe %}{{ "," if r.gpu_layers is not none }} {{ r.cpu_moe }} expert layers in system RAM{% endif %}</span>{% endfor %}
-          {% if c.aliases %}<span class="tl">Auto names: {% for a, m in c.aliases.items() %}<span class="mono">{{ a }}</span> → {{ m }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+          {% if c.aliases %}<span class="tl">Auto tags: {% for a, m in c.aliases.items() %}<span class="mono">{{ a }}</span> → {{ m }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
           <span class="tl muted">Load, unload and configure them under Models.</span>
         {%- endcall %}</dt>
         <dd>{% if not c.running %}<span class="muted">{{ c.model_count }} in the catalogue</span>

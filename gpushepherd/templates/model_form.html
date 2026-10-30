@@ -28,9 +28,10 @@
     <h3 style="margin-top:0">Identity</h3>
     <div class="fields">
       <div><label for="id">Model ID</label><input type="text" id="id" name="id" value="{{ f.id }}" required placeholder="qwen3.6-35b-a3b">
-        <div class="hint">The name clients ask for.</div></div>
+        <div class="hint">Clients can always ask for the model by this ID.</div></div>
       <div><label for="name">Display name</label><input type="text" id="name" name="name" value="{{ f.name }}"></div>
-      <div><label for="aliases_text">Other names (comma separated)</label><input type="text" id="aliases_text" name="aliases_text" value="{{ f.aliases_text }}" placeholder="qwen"></div>
+      <div><label for="aliases_text">Tags (comma separated)</label><input type="text" id="aliases_text" name="aliases_text" value="{{ f.aliases_text }}" placeholder="chat, coder">
+        <div class="hint">Extra names for this model, like <span class="mono">chat</span> or <span class="mono">coder</span>. A client or app that asks for a tag gets this model, loaded on the first request. A tag can only belong to one model.</div></div>
       <div><label for="description">Description</label><input type="text" id="description" name="description" value="{{ f.description }}"></div>
     </div>
   </div>
