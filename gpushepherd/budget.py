@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 from . import gguf
-from .config import Catalog, CatalogModel, Instance
+from .config import Catalog, CatalogModel, Instance, load_yaml
 
 GB = 1e9
 VRAM_USABLE = 0.9          # share of GPU memory left for model weights (the rest: context, buffers)
@@ -60,7 +60,7 @@ class Peaks:
     def _load(self) -> dict[str, int]:
         if self._data is None:
             try:
-                raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+                raw = load_yaml(self.path.read_text(encoding="utf-8")) or {}
                 self._data = {str(k): int(v) for k, v in raw.items()}
             except (OSError, yaml.YAMLError, ValueError, AttributeError):
                 self._data = {}

@@ -18,6 +18,7 @@ import re
 import secrets
 import shlex
 import tempfile
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -30,6 +31,15 @@ MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 
 class ConfigError(ValueError):
     """A user-facing configuration problem."""
+
+
+# libyaml's parser when PyYAML was built with it: the same results, many times faster
+_YamlLoader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def load_yaml(text: str):
+    """yaml.safe_load, with the fast parser where there is one."""
+    return yaml.load(text, Loader=_YamlLoader)  # noqa: S506 - a safe loader
 
 
 # --------------------------------------------------------------------------- instances
@@ -359,9 +369,31 @@ def _dump(model: BaseModel, header: str) -> str:
     return header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
 
 
+# Parsed files, kept while the file on disk is unchanged (same inode, size and change time), so
+# a dashboard refresh doesn't parse settings.yaml for every card. Saves replace the file
+# (_atomic_write), and hand edits change its time, so the next read always sees them.
+_parsed: dict[Path, tuple[tuple[int, int, int], object]] = {}
+_parsed_lock = threading.Lock()
+
+
+def _read_yaml(path: Path):
+    st = path.stat()
+    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    with _parsed_lock:
+        hit = _parsed.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    raw = load_yaml(path.read_text(encoding="utf-8")) or {}
+    with _parsed_lock:
+        _parsed[path] = (key, raw)
+    return raw
+
+
 def _load(path: Path, cls):
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        # validating builds new objects (no "before" validators touch the input), so the cached
+        # raw data is never changed by a caller
+        raw = _read_yaml(path)
     except yaml.YAMLError as err:
         raise ConfigError(f"{path.name}: not valid YAML ({err})") from err
     try:
@@ -500,7 +532,7 @@ class Store:
     def linked_models(self) -> list[dict]:
         """[{key, name, url, gb, mmproj_url, mmproj_gb}]; a bad file reads as none."""
         try:
-            raw = yaml.safe_load(self.linked_models_path.read_text(encoding="utf-8")) or []
+            raw = load_yaml(self.linked_models_path.read_text(encoding="utf-8")) or []
         except (OSError, yaml.YAMLError):
             return []
         return [x for x in raw if isinstance(x, dict) and x.get("url")] if isinstance(raw, list) else []

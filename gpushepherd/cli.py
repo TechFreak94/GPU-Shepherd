@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-from .config import CatalogModel, ConfigError, parse_command, parse_env, parse_ports, parse_volumes
+from .config import CatalogModel, ConfigError, load_yaml, parse_command, parse_env, parse_ports, parse_volumes
 from .scheduler import gpu_list
 
 # instance fields set as text, as the dashboard's form takes them (lines separated by ";" here)
@@ -282,7 +282,7 @@ def cmd_logins(args, c: Client) -> int:
 def read_file(name: str) -> dict:
     try:
         text = sys.stdin.read() if name == "-" else Path(name).read_text(encoding="utf-8")
-        data = yaml.safe_load(text)
+        data = load_yaml(text)
     except (OSError, yaml.YAMLError) as err:
         raise Failed(f"can't read {name}: {err}") from err
     if not isinstance(data, dict):
@@ -522,6 +522,10 @@ def cmd_storage(args, c: Client) -> int:
             if rows:
                 print()
                 table(rows, ["IMAGE", "SIZE", "USED BY"])
+            rows = [[m["label"], m["path"], "-" if m["size"] is None else gb(m["size"])] for m in s.get("movable", [])]
+            if rows:
+                print("\nCan be moved to another place (gpu-shepherd storage move PATH NEW-PLACE):")
+                table(rows, ["FOLDER", "PATH", "SIZE"])
             rows = [[f["why"], gb(f["size"]), f["path"]] for f in s["files"]]
             rows += [["leftover", gb(f["size"]), f["path"]] for f in s["leftover_folders"]]
             rows += [["container", "-", n] for n in s["orphans"]]
@@ -539,6 +543,44 @@ def cmd_storage(args, c: Client) -> int:
         if len(args.items) != 1:
             raise Failed("which app data folder? e.g. gpu-shepherd storage trash-folder old-app")
         out(args, c.call("POST", "/api/v1/storage/leftovers", {"name": args.items[0]}))
+    elif a == "move":
+        if len(args.items) != 2:
+            raise Failed("which folder, and where to? e.g. gpu-shepherd storage move /opt/gpu-shepherd/models /mnt/disk2/models")
+        body = {"source": args.items[0], "dest": args.items[1]}
+        r = c.post("/api/v1/storage/move", body, ok=(409,))
+        if not r.get("needs_confirm"):
+            raise Failed(r.get("error", "can't move it"))
+        print(f"Move {r['label']} ({r['source']}, {gb(r['size'])}) to {r['dest']}")
+        print(f"  on {r['disk'] or 'the disk there'}, {gb(r['free'])} free")
+        if r["stops"]:
+            print(f"  stops {', '.join(r['stops'])} while it copies, then starts {'it' if len(r['stops']) == 1 else 'them'} again")
+        for w in r["warnings"]:
+            print(f"Warning: {w}")
+        print("  the old copy is kept until you delete it (gpu-shepherd storage moves)")
+        if not (args.yes or ask("Go ahead?")):
+            print("Nothing changed. Add -y to go ahead without asking.")
+            return 1
+        r = c.post("/api/v1/storage/move", body | {"confirm": True})
+        if args.json:
+            out(args, r)
+            return 0
+        print(r["message"])
+        return 0 if args.no_wait else follow(c, r["job"])
+    elif a == "moves":
+        out(args, c.get("/api/v1/moves"), lambda rows: table(
+            [[m["id"], m["status"], gb(m["size"]), f"{m['source']} -> {m['dest']}", m["leftover"] or "-"] for m in rows],
+            ["ID", "STATUS", "SIZE", "MOVE", "LEFT OVER (delete-old ID)"]))
+    elif a in ("move-back", "delete-old"):
+        if len(args.items) != 1:
+            raise Failed(f"which move? e.g. gpu-shepherd storage {a} ID (see gpu-shepherd storage moves)")
+        mid = args.items[0]
+        if a == "move-back":
+            out(args, c.post(f"/api/v1/moves/{mid}/back"))
+        else:
+            if not (args.yes or ask("Delete the copy that move left behind, for good?")):
+                print("Nothing deleted. Add -y to delete without asking.")
+                return 1
+            out(args, c.call("DELETE", f"/api/v1/moves/{mid}/leftover"))
     return 0
 
 
@@ -744,10 +786,12 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("show", "set"))
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
-                                       "trash-folder NAME")
+                                       "trash-folder NAME, move PATH NEW-PLACE, moves, move-back ID, delete-old ID")
     p.add_argument("action", nargs="?", choices=("show", "remove-images", "remove-orphans", "trash-files",
-                                                 "trash-folder"))
+                                                 "trash-folder", "move", "moves", "move-back", "delete-old"))
     p.add_argument("items", nargs="*")
+    p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
+    p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
     p = sub.add_parser("trash", help="deleted instances and files: list, restore ID, delete ID, empty")
     p.add_argument("action", nargs="?", choices=("list", "restore", "delete", "empty"))
     p.add_argument("id", nargs="?")

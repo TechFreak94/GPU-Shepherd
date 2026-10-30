@@ -214,7 +214,7 @@ TEMPLATES: tuple[Template, ...] = (
                       "who can reach its port can use it.",
         needs="An NVIDIA GPU with 8+ GB (12+ GB for SDXL and Flux)", license="Apache-2.0", docs="https://invoke.ai"),
     Template(
-        key="comfyui", tag="Image Server", badge="CUI", title="ComfyUI", group="Image and video",
+        key="comfyui", tag="Image Server / Image UI", badge="CUI", title="ComfyUI", group="Image and video",
         blurb="Node-based image and video generation with a web UI.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
                 "Models in the models folder's comfyui/ subfolder"),

@@ -15,6 +15,51 @@
   {% else %}<p class="muted small" style="margin:0">No disks to show.</p>{% endfor %}
 </div>
 
+<h3>Move to another disk</h3>
+<div class="card">
+  <p class="small muted" style="margin-top:0">Move models or an app's data to another place, such as a bigger disk. GPU Shepherd stops
+    the apps that use the folder (letting running work finish), copies it, checks every file arrived, points the apps at
+    the new place and starts them again. The old copy stays until you delete it here, so you can move back.
+    The new disk must already be mounted on this machine.</p>
+  {% if st.movable %}
+  <form hx-post="/storage/move/check">
+    <div class="fields">
+      <div><label for="move-source">Folder</label>
+        <select id="move-source" name="source">{% for m in st.movable %}
+          <option value="{{ m.path }}">{{ m.label }}: {{ m.path }}{% if m.size is not none %} ({{ m.size|gb }}){% endif %}</option>{% endfor %}
+        </select></div>
+      <div><label for="move-dest">New place</label>
+        <input id="move-dest" name="dest" required placeholder="/mnt/disk2/models" autocomplete="off">
+        <div class="hint">A new or empty folder. The folder it goes in must already exist.</div></div>
+    </div>
+    <div class="actions"><button type="submit">Check and move…</button></div>
+  </form>
+  {% else %}<p class="muted small" style="margin:0">No app uses a models or app data folder yet.</p>{% endif %}
+  {% if st.moves %}
+  {% set says = {"done": "Moved", "failed": "Failed", "cancelled": "Stopped", "interrupted": "Interrupted",
+                 "moved-back": "Moved back", "copying": "Copying…"} %}
+  <table class="table" style="margin-top:12px">
+    <tr><th>Folder</th><th>Size</th><th>When</th><th>Status</th><th></th></tr>
+    {% for r in st.moves %}
+    <tr><td><span class="mono">{{ r.source }}</span> to <span class="mono">{{ r.dest }}</span></td><td>{{ r.size|gb }}</td>
+      <td>{% if r.age_days == 0 %}today{% else %}{{ r.age_days }} day{{ "s" if r.age_days != 1 }} ago{% endif %}</td>
+      <td><span class="tag{{ ' warn' if r.status in ('failed', 'interrupted') else '' }}">{{ says.get(r.status, r.status) }}</span>
+        {% if r.error %}<div class="small muted">{{ r.error }}</div>{% endif %}</td>
+      <td><div class="actions" style="margin:0">
+        {% if r.status == "done" and r.leftover == r.source %}
+        <button type="button" class="small" hx-post="/storage/moves/back" hx-vals='{{ {"id": r.id}|tojson }}'
+          hx-confirm="Point the apps at the old copy in {{ r.source }} again? They restart, and anything they saved since the move stays only in {{ r.dest }}.">Move back</button>
+        {% endif %}
+        {% if r.leftover and r.status != "copying" %}
+        <button type="button" class="small danger" hx-post="/storage/moves/delete" hx-vals='{{ {"id": r.id}|tojson }}'
+          hx-confirm="Delete {{ r.leftover }} for good? This can't be undone."
+          title="Delete {{ r.leftover }}">Delete {{ "old copy" if r.leftover == r.source and r.status == "done" else "unfinished copy" if r.status in ("failed", "cancelled", "interrupted") else "the other copy" }}</button>
+        {% endif %}</div></td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+
 <h3>Folders</h3>
 <div class="card">
   {% if st.folders %}
