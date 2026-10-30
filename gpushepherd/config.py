@@ -140,6 +140,7 @@ class Instance(BaseModel):
     app: str = ""                     # the App Store app it was installed from, if any
     requires: list[str] = []          # instances that start with it (e.g. its database)
     skipped_updates: list[str] = []   # app updates the user chose not to apply (see app_updates.py)
+    auto_update: bool = False         # bring in a new release of its image by itself (image_updates.py)
     # the name in its file when the app shows its App Store name instead (older "Chat UI" names);
     # restart checks use it, so the better name alone never asks for a restart
     _file_name: str | None = PrivateAttr(default=None)
@@ -348,6 +349,7 @@ class Settings(BaseModel):
     container_prefix: str = "shepherd-"
     trash_days: int = Field(default=30, ge=0, le=3650)   # empty trash entries older than this (0 = never)
     auto_mount_drives: bool = True        # mount a newly attached drive that has data on it (see drives.py)
+    image_check_hours: int = Field(default=12, ge=0, le=720)   # look for new app releases this often (0 = only by hand)
 
 
 # --------------------------------------------------------------------------- store

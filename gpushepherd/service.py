@@ -22,8 +22,8 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, budget, downloads, drives, gpu as gpu_mod, host, instance_templates as tpl, logins,
-               model_library, moves, storage, tuning, updates)
+from . import (app_updates, auth, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
+               instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import llamaswap
@@ -114,6 +114,7 @@ class Shepherd:
     host_fs: drives.Host | None = None
     drive_log: drives.Memory | None = None
     drive_error: str = ""               # why the machine's drives can't be looked at, if they can't
+    image_log: image_updates.Records | None = None
     _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
 
     def __post_init__(self):
@@ -135,6 +136,9 @@ class Shepherd:
             self.host_fs = drives.HelperHost(self.backend, HELPER_IMAGE)
         if self.drive_log is None:
             self.drive_log = drives.Memory(self.store.root)
+        if self.image_log is None:
+            self.image_log = image_updates.Records(self.store.root)
+        self._auto_tried: set[tuple[str, str]] = set()     # (instance, version) automatic updates tried
         self._drive_lock = threading.Lock()
 
     @property
@@ -1001,8 +1005,160 @@ class Shepherd:
         u = self._app_update(iid, key)
         inst = self.store.instance(iid)
         inst.skipped_updates = sorted(set(inst.skipped_updates) | {u.key})
-        self.store.save_instance(inst)
+        self._save_setting(inst)
         return f"Skipped \"{u.title}\" for {inst.name}."
+
+    def _save_setting(self, inst: Instance) -> None:
+        """Save a setting that only matters to GPU Shepherd, keeping the name in the file as it was
+        (config._named), so the card doesn't ask for a restart."""
+        if inst._file_name is not None:
+            inst.name = inst._file_name
+        self.store.save_instance(inst)
+
+    # ------------------------------------------------------------------ new app releases (image_updates.py)
+    def check_images(self) -> str:
+        """Ask the registries which image each instance's tag points at now."""
+        refs = sorted({i.image for i in self.store.instances()[0].values()})
+        try:
+            here = self.backend.image_info(refs)
+        except BackendError as err:
+            raise Problem(f"Could not look at the images on this machine: {err}", status=503) from err
+        found = {}
+        for ref in refs:
+            image_id, local = here.get(ref, ("", []))
+            local = image_updates.digests(local)
+            if not (image_id and local):      # not downloaded yet (its first start gets the newest), or built here
+                continue
+            rec = {"id": image_id, "local": local, "remote": "", "error": ""}
+            try:
+                rec["remote"] = self.backend.registry_digest(ref)
+            except BackendError as err:
+                rec["error"] = str(err)
+            found[ref] = rec
+        self.image_log.checked(found)
+        names = self.names()
+        new = [names[i] for i, st in self.image_status().items() if st.available]
+        failed = sum(1 for r in found.values() if r["error"])
+        msg = (f"New version available for {', '.join(sorted(new))}." if new
+               else "Every app is on the newest version of its image.")
+        return msg + (f" {failed} image{'s' if failed != 1 else ''} could not be checked." if failed else "")
+
+    def image_status(self, states: dict | None = None) -> dict[str, image_updates.Status]:
+        """Instance -> how up to date its image is, from the last check."""
+        data = self.image_log.read()
+        states = self.backend.states() if states is None else states
+        out = {}
+        for iid, inst in self.store.instances()[0].items():
+            st = states.get(iid)
+            out[iid] = image_updates.status(inst, st.image_id if st else "", bool(st and st.running),
+                                            data["images"].get(inst.image),
+                                            float((data["updated"].get(iid) or {}).get("at") or 0))
+        return out
+
+    def image_checked(self) -> float:
+        return self.image_log.read()["checked"]
+
+    @checked
+    def set_auto_update(self, iid: str, on: bool) -> str:
+        """Update an app's image by itself, or only when asked. What starts with it follows."""
+        inst = self.store.instance(iid)
+        instances = self.store.instances()[0]
+        for x in [inst, *(instances[r] for r in inst.requires if r in instances)]:
+            x.auto_update = on
+            self._save_setting(x)
+        return (f"{inst.name} now installs new versions by itself, after waiting for running work." if on
+                else f"{inst.name} now waits for you to press Update when a new version is out.")
+
+    def update_image(self, iid: str) -> tuple[str, Job]:
+        """Download an app's new version and restart it on it (only it: a restart that would move
+        other instances is left to the user)."""
+        inst = self.instance(iid)
+        st = self.image_status().get(iid)
+        if not st or st.state not in ("available", "restart"):
+            raise Problem(f"{inst.name} already runs the newest version GPU Shepherd knows of. "
+                          "Check for updates first if a release just came out.", "info", 409)
+        try:
+            job = self.jobs.submit(f"Updating {inst.name}",
+                                   lambda job: self._update_image(iid, st.state == "available", job))
+        except Busy as err:
+            raise Problem(str(err), "warn", 409) from err
+        return f"Updating {inst.name}…", job
+
+    def _update_image(self, iid: str, pull: bool, job: Job) -> None:
+        inst = self.store.instance(iid)
+        state = self.backend.states().get(iid)
+        old = (state.image_id if state else "") or self.backend.image_info([inst.image]).get(inst.image, ("", []))[0]
+        new = old
+        if pull:
+            job(f"Downloading the new version of {inst.image}")
+            self.backend.pull(inst.image, job)
+            new, local = self.backend.image_info([inst.image]).get(inst.image, ("", []))
+            self.image_log.downloaded(inst.image, new, image_updates.digests(local))
+        if not (state and state.running):
+            job(f"{inst.name} is stopped: it runs the new version from its next start.")
+            self.image_log.updated(iid, old)
+            return
+        p = self.engine.plan("restart", iid)
+        if p.error or p.side_effects:
+            job(f"Not restarted: {p.error or 'that would also stop or move other instances'}. "
+                f"Restart {inst.name} when it suits you to use the new version.")
+            return
+        self.engine.execute(p, job, job)
+        self.image_log.updated(iid, old)
+        if old and new and old != new:        # the old version, unless something else still uses it
+            try:
+                self.backend.remove_image(old)
+                job("Removed the old version")
+            except BackendError:
+                pass
+
+    def auto_update(self) -> None:
+        """Check when it is time, then update one app that updates by itself (the next look takes
+        the next one: changes run one at a time)."""
+        hours = self.store.settings().image_check_hours
+        if hours and time.time() - self.image_checked() >= hours * 3600:
+            log.info("checking for new app versions: %s", self.check_images())
+        if self.jobs.busy:
+            return
+        instances = self.store.instances()[0]
+        data = self.image_log.read()["images"]
+        for iid, st in self.image_status().items():
+            inst = instances.get(iid)
+            if not (inst and inst.auto_update and st.state in ("available", "restart")):
+                continue
+            rec = data.get(inst.image) or {}
+            tried = (iid, rec.get("remote", "") if st.available else rec.get("id", ""))
+            if tried in self._auto_tried:     # tried this version already: the card says what is left
+                continue
+            if not st.available:
+                p = self.engine.plan("restart", iid)
+                if p.error or p.side_effects:
+                    continue
+            self._auto_tried.add(tried)
+            try:
+                self.update_image(iid)
+            except Problem as err:
+                log.info("automatic update of %s skipped: %s", iid, err.msg)
+            return
+
+    def watch_images(self, interval: float = 300.0, first: float = 10.0) -> None:
+        def loop():
+            threading.Event().wait(first)
+            while True:
+                try:
+                    self.auto_update()
+                except Exception as err:  # noqa: BLE001 - watching must never stop
+                    log.warning("app update check failed: %s", getattr(err, "msg", err))
+                threading.Event().wait(interval)
+        threading.Thread(target=loop, daemon=True, name="images").start()
+
+    @checked
+    def set_image_check_hours(self, hours: int) -> str:
+        s = self.store.settings()
+        s.image_check_hours = hours
+        self.store.save_settings(Settings.model_validate(s.model_dump()))
+        return (f"Looking for new app versions every {hours} hour{'s' if hours != 1 else ''}." if hours
+                else "New app versions are only looked for when you press Check now.")
 
     # ------------------------------------------------------------------ app logins
     def _login_method(self, iid: str) -> tuple[Instance, logins.Method]:

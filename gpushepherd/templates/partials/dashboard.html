@@ -105,6 +105,12 @@
     </div>
     {% if c.waiting %}<p class="meta"><span class="tag warn" title="Waiting for this to finish before it is stopped">Finishing: {{ c.waiting.detail }}</span></p>{% endif %}
     {% if c.pending %}<p class="meta"><span class="tag warn">Saved changes not applied - restart to apply</span></p>{% endif %}
+    {% set im = c.image %}
+    {% if im and im.state == "available" %}<p class="meta update-note"><span class="tag accent" title="Found by the check {{ im.checked|ago }}">New version available</span>
+      {%- if i.auto_update %} <span class="small muted">installs automatically</span>{% endif %}
+      <button class="small" hx-post="/ui/instances/{{ i.id }}/update-image" hx-target="#dash" {{ "disabled" if job }} title="Download the new version{{ ' and restart ' ~ i.name ~ ' on it, after running work finishes' if c.running }}">Update{{ " now" if i.auto_update }}</button></p>
+    {% elif im and im.state == "restart" %}<p class="meta"><span class="tag warn" title="The new version is downloaded; {{ i.name }} still runs the old one">New version downloaded - restart to use it</span></p>
+    {% elif im and im.updated %}<p class="meta"><span class="tag" title="Moved to the newest version of its image">Updated {{ im.updated|ago }}</span></p>{% endif %}
     {% if c.tuning_new|default(0) > 0 %}<p class="meta"><a class="tag accent" href="/instances/{{ i.id }}/models" title="Worked out from how the models ran. Nothing changes until you apply it.">{{ c.tuning_new }} suggested adjustment{{ "s" if c.tuning_new != 1 }}</a></p>{% endif %}
 
     <dl class="facts">
@@ -169,6 +175,11 @@
           <dd>{% if c.state %}{{ c.state.status_text or c.status }}{% else %}Never started{% endif %}</dd></div>
         <div class="fact"><dt>Image {% call info(i.id ~ "-image", "Image") %}<span class="tl">The Docker image this instance runs. Change it under Edit, then restart to use it.</span>{% endcall %}</dt>
           <dd class="mono">{{ i.image }}</dd></div>
+        <div class="fact"><dt>Updates {% call info(i.id ~ "-updates", "Updates") %}<span class="tl">Automatic: when the app puts out a new release, GPU Shepherd downloads it and restarts the app on it, after waiting for running work. Manual: the card says a new version is out and you press Update.</span>
+          <span class="tl muted">{% if im and im.checked %}Last checked {{ im.checked|ago }}.{% else %}Not checked yet.{% endif %} How often is set under Settings.</span>{% endcall %}</dt>
+          <dd>{{ "Automatic" if i.auto_update else "Manual" }}
+            <button class="small link" hx-post="/ui/instances/{{ i.id }}/auto-update" hx-vals='{"on": "{{ "0" if i.auto_update else "1" }}"}' hx-target="#dash" title="{{ 'Only update when you press Update' if i.auto_update else 'Install new versions by itself' }}">{{ "Switch to manual" if i.auto_update else "Switch to automatic" }}</button>
+            {% if im and im.error %}<div class="small bad">Could not check: {{ im.error }}</div>{% endif %}</dd></div>
         <div class="fact"><dt>ID {% call info(i.id ~ "-id", "ID") %}<span class="tl">GPU Shepherd's name for this instance, used in its file (<span class="mono">instances/{{ i.id }}.yaml</span>) and the API.</span>{% endcall %}</dt>
           <dd class="mono">{{ i.id }}</dd></div>
         <div class="fact"><dt>Container {% call info(i.id ~ "-container", "Container") %}<span class="tl">The Docker container's name, for commands like <span class="mono">docker logs {{ c.container }}</span>.</span>{% endcall %}</dt>

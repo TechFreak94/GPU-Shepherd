@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, host as host_mod, instance_templates as tpl, logins, model_library, moves, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -85,6 +85,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         backend = FakeBackend(slow=0.5) if demo else DockerBackend()
         if demo:
             backend.helper_seconds = 120          # demo downloads take a while, like real ones
+            backend.remote["ghcr.io/open-webui/open-webui:main"] = "sha256:" + "d" * 64   # a release to update to
     # demo mode has no real servers to ask, so everything counts as idle
     engine = Engine(store, backend, activity=(lambda _inst: drain.Activity(0)) if demo else None)
     jobs = JobRunner()
@@ -123,6 +124,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     templates.env.filters["gib"] = gib
     templates.env.filters["gb"] = gb
     templates.env.filters["md"] = changelog.inline
+    templates.env.filters["ago"] = image_updates.ago
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     # ------------------------------------------------------------------ security
@@ -220,6 +222,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Exception:  # noqa: BLE001
             usage = {}
         gpu_by_index = {g.index: g for g in snap.gpus}
+        try:
+            images = svc.image_status(snap.states)
+        except Exception:  # noqa: BLE001 - the cards show without update notices
+            log.exception("could not read the app update checks")
+            images = {}
         cards, cpu_rows, mem_rows = [], [], []
         order = sorted(snap.instances.values(), key=lambda i: (-i.gpu.priority if i.gpu.mode != "none" else 1, i.name.lower()))
         for inst in order:
@@ -236,7 +243,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "unknown" if unknown else "not created"),
                     "container": engine.container_name(inst.id), "has_logins": logins.method(inst) is not None,
-                    "gpus": gpus, "assigned": assigned,
+                    "gpus": gpus, "assigned": assigned, "image": images.get(inst.id),
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
                     "usage": usage.get(engine.container_name(inst.id)),
                     "ports": [{"port": p, "url": (u := base_url(request, p.host)), "label": u[7:].rstrip("/")}
@@ -396,6 +403,44 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 return problem(err)
         return logins_dialog(request, iid, result=result)
 
+    @app.post("/ui/instances/{iid}/update-image")
+    def instance_update_image(request: Request, iid: str):
+        try:
+            msg, _ = svc.update_image(iid)
+        except Problem as err:
+            return problem(err)
+        return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
+
+    @app.post("/ui/instances/{iid}/auto-update")
+    async def instance_auto_update(request: Request, iid: str):
+        form = await request.form()
+        try:
+            msg = svc.set_auto_update(iid, form.get("on") == "1")
+        except Problem as err:
+            return problem(err)
+        return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
+
+    @app.post("/ui/image-updates/check")
+    def check_images(request: Request):
+        try:
+            msg = svc.check_images()
+        except Problem as err:
+            return problem(err)
+        resp = toast(Response(status_code=204), msg)
+        resp.headers["HX-Refresh"] = "true"
+        return resp
+
+    @app.post("/settings/app-updates")
+    async def settings_app_updates(request: Request):
+        raw = await request.form()
+        hours = str(raw.get("hours", "")).strip()
+        if not hours.isdigit():
+            return problem(Problem("Hours must be a whole number (0 checks only when you press Check now)."))
+        try:
+            return toast(Response(status_code=204), svc.set_image_check_hours(int(hours)))
+        except Problem as err:
+            return problem(err)
+
     @app.post("/ui/instances/{iid}/{action}")
     async def instance_action(request: Request, iid: str, action: str):
         if action not in ("start", "stop", "restart"):
@@ -454,7 +499,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
                 "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
                 "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app,
-                "requires": ", ".join(inst.requires)}
+                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
         gpus, _ = engine.snapshot().gpus, None
@@ -601,6 +646,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "drain_path", "drain_key", "app", "requires")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
+        f["auto_update"] = raw.get("auto_update") == "on"
         editing = f["editing"] == "1"
         try:
             inst = Instance(
@@ -618,7 +664,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   on_timeout=f["drain_on_timeout"] or "stop",
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
                                   path=f["drain_path"], key=f["drain_key"]),
-                app=str(f["app"]).strip(), requires=re.split(r"[\s,]+", str(f["requires"]).strip()))
+                app=str(f["app"]).strip(), requires=re.split(r"[\s,]+", str(f["requires"]).strip()),
+                auto_update=f["auto_update"])
             msg = svc.save_instance(inst, editing)
         except (Problem, ConfigError, ValueError) as err:
             resp = editor(request, f, editing, error=err.msg if isinstance(err, Problem) else message(err))
@@ -924,7 +971,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def settings_page(request: Request):
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
-                    error="", u=updates.status(store.root), api_token=auth.api_token(store))
+                    error="", u=updates.status(store.root), api_token=auth.api_token(store),
+                    image_checked=svc.image_checked())
 
     @app.post("/settings/password")
     async def change_password(request: Request):
@@ -1118,5 +1166,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     if autostart is not False:            # tests turn the background work off
         svc.start_measuring()
         svc.watch_drives()
+        svc.watch_images()
 
     return app

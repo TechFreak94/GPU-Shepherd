@@ -82,6 +82,8 @@
     <h3 style="margin-top:0">Behaviour</h3>
     <div class="fields">
       <div><label class="check"><input type="checkbox" name="autostart" {{ "checked" if f.autostart }}> Start automatically when GPU Shepherd starts</label></div>
+      <div><label class="check"><input type="checkbox" name="auto_update" {{ "checked" if f.auto_update }}> Install new versions automatically</label>
+        <div class="hint">When the app puts out a new release, GPU Shepherd downloads it and restarts the app on it, after waiting for running work. Leave off to choose when, with the Update button on the dashboard.</div></div>
       <div><label for="open_port">Port the Open button uses</label><input type="number" id="open_port" name="open_port" min="1" max="65535" value="{{ f.open_port or '' }}" placeholder="first port">
         <div class="hint">The Open button on the dashboard opens this app's web page. Leave empty to use the first port above.</div>
       </div>

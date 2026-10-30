@@ -314,6 +314,35 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return {"message": svc.skip_app_update(iid, key)}
         raise Problem("unknown operation", status=404)
 
+    @r.get("/api/v1/image-updates")
+    @handle
+    def get_image_updates(request: Request):
+        instances, names = store.instances()[0], svc.names()
+        return {"checked": svc.image_checked() or None, "every_hours": store.settings().image_check_hours,
+                "instances": [{"instance": iid, "name": names[iid], "image": instances[iid].image,
+                               "state": st.state, "auto_update": instances[iid].auto_update, "error": st.error,
+                               "checked": st.checked or None, "updated": st.updated or None}
+                              for iid, st in sorted(svc.image_status().items())]}
+
+    @r.post("/api/v1/image-updates/check")
+    @handle
+    def check_image_updates(request: Request):
+        return {"message": svc.check_images()}
+
+    @r.post("/api/v1/image-updates/{iid}/update")
+    @handle
+    def update_image(request: Request, iid: str):
+        msg, job = svc.update_image(iid)
+        return JSONResponse({"message": msg, "job": job_json(job)}, status_code=202)
+
+    @r.put("/api/v1/instances/{iid}/auto-update")
+    @handle
+    async def auto_update(request: Request, iid: str):
+        data = await body(request)
+        if not isinstance(data.get("on"), bool):
+            raise Problem('send {"on": true} or {"on": false}')
+        return {"message": svc.set_auto_update(iid, data["on"])}
+
     @r.patch("/api/v1/instances/{iid}/server-settings")
     @handle
     async def server_settings(request: Request, iid: str):
@@ -342,7 +371,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         s = store.settings()
         return {"admin_user": s.admin_user, "bind_address": s.bind_address, "network": s.network,
                 "container_prefix": s.container_prefix, "data_dir": str(store.root),
-                "host_data_dir": str(engine.host_data_dir), "trash_days": s.trash_days}
+                "host_data_dir": str(engine.host_data_dir), "trash_days": s.trash_days,
+                "image_check_hours": s.image_check_hours}
 
     @r.get("/api/v1/settings")
     def get_settings():
@@ -352,7 +382,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     async def patch_settings(request: Request):
         data = await body(request)
-        unknown = set(data) - {"bind_address", "network", "trash_days"}
+        unknown = set(data) - {"bind_address", "network", "trash_days", "image_check_hours"}
         if unknown:
             raise Problem(f"unknown or read-only setting(s): {', '.join(sorted(unknown))}")
         msgs = []
@@ -361,6 +391,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             if not days.isdigit():
                 raise Problem("trash_days must be a whole number of days (0 = keep until emptied)")
             msgs.append(svc.set_trash_days(int(days)))
+        if "image_check_hours" in data:
+            hours = str(data["image_check_hours"])
+            if not hours.isdigit():
+                raise Problem("image_check_hours must be a whole number of hours (0 = only when asked)")
+            msgs.append(svc.set_image_check_hours(int(hours)))
         if {"bind_address", "network"} & set(data):
             msgs.append(svc.set_containers(data.get("bind_address"), data.get("network")))
         return {"message": " ".join(msgs), "settings": settings_json()}

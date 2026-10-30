@@ -52,9 +52,9 @@ class Engine:
         return self.store.settings().container_prefix + iid
 
     def config_hash(self, inst: Instance) -> str:
-        # the drain policy, the app it came from, what starts with it and skipped app updates only
-        # matter to GPU Shepherd: no restart for those
-        data = inst.model_dump(mode="json", exclude={"drain", "app", "requires", "skipped_updates"})
+        # the drain policy, the app it came from, what starts with it, skipped app updates and how
+        # its image is updated only matter to GPU Shepherd: no restart for those
+        data = inst.model_dump(mode="json", exclude={"drain", "app", "requires", "skipped_updates", "auto_update"})
         if inst._file_name is not None:            # renamed only on screen (see config._named)
             data["name"] = inst._file_name
         if inst.kind == "llama-swap":
