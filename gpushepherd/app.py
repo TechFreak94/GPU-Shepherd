@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, moves, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -180,7 +180,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return engine.llama_client(iid)
 
     # everything the dashboard changes goes through the same calls as the JSON API and the command
-    svc = Shepherd(store, engine, jobs, llama_client, loading=app.state.loading)
+    svc = Shepherd(store, engine, jobs, llama_client, loading=app.state.loading,
+                   mover=moves.LocalMover() if demo else None)
     app.state.svc = svc
     try:
         svc.trash.purge_older(store.settings().trash_days)
@@ -987,6 +988,39 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     async def storage_purge(request: Request):
         raw = await request.form()        # no id = empty the whole trash
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
+
+    def move_form(raw) -> tuple[str, str]:
+        return str(raw.get("source", "")), str(raw.get("dest", ""))
+
+    @app.post("/storage/move/check", response_class=HTMLResponse)
+    async def storage_move_check(request: Request):
+        """The checked move, to confirm in a dialog."""
+        try:
+            info = svc.check_move(*move_form(await request.form()))
+        except Problem as err:
+            return problem(err)
+        resp = page(request, "partials/move_confirm.html", m=info)
+        resp.headers["HX-Retarget"] = "#modal-body"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        resp.headers["HX-Trigger-After-Swap"] = "open-modal"
+        return resp
+
+    @app.post("/storage/move")
+    async def storage_move(request: Request):
+        try:
+            msg, _job = svc.move_folder(*move_form(await request.form()))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/", msg)})
+
+    @app.post("/storage/moves/{op}")
+    async def storage_move_op(request: Request, op: str):
+        mid = str((await request.form()).get("id", ""))
+        if op == "back":
+            return storage_done(lambda: svc.move_back(mid))
+        if op == "delete":
+            return storage_done(lambda: svc.delete_leftover(mid))
+        return PlainTextResponse("unknown operation", status_code=404)
 
     @app.post("/storage/trash/days")
     async def storage_trash_days(request: Request):

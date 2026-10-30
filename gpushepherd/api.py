@@ -369,6 +369,35 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def get_storage(request: Request):
         return svc.storage()
 
+    @r.post("/api/v1/storage/move")
+    @handle
+    async def storage_move(request: Request):
+        """Move a folder the Storage report lists under "movable" to `dest`. Without confirm it
+        only checks, and answers what the move would do."""
+        data = await body(request)
+        source, dest = str(data.get("source", "")), str(data.get("dest", ""))
+        if not data.get("confirm"):
+            info = svc.check_move(source, dest)
+            return JSONResponse({"error": 'Send {"confirm": true} to move it.', "needs_confirm": True, **info},
+                                status_code=409)
+        msg, job = svc.move_folder(source, dest)
+        return JSONResponse({"message": msg, "job": job_json(job)}, status_code=202)
+
+    @r.get("/api/v1/moves")
+    @handle
+    def get_moves(request: Request):
+        return svc.move_history()
+
+    @r.post("/api/v1/moves/{mid}/back")
+    @handle
+    def move_back(request: Request, mid: str):
+        return {"message": svc.move_back(mid)}
+
+    @r.delete("/api/v1/moves/{mid}/leftover")
+    @handle
+    def delete_move_leftover(request: Request, mid: str):
+        return {"message": svc.delete_leftover(mid)}
+
     @r.post("/api/v1/storage/{what}")
     @handle
     async def storage_cleanup(request: Request, what: str):

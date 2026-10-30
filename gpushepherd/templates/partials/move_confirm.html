@@ -1,0 +1,16 @@
+<div class="dlg-head"><strong id="modal-title">Move {{ m.label }}?</strong><button data-close-modal>Cancel</button></div>
+<div class="dlg-body">
+  <p>Move <span class="mono">{{ m.source }}</span> ({{ m.size|gb }}) to <span class="mono">{{ m.dest }}</span>,
+    on {% if m.disk %}<span class="mono">{{ m.disk }}</span>{% else %}the disk there{% endif %} ({{ m.free|gb }} free).</p>
+  <ul>
+    {% if m.stops %}<li>Stops {{ m.stops|join(", ") }} (running work finishes first), and starts {{ "it" if m.stops|length == 1 else "them" }} again afterwards.</li>
+    {% elif m.used_by %}<li>Used by {{ m.used_by|join(", ") }}, which {{ "is" if m.used_by|length == 1 else "are" }} stopped now, so nothing has to stop.</li>{% endif %}
+    <li>Copies everything and checks every file arrived before the apps switch over. If anything goes wrong, the apps keep the old place.</li>
+    <li>Keeps the old copy until you delete it on the Storage page.</li>
+  </ul>
+  {% if m.warnings %}<div class="notice busy"><ul>{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>{% endif %}
+  <div class="actions">
+    <button data-close-modal>Cancel</button>
+    <button class="primary" hx-post="/storage/move" hx-vals='{{ {"source": m.source, "dest": m.dest}|tojson }}' hx-swap="none">Move</button>
+  </div>
+</div>

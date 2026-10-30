@@ -167,6 +167,21 @@ class Trash:
             log.info("trash: emptied %d entr%s older than %d days", len(gone), "y" if len(gone) == 1 else "ies", days)
         return gone
 
+    def relocate(self, old: str, new: str) -> int:
+        """A models folder moved from `old` to `new` (moves.py): its files in the trash moved with
+        it, so the entries' records say the new place. Returns how many entries changed."""
+        def to_new(p: str) -> str:
+            return str(Path(new) / Path(p).relative_to(old)) if p and Path(p).is_relative_to(old) else p
+        n = 0
+        for e in self.entries(sizes=False):
+            items = [Item(to_new(i.original), to_new(i.stored) if i.folder else i.stored, to_new(i.folder))
+                     for i in e.items]
+            if items != e.items:
+                e.items = items
+                self._save(e)
+                n += 1
+        return n
+
     # ------------------------------------------------------------------ files
     def _save(self, e: Entry) -> None:
         data = {"title": e.title, "deleted": e.deleted, "instances": e.instances,

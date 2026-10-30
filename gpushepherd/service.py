@@ -15,6 +15,7 @@ import secrets
 import shlex
 import shutil
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -22,14 +23,14 @@ import httpx
 from pydantic import ValidationError
 
 from . import (app_updates, auth, budget, downloads, gpu as gpu_mod, host, instance_templates as tpl, logins,
-               model_library, storage, tuning, updates)
+               model_library, moves, storage, tuning, updates)
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import llamaswap
 from .backend import BackendError
 from .downloads import IMAGE as HELPER_IMAGE, KIND as DOWNLOAD_KIND, Downloads
 from .engine import Engine
-from .jobs import Busy, Job, JobRunner
+from .jobs import Busy, Cancelled, Job, JobRunner
 from .scheduler import Plan
 from .trash import FileOps, Trash
 
@@ -107,6 +108,9 @@ class Shepherd:
     peaks: budget.Peaks | None = None
     measurements: tuning.Measurements | None = None
     decisions: tuning.Decisions | None = None
+    mover: moves.Mover | None = None
+    move_log: moves.History | None = None
+    move_interval: float = 5.0          # seconds between looks at a copy
     _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
 
     def __post_init__(self):
@@ -120,6 +124,10 @@ class Shepherd:
             self.measurements = tuning.Measurements(self.store.root)
         if self.decisions is None:
             self.decisions = tuning.Decisions(self.store.root)
+        if self.mover is None:
+            self.mover = moves.HelperMover(self.backend, HELPER_IMAGE)
+        if self.move_log is None:
+            self.move_log = moves.History(self.store.root)
 
     @property
     def backend(self):
@@ -382,7 +390,214 @@ class Shepherd:
                 "images": images,
                 "orphans": sorted(st.name for iid, st in states.items() if iid not in instances),
                 "trash": [asdict(e) | {"age_days": e.age_days} for e in self.trash_entries()],
-                "trash_days": self.store.settings().trash_days}
+                "trash_days": self.store.settings().trash_days,
+                "movable": [asdict(m) | {"size": next((f.size for f in scan.folders if f.path == m.path), None)}
+                            for m in self.movable(instances)],
+                "moves": self.move_history()}
+
+    # ------------------------------------------------------------------ moving folders (moves.py)
+    def movable(self, instances: dict[str, Instance] | None = None) -> list[moves.Movable]:
+        instances = instances if instances is not None else self.store.instances()[0]
+        return moves.movable(instances, self.appdata_root(),
+                             storage.model_folders(instances, tpl.MODELS_IN_CONTAINER))
+
+    def move_history(self) -> list[dict]:
+        current = self.jobs.current
+        out = []
+        for r in self.move_log.all():
+            row = asdict(r) | {"age_days": int((time.time() - r.started) // 86400)}
+            if r.status == "copying" and not (current and current.id == r.job):
+                row["status"] = "interrupted"            # GPU Shepherd restarted while it copied
+            out.append(row)
+        return out
+
+    def _movable(self, source: str) -> moves.Movable:
+        source = source.rstrip("/") or "/"
+        m = next((m for m in self.movable() if m.path == source), None)
+        if not m:
+            raise Problem(f"{source} is not a folder that can be moved: pick one the Storage page lists.", status=404)
+        return m
+
+    def check_move(self, source: str, dest: str) -> dict:
+        """What moving `source` to `dest` would do, and whether it can: nothing is changed."""
+        m = self._movable(source)
+        dest = dest.strip().rstrip("/") or dest.strip()
+        err = moves.check_paths(m.path, dest, str(self.engine.host_data_dir))
+        if err:
+            raise Problem(err)
+        instances, _ = self.store.instances()
+        wider = [i.name for i in instances.values() for v in i.volumes
+                 if moves.inside(m.path, v.host) and v.host != m.path and Path(v.host).is_dir()]
+        if wider:
+            raise Problem(f"{wider[0]} uses a folder that {m.path} is in, so it can't be moved on its own.", status=409)
+        busy = [p for p in self._downloading(instances) if moves.inside(p, m.path)]
+        if busy:
+            raise Problem(f"{Path(busy[0]).name} is still downloading into {m.path}: wait for it, or cancel it.", status=409)
+        try:
+            c = self.mover.check(m.path, dest)
+        except (BackendError, OSError, ValueError) as err:
+            raise Problem(f"Could not look at {dest}: {err}", status=500) from err
+        if c.error:
+            hint = (f" Pick a new folder inside it, such as {dest}/{Path(m.path).name}."
+                    if "not an empty folder" in c.error else "")
+            raise Problem(f"Can't move there: {c.error}.{hint}", status=409)
+        if c.size > c.free and not c.same_disk:
+            raise Problem(f"{dest} has {gb(c.free)} free; {m.path} needs {gb(c.size)}.", status=409)
+        if c.same_disk and c.size * 2 > c.free + c.size:
+            raise Problem(f"{dest} is on the same disk, which has {gb(c.free)} free: not enough to copy "
+                          f"{gb(c.size)} (is the other disk mounted?)", status=409)
+        states = self.backend.states()
+        running = [instances[i].name for i in m.used_by if states.get(i) and states[i].running]
+        return {"source": m.path, "dest": dest, "label": m.label, "size": c.size, "free": c.free, "disk": c.disk,
+                "same_disk": c.same_disk, "used_by": [instances[i].name for i in m.used_by],
+                "stops": running, "warnings": c.warnings}
+
+    def move_folder(self, source: str, dest: str) -> tuple[str, Job]:
+        """Move a folder in the background (see moves.py): check, stop its apps, copy, compare,
+        switch the apps over, start them again. The old copy is kept."""
+        info = self.check_move(source, dest)
+        rec = moves.Record(self.move_log.new_id(info["source"]), info["label"], info["source"], info["dest"],
+                           self._movable(source).used_by, info["size"])
+        try:
+            job = self.jobs.submit(f"Moving {rec.source} to {rec.dest}", lambda job: self._move(rec, job))
+        except Busy as err:
+            raise Problem(str(err), "warn", 409) from err
+        return (f"Moving {rec.source} to {rec.dest} ({gb(rec.size)})" +
+                (f": {', '.join(info['stops'])} stop{'s' if len(info['stops']) == 1 else ''} until it is done."
+                 if info["stops"] else ".")), job
+
+    def _all_running(self) -> set[str]:
+        return {i for i, st in self.backend.states().items() if st.running}
+
+    def _stop_users(self, ids: list[str], job: Job) -> None:
+        """Stop the instances using a folder the normal way (running work finishes first)."""
+        for iid in ids:
+            if iid in self._all_running():
+                self.engine.execute(self.engine.plan("stop", iid), job, job)
+
+    def _start_again(self, was: set[str], job: Job) -> None:
+        instances, _ = self.store.instances()
+        again = {i for i in was - self._all_running() if i in instances}
+        if again:
+            job(f"Starting again: {', '.join(instances[i].name for i in sorted(again))}")
+            self.engine.execute(self.engine.plan("rebalance", None, again), job, job)
+
+    def _switch(self, old: str, new: str, job: Job) -> None:
+        instances, _ = self.store.instances()
+        for inst in instances.values():
+            vols = [v.model_copy(update={"host": moves.relocate(v.host, old, new)}) for v in inst.volumes]
+            if vols != inst.volumes:
+                inst.volumes = vols
+                self.store.save_instance(inst)
+                job(f"{inst.name} now uses {new}")
+        if self.trash.relocate(old, new):
+            job("Updated the trash's records of files in it")
+
+    def _move(self, rec: moves.Record, job: Job) -> None:
+        rec.job, rec.leftover = job.id, rec.dest       # until it is done, the new copy is the one to delete
+        self.move_log.put(rec)
+        was, copying = self._all_running(), False
+        try:
+            self._stop_users(rec.used_by, job)
+            job(f"Copying {rec.source} to {rec.dest} ({gb(rec.size)})")
+            copying = True
+            self.mover.start(rec.id, rec.source, rec.dest)
+            last = time.time()
+            while True:
+                running, code, copied = self.mover.poll(rec.id)
+                if job.cancel.is_set():
+                    raise Cancelled("the copy was stopped; the apps still use the old place")
+                if not running:
+                    break
+                if copied and time.time() - last >= 30:
+                    job(f"Copied {gb(copied)} of {gb(rec.size)}")
+                    last = time.time()
+                time.sleep(self.move_interval)
+            self.mover.stop(rec.id)
+            if code != 0:
+                raise RuntimeError("the copy did not finish" if code is None else
+                                   "the copy is not the same as the folder" if code == 5 else
+                                   f"the copy failed (exit code {code}); is there room on the new disk?")
+            job("Copied, and every file matches the old copy")
+            self._switch(rec.source, rec.dest, job)
+            rec.status, rec.leftover = "done", rec.source
+            if not Path(rec.dest).is_dir():
+                job(f"GPU Shepherd itself can't see {rec.dest}, so the Storage and Models pages can't list the "
+                    f"files there. To fix that, add  - {rec.dest}:{rec.dest}  under volumes in its compose.yaml "
+                    "and run  docker compose up -d  (the apps work either way).")
+        except BaseException as err:
+            rec.status = "cancelled" if isinstance(err, Cancelled) else "failed"
+            rec.error = str(err) or err.__class__.__name__
+            rec.leftover = ""
+            if copying:
+                try:
+                    self.mover.stop(rec.id)
+                    job(f"Removing the unfinished copy at {rec.dest}")
+                    self.mover.remove(rec.dest)
+                except Exception as rm_err:  # noqa: BLE001 - listed on the Storage page to delete later
+                    job(f"Could not remove it: {rm_err}")
+                    rec.leftover = rec.dest
+            raise
+        finally:
+            rec.finished = time.time()
+            self.move_log.put(rec)
+            try:
+                self._start_again(was, job)
+            except Exception as err:  # noqa: BLE001
+                job(f"Could not start everything again: {err}")
+                if rec.status == "done":
+                    raise RuntimeError(f"moved, but could not start everything again: {err}") from err
+        job(f"Done. The old copy is still at {rec.source}: delete it from Settings, Storage once the apps work.")
+
+    def _move_record(self, mid: str) -> moves.Record:
+        try:
+            return self.move_log.get(mid)
+        except KeyError as err:
+            raise Problem(str(err).strip("'\""), status=404) from err
+
+    def move_back(self, mid: str) -> str:
+        """Point the apps at the old copy again (it is still there). Changes made since the move
+        stay in the new copy."""
+        rec = self._move_record(mid)
+        if rec.status != "done" or rec.leftover != rec.source:
+            raise Problem("Only a finished move whose old copy is still there can be moved back.", status=409)
+
+        def back(job: Job) -> None:
+            was = self._all_running()
+            self._stop_users(rec.used_by, job)
+            try:
+                self._switch(rec.dest, rec.source, job)
+                rec.status, rec.leftover = "moved-back", rec.dest
+                self.move_log.put(rec)
+                job(f"Done. The copy at {rec.dest} stays until you delete it.")
+            finally:
+                self._start_again(was, job)
+        try:
+            self.jobs.submit(f"Moving {rec.dest} back to {rec.source}", back)
+        except Busy as err:
+            raise Problem(str(err), "warn", 409) from err
+        return f"The apps go back to {rec.source}. The copy at {rec.dest} stays until you delete it."
+
+    def delete_leftover(self, mid: str) -> str:
+        """Delete the copy a move left behind (the old one, or the new one after moving back)."""
+        rec = self._move_record(mid)
+        path = rec.leftover
+        if not path:
+            raise Problem("Nothing is left over from that move.", status=409)
+        instances, _ = self.store.instances()
+        users = [i.name for i in instances.values() if any(moves.inside(v.host, path) for v in i.volumes)]
+        if users:
+            raise Problem(f"{users[0]} still uses {path}, so it is not deleted.", status=409)
+        if self.jobs.current and self.jobs.current.id == rec.job:
+            raise Problem("That move is still running.", "warn", 409)
+        try:
+            self.mover.stop(rec.id)
+            self.mover.remove(path)
+        except (BackendError, OSError, ValueError) as err:
+            raise Problem(f"Could not delete {path}: {err}", status=500) from err
+        rec.leftover = ""
+        self.move_log.put(rec)
+        return f"Deleted {path}."
 
     def low_space(self) -> list[dict]:
         """Disks GPU Shepherd uses that are nearly full, for the dashboard's banner. Cheap: no sizes."""
