@@ -8,6 +8,7 @@ api_key: sk-demo-0000000000000000000000000000000000000000
 threads: 0
 llama_server: ""
 health_timeout: 600
+fit_gpus: true                     # each model on the fewest GPUs that hold it (Models page)
 models:
   - id: qwen3.5-9b
     name: Qwen3.5 9B

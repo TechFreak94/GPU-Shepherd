@@ -94,6 +94,8 @@
     <div class="hint">For mixture-of-experts models (names like 35B-A3B), keep all layers on the GPU and move expert layers to RAM:
       raise the number until the model loads, then lower it for speed. For dense models, lower the layers on GPU instead.</div>
     <div class="fields" style="margin-top:12px">
+      <div><label for="gpus">GPUs it uses</label><input type="number" id="gpus" name="gpus" min="0" max="64" value="{{ f.gpus }}">
+        <div class="hint">0 = the fewest that hold it (its file and context). Set a number to spread it over more GPUs.</div></div>
       <div><label for="split_mode">With 2 or more GPUs, split by</label><select id="split_mode" name="split_mode">
         {% for k, label in [("layer", "Layers (default, best for most machines)"), ("row", "Rows (can be faster with fast links between GPUs)"), ("tensor", "Tensors (newer, experimental)")] %}
         <option value="{{ k }}" {{ "selected" if f.split_mode == k }}>{{ label }}</option>{% endfor %}</select></div>

@@ -84,6 +84,7 @@ def test_start_warns_and_asks_when_ram_runs_short(tmp_path, monkeypatch):
     sparse(models / "big.gguf", 40 * GB)
     data = tmp_path / "data"
     data.mkdir()
+    monkeypatch.setattr(host, "ram_gb", lambda: 64.0)
     app = create_app(data_dir=str(data), backend=FakeBackend(), demo=True, autostart=False)
     client = TestClient(app, headers={"Authorization": f"Bearer {auth.api_token(Store(data))}"})
     client.put("/api/v1/instances/llm", json={"name": "LLM", "image": "x", "kind": "llama-swap",
@@ -102,3 +103,38 @@ def test_start_warns_and_asks_when_ram_runs_short(tmp_path, monkeypatch):
     assert client.post("/api/v1/instances/llm/stop", json={"confirm": True}).status_code == 202
     wait(app)
     assert client.post("/api/v1/instances/llm/start", json={}).status_code == 202   # plenty: no question
+
+
+def test_model_check_refuses_what_never_fits_and_warns_about_the_rest():
+    gpus, ram = [8 * 2**30, 8 * 2**30], 32 * 2**30
+    refusal, _ = budget.model_check("huge", 60 * GB, gpus, ram)
+    assert "huge is 60.0 GB, more than this machine can hold" in refusal
+    refusal, notes = budget.model_check("big", 20 * GB, gpus, ram)
+    assert not refusal and "bigger than all the GPUs hold" in notes[0]
+    assert budget.model_check("small", 5 * GB, gpus, ram) == ("", [])
+    _, notes = budget.model_check("moe", 5 * GB, gpus, ram, cpu_moe=True)
+    assert "turns off llama.cpp's own split" in notes[0]
+    assert budget.model_check("unknown", 0, gpus, 0) == ("", [])
+
+
+def test_hand_added_models_are_checked(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
+    monkeypatch.setenv("SHEPHERD_ADMIN_PASSWORD", "correct-horse")
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    monkeypatch.setattr(host, "ram_gb", lambda: 32.0)
+    models = tmp_path / "models"
+    sparse(models / "huge.gguf", 60 * GB)
+    sparse(models / "big.gguf", 20 * GB)
+    data = tmp_path / "data"
+    data.mkdir()
+    app = create_app(data_dir=str(data), backend=FakeBackend(), demo=True, autostart=False)
+    client = TestClient(app, headers={"Authorization": f"Bearer {auth.api_token(Store(data))}"})
+    client.put("/api/v1/instances/llm", json={"name": "LLM", "image": "x", "kind": "llama-swap",
+                                               "volumes": [{"host": str(models), "container": "/models"}]})
+    r = client.put("/api/v1/instances/llm/models/huge", json={"id": "huge", "file": "/models/huge.gguf"})
+    assert r.status_code == 422 and "more than this machine can hold" in r.json()["error"]
+    r = client.put("/api/v1/instances/llm/models/big", json={"id": "big", "file": "/models/big.gguf",
+                                                             "offload": [{"min_gpus": 2, "cpu_moe": 10}]})
+    assert r.status_code < 300 and "bigger than all the GPUs" in r.text and "own split" in r.text
+    r = client.put("/api/v1/instances/llm/models/gone", json={"id": "gone", "file": "/models/gone.gguf"})
+    assert r.status_code < 300 and "isn't in the models folder yet" in r.text

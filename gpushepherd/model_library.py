@@ -288,24 +288,18 @@ def _gpus(n: int) -> str:
 
 
 def offload(s: Suggestion, gpu_mem_gb: list[float]) -> list[OffloadRule]:
-    """GPU / RAM rules for each number of GPUs the server may get. A MoE model that doesn't fit in
-    that many GPUs keeps enough of its expert layers in RAM (llama.cpp keeps the rest on the GPUs);
-    raising or lowering the number on the Models page tunes it."""
+    """GPU / RAM rules for each number of GPUs the server may get. A MoE model gets none: llama.cpp
+    fits it to the GPUs' free memory itself, keeping just enough expert tensors in RAM and spreading
+    the rest evenly over the GPUs. (--n-cpu-moe turns that off and moves the experts of the first
+    layers, which all sit on the first GPU, so the last GPU overflowed.)"""
     if s.gpu_layers is not None:
         return [OffloadRule(min_gpus=1, gpu_layers=s.gpu_layers)]
-    if not s.layers or not gpu_mem_gb:
+    if not s.layers or not gpu_mem_gb or s.moe:
         return []
-    smallest = sorted(gpu_mem_gb)
-    if not s.moe:                            # dense: the layers that don't fit stay in RAM
-        rules = [OffloadRule(min_gpus=n, gpu_layers=None if sum(smallest[:n]) >= _need(s)
-                             else _dense_layers(s, sum(smallest[:n]))) for n in range(1, len(smallest) + 1)]
-        return [] if all(r.gpu_layers is None for r in rules) else rules
-    rules = []
-    for n in range(1, len(smallest) + 1):
-        vram = sum(smallest[:n])
-        moe = 0 if vram >= _need(s) else min(math.ceil(s.layers * _in_ram(s, vram) / s.model.gb), s.layers)
-        rules.append(OffloadRule(min_gpus=n, cpu_moe=moe))
-    return [] if all(r.cpu_moe == 0 for r in rules) else rules
+    smallest = sorted(gpu_mem_gb)            # dense: the layers that don't fit stay in RAM
+    rules = [OffloadRule(min_gpus=n, gpu_layers=None if sum(smallest[:n]) >= _need(s)
+                         else _dense_layers(s, sum(smallest[:n]))) for n in range(1, len(smallest) + 1)]
+    return [] if all(r.gpu_layers is None for r in rules) else rules
 
 
 def catalog_model(s: Suggestion, gpu_mem_gb: list[float], models_root: str = "/models",

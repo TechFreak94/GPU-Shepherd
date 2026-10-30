@@ -1,5 +1,5 @@
 from gpushepherd.config import GpuPolicy, Instance
-from gpushepherd.scheduler import plan
+from gpushepherd.scheduler import gpu_text, plan
 
 
 def inst(iid, mode="none", gpus=(), min_gpus=1, max_gpus=0, priority=50):
@@ -173,3 +173,38 @@ def test_missing_requirement_is_an_error():
 def test_requirement_cycle_does_not_hang():
     s = {"a": inst("a").model_copy(update={"requires": ["b"]}), "b": inst("b").model_copy(update={"requires": ["a"]})}
     assert sorted(plan(TWO, s, {}, "start", "a").to_start) == ["a", "b"]
+
+
+EIGHT = list(range(8))
+
+
+def test_eight_gpus_shared_by_pinned_capped_and_open_ended_instances():
+    s = {
+        "comfy-a": inst("comfy-a", "fixed", [0], priority=80),
+        "comfy-b": inst("comfy-b", "fixed", [7], priority=80),
+        "coder": inst("coder", "elastic", min_gpus=2, max_gpus=3, priority=60),
+        "llm": inst("llm", "elastic", min_gpus=1, priority=50),
+    }
+    p = plan(EIGHT, s, {}, "rebalance", extra_wanted=set(s))
+    assert p.allocations == {"comfy-a": [0], "comfy-b": [7], "coder": [1, 2, 3], "llm": [4, 5, 6]}
+    # a big server that needs most of the machine pushes the open-ended one down to its minimum
+    s["big"] = inst("big", "elastic", min_gpus=4, max_gpus=4, priority=90)
+    p = plan(EIGHT, s, p.allocations, "start", "big")
+    assert len(p.allocations["big"]) == 4 and p.allocations["coder"] == [1, 2]
+    assert "llm" in p.preempted          # 2 pinned + 4 + 2 = all eight
+    assert sorted(g for gs in p.allocations.values() for g in gs) == EIGHT
+
+
+def test_elastic_instances_get_neighbouring_gpus():
+    s = {"pin": inst("pin", "fixed", [2], priority=80), "x": inst("x", "elastic", min_gpus=3, max_gpus=3)}
+    p = plan([0, 1, 2, 3, 4, 5], s, {}, "rebalance", extra_wanted=set(s))
+    assert p.allocations["x"] == [0, 1, 3]
+    p = plan([0, 1, 2, 3, 4, 5], s, {"x": [3, 4]}, "rebalance", extra_wanted=set(s))
+    assert p.allocations["x"] == [3, 4, 5]                     # keeps its GPUs, grows next to them
+
+
+def test_gpu_text_shortens_runs():
+    assert gpu_text([]) == "no GPU" and gpu_text([3]) == "GPU 3"
+    assert gpu_text([0, 1]) == "GPUs 0,1"
+    assert gpu_text(EIGHT) == "GPUs 0-7"
+    assert gpu_text([6, 0, 1, 2, 4]) == "GPUs 0-2,4,6"

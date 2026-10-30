@@ -7,7 +7,8 @@ Pure functions, no Docker - easy to test. Rules:
    at the same priority.
 3. Fixed instances need exactly their GPUs. Elastic instances need `min_gpus` and only say
    *how many* GPUs they want, so they move aside instead of pushing a fixed instance out.
-4. Leftover GPUs go to elastic instances (highest priority first) up to their `max_gpus`.
+4. Leftover GPUs go to elastic instances (highest priority first) up to their `max_gpus`,
+   and no more than they can use (a model server whose models need fewer GPUs).
    Running instances keep the GPUs they already have where possible (no needless restarts).
 5. A running instance that can no longer get its minimum is stopped ("preempted").
    A running instance whose GPU set changes is restarted with the new GPUs.
@@ -74,11 +75,24 @@ class Plan:
 def gpu_text(gpus: list[int]) -> str:
     if not gpus:
         return "no GPU"
-    return ("GPU " if len(gpus) == 1 else "GPUs ") + ",".join(str(g) for g in gpus)
+    return ("GPU " if len(gpus) == 1 else "GPUs ") + gpu_list(gpus)
+
+
+def gpu_list(gpus: list[int]) -> str:
+    """GPU indices with runs of three or more shortened, as on a big machine: "0-3,6"."""
+    parts, run = [], []
+    for g in sorted(gpus) + [None]:
+        if run and (g is None or g != run[-1] + 1):
+            parts += [f"{run[0]}-{run[-1]}"] if len(run) > 2 else [str(x) for x in run]
+            run = []
+        if g is not None:
+            run.append(g)
+    return ",".join(parts)
 
 
 def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, list[int]],
-         action: str, target: str | None = None, extra_wanted: set[str] | None = None) -> Plan:
+         action: str, target: str | None = None, extra_wanted: set[str] | None = None,
+         usable: dict[str, int] | None = None) -> Plan:
     """Work out what has to happen.
 
     gpus         GPU indices present on the machine
@@ -87,6 +101,8 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
     action       start | stop | restart | rebalance
     target       the instance the action is about (None for rebalance)
     extra_wanted additional instances to bring up (used for autostart on boot)
+    usable       instance -> the most GPUs it can put to use (a model server whose models are
+                 small); an elastic instance grows no further than that, leaving the rest free
     """
     if action not in ACTIONS:
         raise ValueError(f"unknown action {action}")
@@ -112,7 +128,8 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
     wanted = with_requirements(instances, wanted)
 
     gpu_set = set(gpus)
-    allocations, dropped, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target, previous)
+    allocations, dropped, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target, previous,
+                                            usable or {})
     if error:
         result.error = error
         return result
@@ -164,7 +181,8 @@ def _priority_order(instances: dict[str, Instance], ids, target: str | None) -> 
 
 
 def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance], wanted: set[str],
-              target: str | None, current: dict[str, list[int]]) -> tuple[dict[str, list[int]], list[str], str]:
+              target: str | None, current: dict[str, list[int]],
+              usable: dict[str, int]) -> tuple[dict[str, list[int]], list[str], str]:
     """Two phases: first decide HOW MANY GPUs every instance gets (and who does not fit),
     then decide WHICH ones, keeping running instances on the GPUs they already have."""
     order = _priority_order(instances, wanted, target)
@@ -209,7 +227,7 @@ def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance]
         pol = instances[i].gpu
         if pol.mode != "elastic" or i not in counts:
             continue
-        cap = pol.max_gpus or len(gpus)
+        cap = min(pol.max_gpus or len(gpus), max(usable.get(i, len(gpus)), counts[i]))
         extra = min(spare, cap - counts[i])
         counts[i] += extra
         spare -= extra

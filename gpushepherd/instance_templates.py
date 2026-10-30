@@ -63,7 +63,7 @@ class Template:
     image: str
     container_port: int
     host_port: int
-    gpu: str                                   # "one", "all" or "none" (see GPU_CHOICES)
+    gpu: str                                   # "one", "all" or "none" (see gpu_choices())
     kind: str = "container"
     priority: int = 50
     open_path: str = "/"
@@ -263,6 +263,18 @@ GPU_CHOICES = {
     "all": "Every free GPU (splits a model across them), at least one",
     "none": "No GPU",
 }
+
+
+def gpu_choices(gpus: list) -> dict[str, str]:
+    """The GPU answers an install offers on a machine with these GPUs (gpu.Gpu): GPU_CHOICES, plus
+    "up:N" for each in-between count when there are 3 or more GPUs, and "pin:I" per GPU when there
+    are 2 or more."""
+    out = {"one": GPU_CHOICES["one"]}
+    out |= {f"up:{n}": f"Up to {n} free GPUs (splits a model across them), at least one" for n in range(2, len(gpus))}
+    out["all"] = GPU_CHOICES["all"]
+    if len(gpus) > 1:
+        out |= {f"pin:{g.index}": f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)" for g in gpus}
+    return out | {"none": GPU_CHOICES["none"]}
 
 OFFLOAD_CHOICES = {
     "auto": "Decide from the file size and your GPUs",
@@ -526,7 +538,7 @@ def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Ca
         d["id"] = free_id(d["id"], set(m.instances) | {d["id"]})
     d |= {f"{BUNDLED_SLOT}_file": str(a.get(f"{BUNDLED_SLOT}_file", "")), "gpu": t.gpu}
     srv, models = build(t, d, m)
-    cat = Catalog(instance_id=srv.id, models=models)
+    cat = Catalog(instance_id=srv.id, models=models, fit_gpus=True)
     m.instances[srv.id] = srv
     m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": BUNDLED_SLOT if models else "",
                          "ctx": models[0].ctx_size if models else 0}
@@ -634,6 +646,8 @@ def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
         return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=1, priority=priority)
     if choice == "all":
         return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=0, priority=priority)
+    if choice.startswith("up:") and choice[3:].isdigit() and int(choice[3:]) >= 1:
+        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=int(choice[3:]), priority=priority)
     if choice.startswith("pin:") and choice[4:].isdigit():
         return GpuPolicy(mode="fixed", gpus=[int(choice[4:])], priority=priority)
     raise ConfigError(f"unknown GPU choice '{choice}'")

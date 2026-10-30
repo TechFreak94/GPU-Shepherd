@@ -135,6 +135,12 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         msg, password = svc.reset_login(iid, str(data.get("user") or ""), str(data.get("password") or ""))
         return {"message": msg, "password": password}
 
+    @r.post("/api/v1/instances/{iid}/tuning")
+    @handle
+    async def tuning_decide(request: Request, iid: str):
+        data = await body(request)
+        return {"message": svc.tuning_decide(iid, str(data.get("key", "")), str(data.get("action", "")))}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     async def instance_action(request: Request, iid: str, action: str):
@@ -190,7 +196,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         out = app_json(t, tpl.installed(m.instances)[t.key])
         out["answers"] = {k: answers.get(k) for k in tpl.answer_keys(t)}
         out["choices"] = {
-            "gpu": tpl.GPU_CHOICES | {f"pin:{g.index}": f"Always GPU {g.index} ({g.name})" for g in gpus},
+            "gpu": tpl.gpu_choices(gpus),
             "offload": tpl.OFFLOAD_CHOICES if tpl.slots(t) else {},
             "server": ({tpl.NEW_SERVER: "Install an LLM server with it"} | {k: v["name"] for k, v in m.servers.items()})
             if t.connects else {},
@@ -230,9 +236,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return {"models": [m.model_dump(mode="json") for m in cat.models],
                 "auto_aliases": [a.model_dump(mode="json") for a in cat.auto_aliases],
                 "settings": {"threads": cat.threads, "llama_server": cat.llama_server,
-                             "health_timeout": cat.health_timeout, "api_key": cat.api_key},
+                             "health_timeout": cat.health_timeout, "fit_gpus": cat.fit_gpus,
+                             "auto_tune": cat.auto_tune,
+                             "api_key": cat.api_key},
+                "placement": svc.placement(iid, cat),
                 "loaded": loaded, "loading": sorted(svc.loading.get(iid, set())), "error": err,
-                "files": files, "file_notes": notes, "missing": svc.missing_files(iid)}
+                "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
+                "start_failures": svc.start_failures(iid)}
 
     @r.put("/api/v1/instances/{iid}/models/{mid}")
     @handle
@@ -306,12 +316,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     async def server_settings(request: Request, iid: str):
         data = await body(request)
-        unknown = set(data) - {"threads", "llama_server", "health_timeout", "new_api_key"}
+        unknown = set(data) - {"threads", "llama_server", "health_timeout", "fit_gpus", "auto_tune", "new_api_key"}
         if unknown:
             raise Problem(f"unknown setting(s): {', '.join(sorted(unknown))}")
         return {"message": svc.server_settings(iid, threads=data.get("threads"), llama_server=data.get("llama_server"),
                                                health_timeout=data.get("health_timeout"),
+                                               fit_gpus=data.get("fit_gpus"), auto_tune=data.get("auto_tune"),
                                                new_key=bool(data.get("new_api_key")))}
+
+    @r.get("/api/v1/instances/{iid}/tuning")
+    @handle
+    def get_tuning(request: Request, iid: str):
+        return svc.tuning(iid)
 
     @r.put("/api/v1/instances/{iid}/auto-aliases")
     @handle

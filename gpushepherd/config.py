@@ -210,6 +210,7 @@ class CatalogModel(BaseModel):
     mtp_draft: str = ""                # separate mtp-*.gguf file, for models that ship it beside the model
     split_mode: Literal["layer", "row", "tensor"] = "layer"   # how a model is split over 2+ GPUs
     tensor_split: str = ""             # share of the model per GPU with 2+ GPUs, e.g. "8,12"; "" = by memory
+    gpus: int = Field(default=0, ge=0, le=64)   # GPUs it runs on; 0 = the fewest it fits (see placement.py)
     ttl: int = Field(default=0, ge=0, le=604_800)   # unload after this many idle seconds; 0 = stay loaded
     keep_loaded: bool = False          # stays loaded beside other models instead of swapping them out
     preload: bool = False              # loaded as soon as the server starts
@@ -297,6 +298,10 @@ class Catalog(BaseModel):
     threads: int = Field(default=0, ge=0, le=512)        # 0 = physical cores
     llama_server: str = ""                               # path inside the image; "" = detect
     health_timeout: int = Field(default=900, ge=15, le=7200)
+    # models use only the GPUs they need (placement.py); None = not chosen yet: off, and offered
+    # as a suggestion (tuning.py). New servers start with it on.
+    fit_gpus: bool | None = None
+    auto_tune: bool = False                              # apply tuning suggestions without asking
     models: list[CatalogModel] = []
     auto_aliases: list[AutoAlias] = []
 
@@ -478,7 +483,7 @@ class Store:
     def catalog(self, iid: str) -> Catalog:
         path = self.catalog_path(iid)
         if not path.exists():
-            cat = Catalog(instance_id=iid)
+            cat = Catalog(instance_id=iid, fit_gpus=True)
             self.save_catalog(cat)
             return cat
         return _load(path, Catalog)

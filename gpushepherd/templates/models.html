@@ -22,7 +22,7 @@
 {% endif %}
 {% if models_error %}<div class="notice error">{{ models_error }}</div>{% endif %}
 
-<div class="card scroll">
+<div class="card scroll" id="catalog" {% if loading %}hx-get="/instances/{{ inst.id }}/models" hx-select="#catalog" hx-swap="outerHTML" hx-trigger="every 3s"{% endif %}>
   <table class="table">
     <thead><tr><th>Model</th><th>File</th><th>Context</th><th>Names</th><th>Status</th><th></th></tr></thead>
     <tbody>
@@ -30,14 +30,17 @@
       <tr>
         <td><strong>{{ m.name or m.id }}</strong><div class="mono muted">{{ m.id }}</div></td>
         <td class="mono" style="overflow-wrap:anywhere">{{ m.file }}
-          {% if missing.get(m.id) %}<div class="small warn-text" style="font-family:inherit">Not in the models folder, so it can't load: {{ missing[m.id]|join(", ") }}. Download it, or fix the path with Edit.</div>{% endif %}</td>
-        <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span></td>
+          {% if missing.get(m.id) %}<div class="small warn-text" style="font-family:inherit">Not in the models folder, so it can't load: {{ missing[m.id]|join(", ") }}. Download it, or fix the path with Edit.</div>{% endif %}
+          {% if failures.get(m.id) and m.id not in loaded %}<div class="small warn-text" style="font-family:inherit">Didn't start: {{ failures[m.id] }}</div>{% endif %}</td>
+        <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span>
+          {% if running and placement.get(m.id) %}<br><span class="muted">Runs on {{ gpu_text(placement[m.id]) }}</span>{% endif %}</td>
         <td class="small">{% for a in m.aliases %}<span class="tag">{{ a }}</span>{% endfor %}
           {% for alias, target in resolved.items() if target == m.id %}<span class="tag accent">{{ alias }}</span>{% endfor %}</td>
         <td class="small">
           {% if m.id in loading %}<span class="busy-t">loading…</span>
           {% elif m.id in loaded %}<span class="pill on">loaded</span>
           {% elif missing.get(m.id) %}<span class="warn-text">file missing</span>
+          {% elif failures.get(m.id) %}<span class="warn-text">failed to start</span>
           {% elif running %}<span class="muted">not loaded</span>{% else %}<span class="muted">-</span>{% endif %}
         </td>
         <td><div class="btns" style="justify-content:flex-end">
@@ -54,6 +57,35 @@
     {% endfor %}
     </tbody>
   </table>
+</div>
+
+<h3>Suggested adjustments</h3>
+<div class="card">
+  <p class="small muted" style="margin-top:0">Worked out from how your models ran here: the GPU memory they used and how fast they answered. Nothing changes until you apply one. Changes take effect when the server restarts.</p>
+  {% for t in tuning %}
+  <div class="row" style="justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;{{ 'margin-top:12px' if not loop.first }}">
+    <div style="flex:1 1 280px">
+      <strong>{{ t.title }}</strong>
+      {% if t.status == "new" %}<span class="tag accent">Suggested</span>
+      {% elif t.status == "applied" %}<span class="tag">Applied{{ " " ~ t.at if t.at }}</span>
+      {% else %}<span class="tag">Dismissed</span>{% endif %}
+      <div class="small muted">{{ t.reason }}</div>
+    </div>
+    <form class="btns" hx-post="/instances/{{ inst.id }}/tuning">
+      <input type="hidden" name="key" value="{{ t.key }}">
+      {% if t.status == "new" %}
+        <button class="primary" type="submit" name="action" value="apply">Apply</button>
+        <button type="submit" name="action" value="dismiss">Dismiss</button>
+      {% elif t.status == "applied" %}
+        <button type="submit" name="action" value="undo">Undo</button>
+      {% else %}
+        <button type="submit" name="action" value="apply">Apply</button>
+      {% endif %}
+    </form>
+  </div>
+  {% else %}
+  <p class="small muted" style="margin:0">No suggestions yet. They appear once the models have run for a while.</p>
+  {% endfor %}
 </div>
 
 <h3>Suggested models</h3>
@@ -114,6 +146,10 @@
     <div><label for="llama_server">llama-server path in the image</label><input type="text" id="llama_server" name="llama_server" value="{{ cat.llama_server }}" placeholder="detected on first start">
     </div>
   </div>
+  <label class="check" style="margin-top:12px"><input type="checkbox" name="fit_gpus" {{ "checked" if cat.fit_gpus }}> Use only the GPUs each model needs</label>
+  <div class="hint">A model runs on the fewest GPUs that hold it, and the server leaves GPUs its models can't use free for other apps. Off: every model is split over all the server's GPUs.</div>
+  <label class="check" style="margin-top:12px"><input type="checkbox" name="auto_tune" {{ "checked" if cat.auto_tune }}> Apply suggested adjustments by itself</label>
+  <div class="hint">Off: they wait for you below. Applied ones stay listed, so you can undo them.</div>
   <div style="margin-top:12px"><label>API key</label><div class="mono" style="overflow-wrap:anywhere">{{ cat.api_key }}</div>
     <div class="hint">Clients send it as "Authorization: Bearer …". Base URL: http://&lt;server&gt;:{{ (inst.ports|selectattr('container', 'equalto', 8080)|map(attribute='host')|first) or "port" }}/v1 - other instances use http://{{ inst.id }}:8080/v1</div>
     <label class="check" style="margin-top:8px"><input type="checkbox" name="new_key"> Generate a new key (clients must be updated)</label></div>

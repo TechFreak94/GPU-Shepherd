@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from . import gguf
 from .config import Catalog, CatalogModel, Instance
 
 GB = 1e9
@@ -94,6 +95,16 @@ def model_size(inst: Instance, m: CatalogModel) -> int:
     return sum(file_size(inst, f) for f in (m.file, m.mmproj, m.mtp_draft) if f)
 
 
+def model_memory(inst: Instance, m: CatalogModel) -> int:
+    """GPU memory a model needs to run whole on the GPUs: its weights (and MTP draft; the vision
+    projector stays in RAM) plus its context's KV cache. 0 if its file isn't there."""
+    weights = sum(file_size(inst, f) for f in (m.file, m.mtp_draft) if f)
+    if not weights:
+        return 0
+    p = host_path(inst, m.file)
+    return weights + gguf.kv_bytes(str(p) if p else "", m.ctx_size, m.kv_cache)
+
+
 def loaded_together(cat: Catalog, sizes: dict[str, int]) -> list[CatalogModel]:
     """The models that can be loaded at once: the ones kept loaded, plus the biggest of the rest."""
     kept = [m for m in cat.models if m.keep_loaded]
@@ -124,15 +135,34 @@ def ram_needed(inst: Instance, cat: Catalog | None, gpus: int, vram: int, peak: 
 
 
 def too_big(inst: Instance, cat: Catalog, gpus: int, vram: int) -> list[str]:
-    """Models that won't fit the GPUs they get and have no setting to keep part of them in RAM."""
+    """Models that won't fit the GPUs they get and have no setting to keep part of them in RAM.
+    llama.cpp then keeps what doesn't fit in RAM by itself, which only a MoE model runs well with."""
     out = []
     for m in cat.models:
         size = model_size(inst, m)
         if size and vram and size > VRAM_USABLE * vram and not m.offload_for(gpus) and m.role == "chat":
             out.append(f"{m.id} ({size / GB:.1f} GB) is bigger than the GPU memory {inst.name} gets with "
-                       f"{gpus} GPU{'s' if gpus != 1 else ''} ({vram / GB:.1f} GB) and has no RAM offload "
-                       f"setting for that, so it will fail to load. Add one on its Models page.")
+                       f"{gpus} GPU{'s' if gpus != 1 else ''} ({vram / GB:.1f} GB): llama.cpp keeps the rest in "
+                       f"system RAM, so it answers slowly unless it is a mixture-of-experts model.")
     return out
+
+
+def model_check(name: str, size: int, gpu_mem: list[int], ram: int, cpu_moe: bool = False) -> tuple[str, list[str]]:
+    """Checks for a model added by hand, `size` bytes of files on a machine with `gpu_mem` bytes per
+    GPU and `ram` bytes of RAM (0 = unknown). Returns why it can't load here at all ("" if it can)
+    and warnings about how it will run."""
+    vram, notes = VRAM_USABLE * sum(gpu_mem), []
+    if size and ram and size > vram + ram - HEADROOM - OVERHEAD:
+        return (f"{name} is {gb(size)}, more than this machine can hold: about {gb(vram)} of GPU memory "
+                f"and {gb(max(ram - HEADROOM - OVERHEAD, 0))} of free system RAM. Pick a smaller quantization "
+                "(a lower Q number) of it."), []
+    if size and gpu_mem and size > vram:
+        notes.append(f"{name} ({gb(size)}) is bigger than all the GPUs hold ({gb(vram)}): llama.cpp keeps the "
+                     "rest in system RAM, so it answers slowly unless it is a mixture-of-experts model.")
+    if cpu_moe and len(gpu_mem) > 1:
+        notes.append(f"{name}'s experts-in-RAM setting turns off llama.cpp's own split across the GPUs and can run "
+                     "the last GPU out of memory. Leave the GPU / RAM split empty unless it doesn't load without it.")
+    return "", notes
 
 
 def gb(n: float) -> str:

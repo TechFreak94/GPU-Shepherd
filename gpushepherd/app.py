@@ -55,6 +55,9 @@ class DemoLlamaClient:
     def unload(self, model=None):
         DemoLlamaClient.loaded.clear()
 
+    def metrics(self, wait=0):
+        return []
+
 
 def with_msg(path: str, msg: str) -> str:
     """A page address that shows `msg` as a notice. Encoded: headers only take latin-1, and the
@@ -243,6 +246,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     "waiting": (jobs.current.waiting.get(inst.id) if jobs.current else None)}
             if cat is not None:
                 card["model_count"] = len(cat.models)
+                try:
+                    card["tuning_new"] = sum(1 for s in svc.tuning(inst.id) if s["status"] == "new")
+                except Exception:  # noqa: BLE001 - only a hint
+                    card["tuning_new"] = 0
                 if card["running"]:
                     card["aliases"] = llamaswap.resolved_aliases(cat, len(gpus))
                     try:
@@ -476,9 +483,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         have = {x["container_path"] for x in files}
         files = [x for x in files if not x["name"].startswith(("mmproj", "mtp-"))]   # these go with a model
         gpus = engine.snapshot().gpus
-        choices = [(k, v) for k, v in tpl.GPU_CHOICES.items()]
-        choices[-1:-1] = [(f"pin:{g.index}", f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)")
-                          for g in gpus] if len(gpus) > 1 else []
+        choices = list(tpl.gpu_choices(gpus).items())
         comfy = [(i.id, i.name) for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"]
         keys = {sl.key for sl in tpl.slots(t)}
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
@@ -639,9 +644,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
+                "failures": svc.start_failures(iid),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
-                "preview": llamaswap.render(cat, preview_gpus, threads),
+                "preview": llamaswap.render(cat, preview_gpus, threads,
+                                            engine.placement(inst, cat, st.gpus if running else
+                                                             [g.index for g in engine.snapshot().gpus])),
+                "placement": svc.placement(iid, cat), "tuning": svc.tuning(iid),
                 "pending": bool(running and st.config_hash != engine.config_hash(inst)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
 
@@ -744,7 +753,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         f = {k: str(raw.get(k, "")) for k in ("id", "name", "description", "file", "ctx_size", "parallel",
                                                "sampling", "extra_args", "kv_cache", "mmproj", "aliases_text",
                                                "role", "thinking", "mtp", "mtp_draft", "split_mode", "tensor_split",
-                                               "ttl")}
+                                               "ttl", "gpus")}
         f |= {k: raw.get(k) == "on" for k in ("keep_loaded", "preload")}
         posted = posted_offload(raw)
         f["offload_rows"] = offload_rows(posted)
@@ -758,6 +767,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                  offload=offload_rules(posted), role=f["role"] or "chat",
                                  thinking=f["thinking"] or "auto", mtp=int(f["mtp"] or 0), mtp_draft=f["mtp_draft"],
                                  split_mode=f["split_mode"] or "layer", tensor_split=f["tensor_split"],
+                                 gpus=int(f["gpus"] or 0),
                                  ttl=int(f["ttl"] or 0), keep_loaded=f["keep_loaded"], preload=f["preload"])
             msg = svc.save_model(iid, model, original)
         except (Problem, ValueError, ConfigError) as err:
@@ -785,17 +795,31 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             if op == "unload":
                 return toast(Response(status_code=204, headers={"HX-Trigger-After-Settle": "refresh"}),
                              svc.unload_model(iid, mid))
-            return toast(Response(status_code=204), svc.load_model(iid, mid))
+            # back to the page, which follows the load until it is done or has failed
+            return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models",
+                                                                              svc.load_model(iid, mid))})
         except Problem as err:
             return problem(err)
+
+    @app.post("/instances/{iid}/tuning")
+    async def tuning_decide(request: Request, iid: str):
+        raw = await request.form()
+        try:
+            msg = svc.tuning_decide(iid, str(raw.get("key", "")), str(raw.get("action", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/catalog/settings")
     async def catalog_settings(request: Request, iid: str):
         raw = await request.form()
         try:
+            unset = svc.server(iid)[1].fit_gpus is None    # left unticked: still offered as a suggestion
             msg = svc.server_settings(iid, threads=int(raw.get("threads") or 0),
                                       llama_server=str(raw.get("llama_server", "")),
                                       health_timeout=int(raw.get("health_timeout") or 900),
+                                      fit_gpus=True if raw.get("fit_gpus") == "on" else None if unset else False,
+                                      auto_tune=raw.get("auto_tune") == "on",
                                       new_key=raw.get("new_key") == "on")
         except ValueError:
             return toast(Response(status_code=204), "Threads and the start-up wait are whole numbers.", "error")
@@ -984,5 +1008,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 jobs.submit("Autostart", lambda job: engine.execute(p, job, job))
         except Exception as err:  # noqa: BLE001
             log.warning("autostart skipped: %s", err)
+    if autostart is not False:            # tests turn the background work off
+        svc.start_measuring()
 
     return app

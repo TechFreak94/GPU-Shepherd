@@ -351,6 +351,12 @@ def test_models_added_from_a_link_download_like_suggested_ones(run, stack, tmp_p
     assert code == 0 and "Added tiny-chat-q8-0" in text, text
     assert client.post("/api/v1/instances/llm/suggestions/tiny-chat-q8-0/forget").status_code == 200
     assert "tiny-chat-q8-0" not in (data / "linked-models.yaml").read_text()
+    from gpushepherd import host
+    monkeypatch.setattr(host, "ram_gb", lambda: 32.0)
+    monkeypatch.setattr(service, "_remote_gb", lambda url: 400.0)      # far more than GPUs + RAM
+    r = client.post(base, json={"url": f"{hf}/resolve/main/Huge-Q8_0.gguf"})
+    assert r.status_code == 422 and "more than this machine can hold" in r.json()["error"]
+    assert not any(x["key"].startswith("huge") for x in client.get("/api/v1/instances/llm/suggestions").json())
 
 
 def test_delete_moves_an_app_and_its_database_to_the_trash(stack):
