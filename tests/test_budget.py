@@ -121,6 +121,7 @@ def test_hand_added_models_are_checked(tmp_path, monkeypatch):
     monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
     monkeypatch.setenv("SHEPHERD_ADMIN_PASSWORD", "correct-horse")
     monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    monkeypatch.setattr(gpu_mod, "query", lambda max_age=2.0: (gpu_mod._fake("2x8192:Test GPU"), ""))
     monkeypatch.setattr(host, "ram_gb", lambda: 32.0)
     models = tmp_path / "models"
     sparse(models / "huge.gguf", 60 * GB)

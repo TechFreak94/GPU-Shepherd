@@ -20,9 +20,11 @@
     <div class="fields">
       <div><label for="name">Name</label><input type="text" id="name" name="name" value="{{ f.name or '' }}" required placeholder="ComfyUI"></div>
       <div><label for="id">ID</label><input type="text" id="id" name="id" value="{{ f.id or '' }}" {{ "readonly" if editing }} required pattern="[a-z0-9][a-z0-9-]{0,39}" placeholder="comfyui">
-        <div class="hint">Lowercase, digits, dashes. Other containers reach it as http://<em>id</em>:port.</div></div>
-      <div><label for="image">Image</label><input type="text" id="image" name="image" value="{{ f.image or '' }}" required placeholder="ghcr.io/org/app:tag"></div>
-      <div><label for="description">Description</label><input type="text" id="description" name="description" value="{{ f.description or '' }}"></div>
+        <div class="hint">A short label for this app: lowercase letters, digits and dashes. It can't be changed later. Other apps on this machine reach it at http://<em>id</em>:port.</div></div>
+      <div><label for="image">Docker image</label><input type="text" id="image" name="image" value="{{ f.image or '' }}" required placeholder="ghcr.io/org/app:tag">
+        <div class="hint">The packaged app to run, as listed by its maker (for example on Docker Hub). It downloads the first time you start it.</div></div>
+      <div><label for="description">Note (optional)</label><input type="text" id="description" name="description" value="{{ f.description or '' }}">
+        <div class="hint">Shown on the dashboard card, to remind you what this is for.</div></div>
     </div>
   </div>
 
@@ -32,44 +34,46 @@
       <div><label for="gpu_mode">GPU use</label>
         <select id="gpu_mode" name="gpu_mode">
           <option value="none" {{ "selected" if f.gpu_mode == "none" }}>No GPU</option>
-          <option value="fixed" {{ "selected" if f.gpu_mode == "fixed" }}>Fixed - always these GPUs</option>
-          <option value="elastic" {{ "selected" if f.gpu_mode == "elastic" }}>Elastic - grows into free GPUs, makes room when needed</option>
+          <option value="fixed" {{ "selected" if f.gpu_mode == "fixed" }}>Fixed - always the same GPUs</option>
+          <option value="elastic" {{ "selected" if f.gpu_mode == "elastic" }}>Flexible - uses spare GPUs, gives them up when another app needs them</option>
         </select>
-        <div class="hint">ComfyUI-style apps: fixed. LLM servers that can split across GPUs: elastic.</div></div>
-      <div data-gpu-mode="fixed elastic"><label for="priority">Priority (0-100)</label>
+        <div class="hint">Pick "No GPU" for apps that don't need one (chat screens, databases). Image apps like ComfyUI work best with fixed GPUs. Chat model servers can be flexible: they use whatever GPUs are free.</div></div>
+      <div data-gpu-mode="fixed elastic"><label for="priority">Importance (0-100)</label>
         <input type="number" id="priority" name="priority" min="0" max="100" value="{{ f.priority }}">
-        <div class="hint">When GPUs run short, higher priority keeps its GPUs. The instance you start always wins.</div></div>
+        <div class="hint">When two apps want the same GPU, the higher number keeps it. If you start an app yourself, it always gets its GPUs.</div></div>
     </div>
     <div data-gpu-mode="fixed elastic" style="margin-top:12px">
-      <label><span data-gpu-mode="fixed">Use GPUs</span><span data-gpu-mode="elastic">Preferred GPUs (optional)</span></label>
+      <label><span data-gpu-mode="fixed">Use GPUs</span><span data-gpu-mode="elastic">Preferred GPUs (optional, leave empty to let GPU Shepherd choose)</span></label>
       <div class="checks">
         {% for n in gpu_indices %}<label class="check"><input type="checkbox" name="gpu_list" value="{{ n }}" {{ "checked" if n in (f.gpu_list or []) }}> GPU {{ n }}</label>{% endfor %}
       </div>
     </div>
     <div class="fields" data-gpu-mode="elastic" style="margin-top:12px">
-      <div><label for="min_gpus">Minimum GPUs</label><input type="number" id="min_gpus" name="min_gpus" min="1" max="64" value="{{ f.min_gpus }}"></div>
+      <div><label for="min_gpus">Minimum GPUs</label><input type="number" id="min_gpus" name="min_gpus" min="1" max="64" value="{{ f.min_gpus }}">
+        <div class="hint">It won't start with fewer GPUs than this.</div></div>
       <div><label for="max_gpus">Maximum GPUs</label><input type="number" id="max_gpus" name="max_gpus" min="0" max="64" value="{{ f.max_gpus }}">
-        <div class="hint">0 = no limit.</div></div>
+        <div class="hint">It never takes more than this. 0 = as many as are free.</div></div>
     </div>
   </div>
 
   <div class="section">
     <h3 style="margin-top:0">Network and storage</h3>
     <div class="fields">
-      <div><label for="ports">Ports (host:container, one per line)</label>
-        <textarea id="ports" name="ports" placeholder="8188:8188">{{ f.ports or '' }}</textarea></div>
-      <div><label for="volumes">Folders (/host/path:/container/path[:ro], one per line)</label>
+      <div><label for="ports">Ports (one per line, as outside:inside)</label>
+        <textarea id="ports" name="ports" placeholder="8188:8188">{{ f.ports or '' }}</textarea>
+        <div class="hint">The port number you type in the browser, then the port the app uses inside its container. If unsure, use the same number twice, like 8188:8188.</div></div>
+      <div><label for="volumes">Folders to share with the app (one per line, as your folder:app folder)</label>
         <textarea id="volumes" name="volumes" placeholder="/srv/comfyui/models:/opt/ComfyUI/models">{{ f.volumes or '' }}</textarea>
-        <div class="hint">{% if f.kind == "llama-swap" %}Mount your model folder at /models. {% endif %}Host paths must already exist.</div></div>
+        <div class="hint">{% if f.kind == "llama-swap" %}Mount your model folder at /models. {% endif %}Add :ro at the end to make a folder read-only. The folder on your machine must already exist.</div></div>
     </div>
   </div>
 
   <div class="section">
     <h3 style="margin-top:0">Command and environment</h3>
     <div class="fields">
-      <div><label for="command">Command (optional)</label><input type="text" id="command" name="command" value="{{ f.command or '' }}" placeholder="gateway run">
-        <div class="hint">Leave empty to use the image's default.</div></div>
-      <div><label for="env">Environment (NAME=value, one per line)</label>
+      <div><label for="command">Start command (optional)</label><input type="text" id="command" name="command" value="{{ f.command or '' }}" placeholder="gateway run">
+        <div class="hint">Leave empty unless the app's instructions give you a command to use.</div></div>
+      <div><label for="env">Settings the app reads (one per line, as NAME=value)</label>
         <textarea id="env" name="env" placeholder="TZ=America/New_York">{{ f.env or '' }}</textarea></div>
     </div>
   </div>
@@ -78,46 +82,50 @@
     <h3 style="margin-top:0">Behaviour</h3>
     <div class="fields">
       <div><label class="check"><input type="checkbox" name="autostart" {{ "checked" if f.autostart }}> Start automatically when GPU Shepherd starts</label></div>
-      <div><label for="open_port">"Open" button port</label><input type="number" id="open_port" name="open_port" min="1" max="65535" value="{{ f.open_port or '' }}" placeholder="first port">
+      <div><label for="open_port">Port the Open button uses</label><input type="number" id="open_port" name="open_port" min="1" max="65535" value="{{ f.open_port or '' }}" placeholder="first port">
+        <div class="hint">The Open button on the dashboard opens this app's web page. Leave empty to use the first port above.</div>
       </div>
-      <div><label for="open_path">"Open" button path</label><input type="text" id="open_path" name="open_path" value="{{ f.open_path or '/' }}"></div>
-      <div><label for="requires">Starts with</label><input type="text" id="requires" name="requires" value="{{ f.requires or '' }}" placeholder="librechat-mongodb">
-        <div class="hint">IDs of instances it needs, such as its database, separated by commas. Starting it starts them first; stopping it stops them unless something else running needs them.</div></div>
+      <div><label for="open_path">Page the Open button goes to</label><input type="text" id="open_path" name="open_path" value="{{ f.open_path or '/' }}"></div>
+      <div><label for="requires">Needs these apps (optional)</label><input type="text" id="requires" name="requires" value="{{ f.requires or '' }}" placeholder="librechat-mongodb">
+        <div class="hint">The IDs of other apps this one depends on, such as its database, separated by commas. They start first when you start this one, and stop with it unless something else still uses them.</div></div>
     </div>
-    <details style="margin-top:12px"><summary>Advanced</summary>
+    <details style="margin-top:12px"><summary>Advanced (most apps need none of these)</summary>
       <div class="fields" style="margin-top:10px">
-        <div><label for="shm_size">Shared memory</label><input type="text" id="shm_size" name="shm_size" value="{{ f.shm_size or '' }}" placeholder="1g"></div>
-        <div><label for="user_spec">Run as user</label><input type="text" id="user_spec" name="user_spec" value="{{ f.user_spec or '' }}" placeholder="1000:1000"></div>
-        <div><label for="memory_limit">Memory limit</label><input type="text" id="memory_limit" name="memory_limit" value="{{ f.memory_limit or '' }}" placeholder="4g"></div>
+        <div><label for="shm_size">Shared memory</label><input type="text" id="shm_size" name="shm_size" value="{{ f.shm_size or '' }}" placeholder="1g">
+          <div class="hint">Set this if the app's instructions ask for it. Image apps often need a few GB.</div></div>
+        <div><label for="user_spec">Run as user</label><input type="text" id="user_spec" name="user_spec" value="{{ f.user_spec or '' }}" placeholder="1000:1000">
+          <div class="hint">Which user (id:group) owns the files the app writes. Empty = the image's default.</div></div>
+        <div><label for="memory_limit">Memory limit</label><input type="text" id="memory_limit" name="memory_limit" value="{{ f.memory_limit or '' }}" placeholder="4g">
+          <div class="hint">The most system RAM the app may use, like 8g. Empty = no limit.</div></div>
       </div>
     </details>
   </div>
 
   <div class="section">
-    <h3 style="margin-top:0">Before stopping</h3>
+    <h3 style="margin-top:0">Before stopping (finish current work)</h3>
     <p class="small muted" style="margin-top:0">When a GPU swap, a restart or Stop would stop this instance, GPU Shepherd first waits for the work it is doing (a chat answer, queued images) to finish, so nothing is cut off half way.</p>
     <div class="fields">
       <div><label for="drain_check">Wait for running work</label>
         <select id="drain_check" name="drain_check">
-          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "llama-swap requests"), ("llama-server", "llama.cpp server slots (/slots)"), ("comfyui", "ComfyUI queue (/queue)"), ("http", "Custom - ask an HTTP address"), ("none", "Don't wait")] %}
+          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "LLM server (llama-swap): chat answers in progress"), ("llama-server", "llama.cpp server: requests in progress"), ("comfyui", "ComfyUI: images in the queue"), ("http", "Custom - ask a web address"), ("none", "Don't wait")] %}
           <option value="{{ v }}" {{ "selected" if (f.drain_check or "auto") == v }}>{{ label }}</option>{% endfor %}
         </select>
-        <div class="hint">Automatic knows llama-swap, ComfyUI and llama.cpp server images; anything else is not waited for.</div></div>
+        <div class="hint">Automatic works for the LLM server and ComfyUI apps. Any other app is stopped straight away.</div></div>
       <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_timeout">Wait at most (seconds)</label>
         <input type="number" id="drain_timeout" name="drain_timeout" min="0" max="86400" value="{{ f.drain_timeout if f.drain_timeout is not none and f.drain_timeout != '' else 600 }}">
         <div class="hint">0 = don't wait. Long video or batch jobs may need more.</div></div>
-      <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_on_timeout">If it is still busy then</label>
+      <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_on_timeout">If it is still busy after that</label>
         <select id="drain_on_timeout" name="drain_on_timeout">
           <option value="stop" {{ "selected" if f.drain_on_timeout != "cancel" }}>Stop it anyway</option>
           <option value="cancel" {{ "selected" if f.drain_on_timeout == "cancel" }}>Call the change off</option>
         </select></div>
     </div>
     <div class="fields" data-drain-check="http llama-server comfyui" style="margin-top:12px">
-      <div><label for="drain_port">Container port to ask</label><input type="number" id="drain_port" name="drain_port" min="1" max="65535" value="{{ f.drain_port or '' }}" placeholder="default">
+      <div><label for="drain_port">App port to ask</label><input type="number" id="drain_port" name="drain_port" min="1" max="65535" value="{{ f.drain_port or '' }}" placeholder="default">
         <div class="hint">Default: 8188 for ComfyUI, 8080 for llama.cpp, else the first port.</div></div>
       <div data-drain-check="http"><label for="drain_path">Path</label><input type="text" id="drain_path" name="drain_path" value="{{ f.drain_path or '' }}" placeholder="/status"></div>
-      <div data-drain-check="http"><label for="drain_key">JSON field with the work left</label><input type="text" id="drain_key" name="drain_key" value="{{ f.drain_key or '' }}" placeholder="queue.running">
-        <div class="hint">A number, list or true/false; dots go deeper. Empty = the whole answer.</div></div>
+      <div data-drain-check="http"><label for="drain_key">Name of the field that shows work left</label><input type="text" id="drain_key" name="drain_key" value="{{ f.drain_key or '' }}" placeholder="queue.running">
+        <div class="hint">For a custom check: the part of the answer that is 0, empty or false when the app is idle. Use dots to go deeper, like queue.running. Empty = the whole answer.</div></div>
     </div>
   </div>
 

@@ -28,9 +28,9 @@
 {% macro slot_fields(slots, f, with_ctx) %}
 {% for sl in slots %}
 <div class="fields slot">
-  <div><label for="{{ sl.key }}_file">{{ sl.label }} <span class="tag accent" title="Clients ask for it by this name">{{ sl.alias }}</span></label>
+  <div><label for="{{ sl.key }}_file">{{ sl.label }} <span class="tag accent" title="Clients ask for it by this tag">{{ sl.alias }}</span></label>
     <input type="text" id="{{ sl.key }}_file" name="{{ sl.key }}_file" value="{{ f[sl.key ~ '_file'] }}" placeholder="/models/model-Q4_K_M.gguf">
-    <div class="hint">{{ sl.hint }} Clients ask for it as <span class="mono">{{ sl.alias }}</span>.</div></div>
+    <div class="hint">{{ sl.hint }} Clients ask for it by the tag <span class="mono">{{ sl.alias }}</span>.</div></div>
   {% if with_ctx %}<div><label for="{{ sl.key }}_ctx">Context (tokens)</label><input type="number" id="{{ sl.key }}_ctx" name="{{ sl.key }}_ctx" min="512" value="{{ f[sl.key ~ '_ctx'] }}"></div>{% endif %}
 </div>
 {% endfor %}
@@ -54,11 +54,11 @@
     <h3 style="margin-top:0"><span class="step"></span>Name and address</h3>
     <div class="fields">
       <div><label for="name">Name</label><input type="text" id="name" name="name" value="{{ f.name }}" required>
-        <div class="hint">Shown on the dashboard.</div></div>
+        <div class="hint">What you want to call it. Shown on the dashboard.</div></div>
       <div><label for="id">ID</label><input type="text" id="id" name="id" value="{{ f.id }}" required pattern="[a-z0-9][a-z0-9-]{0,39}">
-        <div class="hint">Other containers reach it as <span class="mono">http://{{ f.id or "id" }}:{{ t.container_port }}</span>.</div></div>
-      <div><label for="port">Port on this machine</label><input type="number" id="port" name="port" min="1" max="65535" value="{{ f.port }}" required>
-        <div class="hint">Open it at http://<em>this machine</em>:<em>port</em>{{ t.open_path if t.open_path != "/" }}. A free port is suggested.</div></div>
+        <div class="hint">A short label (lowercase letters, digits, dashes) that can't be changed later. Other apps on this machine reach it at <span class="mono">http://{{ f.id or "id" }}:{{ t.container_port }}</span>.</div></div>
+      <div><label for="port">Port (the number you type in the browser)</label><input type="number" id="port" name="port" min="1" max="65535" value="{{ f.port }}" required>
+        <div class="hint">Open it at http://<em>this machine</em>:<em>port</em>{{ t.open_path if t.open_path != "/" }}. A free port is already filled in; change it only if you want a different one.</div></div>
     </div>
   </div>
 
@@ -70,7 +70,7 @@
       <label class="check"><input type="radio" name="gpu" value="{{ value }}" {{ "checked" if f.gpu == value }}> {{ label }}{% if value == t.gpu %} <span class="tag accent">recommended</span>{% endif %}</label>
       {% endfor %}
     </fieldset>
-    <div class="hint">{% if gpus %}This machine has {{ gpus|length }} GPU{{ "s" if gpus|length != 1 }}. {% endif %}When GPUs run short, {{ "this instance outranks model servers" if t.priority > 50 else "higher-priority instances keep theirs" }}; you are asked before anything is stopped. Priority and GPU limits can be changed later under Edit.</div>
+    <div class="hint">{% if gpus %}This machine has {{ gpus|length }} GPU{{ "s" if gpus|length != 1 }}. {% endif %}When two apps want the same GPU, {{ "this app wins over model servers" if t.priority > 50 else "the more important app keeps its GPU" }}. You are asked before anything is stopped. You can change this later under Edit.</div>
   </div>
 
   {% if t.models_mount or t.appdata %}
@@ -78,14 +78,14 @@
     <h3 style="margin-top:0"><span class="step"></span>Folders</h3>
     <div class="fields">
       {% if t.models_mount %}
-      <div><label for="models_dir">Models folder on this machine</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}" required>
+      <div><label for="models_dir">Folder where your models are kept</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}" required>
         <div class="hint">{% if t.models_mount[0] %}Mounted from its <span class="mono">{{ t.models_mount[0] }}/</span> subfolder at <span class="mono">{{ t.models_mount[1] }}</span>.{% else %}Mounted read-only at <span class="mono">{{ t.models_mount[1] }}</span>.{% endif %}</div></div>
       {% endif %}
       {% if t.appdata %}
-      <div><label for="appdata_dir">App data folder</label><input type="text" id="appdata_dir" name="appdata_dir" value="{{ f.appdata_dir }}" required>
+      <div><label for="appdata_dir">Folder for this app's saved data</label><input type="text" id="appdata_dir" name="appdata_dir" value="{{ f.appdata_dir }}" required>
         {% set keeps = namespace(items=t.appdata|map('first')|list + t.files|map('first')|list) %}
         {% for c in companions %}{% set keeps.items = keeps.items + (c.appdata|map('first')|list) %}{% endfor %}
-        <div class="hint">Keeps {{ keeps.items|join(', ') }} when the container is re-created.</div></div>
+        <div class="hint">Keeps {{ keeps.items|join(', ') }} safe when the app is updated or rebuilt.</div></div>
       {% endif %}
     </div>
   </div>
@@ -97,7 +97,7 @@
     <div class="fields">
       <div><label for="login_user">User name</label><input type="text" id="login_user" name="login_user" value="{{ f.login_user }}" required autocomplete="off"></div>
       <div><label for="password">Password</label><input type="text" id="password" name="password" value="{{ f.password }}" required minlength="8" autocomplete="new-password" spellcheck="false">
-        <div class="hint">For {{ t.title }}'s own web page. A random one is suggested: note it down. It is kept in the instance's environment.</div></div>
+        <div class="hint">For {{ t.title }}'s own web page. A random one is suggested: write it down, or find it later under Logins on the dashboard.</div></div>
     </div>
   </div>
   {% endif %}
@@ -132,7 +132,7 @@
       <strong>New {{ bundled.title }}</strong>
       <div class="hint" style="margin-top:2px">{{ bundled.blurb }} It uses {{ "every free GPU" if bundled.gpu == "all" else bundled.gpu }} and gets the next free ID and port; change anything later under Edit.</div>
       <div class="fields" style="margin-top:10px">
-        <div><label for="models_dir">Models folder on this machine</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}">
+        <div><label for="models_dir">Folder where your models are kept</label><input type="text" id="models_dir" name="models_dir" value="{{ f.models_dir }}">
           <div class="hint">Mounted read-only at <span class="mono">{{ bundled.models_mount[1] }}</span>.</div></div>
       </div>
       {{ slot_fields(slots, f, False) }}
@@ -158,7 +158,7 @@
   {% if t.models %}
   <div class="section">
     <h3 style="margin-top:0"><span class="step"></span>Models <span class="muted small" style="text-transform:none;letter-spacing:0">(optional)</span></h3>
-    <div class="hint" style="margin:0 0 10px">Pick a model for each name this server should answer to; one is enough, and the same chat model can do chat and coding. Leave them empty to add models on the Models page next.</div>
+    <div class="hint" style="margin:0 0 10px">Each model gets a tag (chat, coder, embed): apps ask the server for a tag and it loads the model behind it on the first request. Nothing else loads by default, so pick the model you want apps to get. One is enough, and the same chat model can do chat and coding. Leave them empty to add models on the Models page next.</div>
     {{ slot_fields(slots, f, True) }}
     {{ suggestion_picker(suggested, slots) }}
     {{ file_picker(files, slots) }}
@@ -176,16 +176,16 @@
   <div class="section">
     <h3 style="margin-top:0">What gets created</h3>
     <dl class="facts">
-      <dt>Image</dt><dd class="mono">{{ t.image }}</dd>
-      <dt>Type</dt><dd>{{ "Model server (llama-swap)" if t.kind == "llama-swap" else "Container" }}</dd>
+      <dt>Docker image</dt><dd class="mono">{{ t.image }}</dd>
+      <dt>Type</dt><dd>{{ "Model server (llama-swap)" if t.kind == "llama-swap" else "App in a container" }}</dd>
       {% if t.command %}<dt>Command</dt><dd class="mono">{{ t.command|join(" ") }}</dd>{% endif %}
       {% for c in companions %}<dt>Also installs</dt><dd>{{ c.title }} (<span class="mono">{{ c.image }}</span>), as <span class="mono">{{ (f.id or "id") ~ "-" ~ c.default_id }}</span>: it starts and stops with {{ t.title }}</dd>{% endfor %}
       {% if t.connects %}<dt data-server="{{ new_server }}">Also installs</dt><dd data-server="{{ new_server }}">{{ bundled.title }} ({{ bundled.image }})</dd>{% endif %}
       {% if t.after_install %}<dt>Afterwards</dt><dd>{{ t.after_install }}</dd>{% endif %}
-      <dt>Settings file</dt><dd class="mono">instances/{{ f.id or "id" }}.yaml</dd>
-      {% if t.env %}<dt>Environment</dt><dd class="mono">{% for k, v in t.env.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
+      <dt>Saved in</dt><dd class="mono">instances/{{ f.id or "id" }}.yaml</dd>
+      {% if t.env %}<dt>Settings</dt><dd class="mono">{% for k, v in t.env.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
     </dl>
-    <label class="check"><input type="checkbox" name="autostart" {{ "checked" if f.autostart }}> Start automatically when GPU Shepherd starts</label>
+    <label class="check"><input type="checkbox" name="autostart" {{ "checked" if f.autostart }}> Start automatically when GPU Shepherd starts (for example after a reboot)</label>
   </div>
 
   <div class="actions">
