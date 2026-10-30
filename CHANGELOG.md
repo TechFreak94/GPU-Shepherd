@@ -4,6 +4,12 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.10 - 2026-10-30
+
+- Model names are now called tags, and the Models page explains how tags decide which model loads. (#37)
+- The model editor explains slots, context, idle unload and GPU settings in plain language. (#37)
+- Clearer wording on the app form, Settings, guided install and Storage pages. (#37)
+
 ## 0.13.9 - 2026-10-30
 
 - MoE suggested models now let llama.cpp spread them across the GPUs itself, and the Models page shows why a model didn't start. (#36)
