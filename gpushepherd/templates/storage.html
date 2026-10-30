@@ -33,7 +33,7 @@
   {% endif %}
 </div>
 
-<h3>App images</h3>
+<h3>App downloads (images)</h3>
 <div class="card">
   {% if st.images %}
   <table class="table">
@@ -51,8 +51,8 @@
   {% endif %}
 </div>
 
-<h3>Worth a look</h3>
-{% set why = {"unused": "in no model list", "partial": "unfinished download", "duplicate": "same file as another"} %}
+<h3>Worth a look (safe to clean up)</h3>
+{% set why = {"unused": "not used by any model", "partial": "unfinished download", "duplicate": "a copy of another file"} %}
 <div class="card">
   {% if not (st.files or st.leftover_folders or st.orphans) %}
   <p class="muted small" style="margin:0">Nothing to clean up. Every file belongs to an app and nothing is left over.</p>
@@ -60,7 +60,7 @@
   {% if st.files %}
   <form hx-post="/storage/files/trash">
     <strong>Files</strong>
-    <p class="small muted" style="margin:4px 0 0">Moving them to the trash frees nothing yet. You can restore them until the trash is emptied.</p>
+    <p class="small muted" style="margin:4px 0 0">Moving files to the trash doesn't free space yet. You can put them back until the trash is emptied.</p>
     <table class="table">
       <tr><th></th><th>File</th><th>Size</th><th>Why</th></tr>
       {% for f in st.files %}
@@ -81,10 +81,10 @@
   </table>
   {% endif %}
   {% if st.orphans %}
-  <strong>Containers without an app</strong>
+  <strong>Leftover containers (no matching app)</strong>
   <p class="small" style="margin:4px 0">{% for n in st.orphans %}<span class="mono">{{ n }}</span>{{ ", " if not loop.last }}{% endfor %}</p>
   <div class="actions"><button type="button" hx-post="/storage/orphans/remove"
-    hx-confirm="Remove these containers? Their data folders are not touched.">Remove</button></div>
+    hx-confirm="Remove these containers? Your saved data and models are not touched.">Remove</button></div>
   {% endif %}
 </div>
 
@@ -106,9 +106,9 @@
     hx-confirm="Empty the trash? Everything in it is deleted for good.">Empty trash</button></div>
   {% else %}<p class="muted small" style="margin:0">The trash is empty.</p>{% endif %}
   <form hx-post="/storage/trash/days" style="margin-top:12px">
-    <div class="fields"><div><label for="days">Empty items after (days)</label>
+    <div class="fields"><div><label for="days">Empty the trash automatically after (days)</label>
       <input type="number" id="days" name="days" min="0" value="{{ st.trash_days }}">
-      <div class="hint">0 = keep until I empty it.</div></div></div>
+      <div class="hint">0 = keep items until you empty the trash yourself.</div></div></div>
     <div class="actions"><button type="submit">Save</button></div>
   </form>
 </div>
