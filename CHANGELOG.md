@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.11 - 2026-10-30
+
+- Move a models folder or an app's data folder to another disk from Settings > Storage, with a verified copy and "Move back". (#38)
+- ComfyUI cards show both the Image Server and Image UI tags. (#38)
+- The dashboard refreshes use much less CPU. (#38)
+- Fixed a rare dashboard error when a start or stop finished during a refresh. (#38)
+
 ## 0.13.10 - 2026-10-30
 
 - Model names are now called tags, and the Models page explains how tags decide which model loads. (#37)
