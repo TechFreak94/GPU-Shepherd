@@ -1,0 +1,9 @@
+{# One level of the folder tree. #}
+{% from "partials/tree_node.html" import node with context %}
+{% if root %}
+<ul class="tree">{{ node(li.path, title or li.path, meta, False, True) }}</ul>
+{% elif li.error %}<span class="muted small">{{ li.error }}</span>
+{% elif not li.folders %}<span class="muted small">No folders inside. Choose it, and a new folder is made there.</span>
+{% else %}
+<ul class="tree">{% for f in li.folders %}{{ node((li.path.rstrip("/") ~ "/" ~ f.name), f.name, "", f.mount) }}{% endfor %}</ul>
+{% endif %}

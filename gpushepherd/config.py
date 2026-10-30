@@ -347,6 +347,7 @@ class Settings(BaseModel):
     bind_address: str = "0.0.0.0"         # host address published ports bind to
     container_prefix: str = "shepherd-"
     trash_days: int = Field(default=30, ge=0, le=3650)   # empty trash entries older than this (0 = never)
+    auto_mount_drives: bool = True        # mount a newly attached drive that has data on it (see drives.py)
 
 
 # --------------------------------------------------------------------------- store

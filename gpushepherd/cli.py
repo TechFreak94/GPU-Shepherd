@@ -13,6 +13,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import yaml
@@ -566,6 +567,18 @@ def cmd_storage(args, c: Client) -> int:
             return 0
         print(r["message"])
         return 0 if args.no_wait else follow(c, r["job"])
+    elif a == "drives":
+        out(args, c.get("/api/v1/storage/drives"), lambda r: table(
+            [[d["device"], d["name"], gb(d["size"]), d["fstype"] or "-", d["state"], d["mountpoint"] or d["note"] or "-"]
+             for d in r["drives"]], ["DRIVE", "NAME", "SIZE", "FILESYSTEM", "STATE", "MOUNTED AT / NOTE"]))
+    elif a == "mount":
+        if len(args.items) != 1:
+            raise Failed("which drive? e.g. gpu-shepherd storage mount /dev/sdb1 (see gpu-shepherd storage drives)")
+        out(args, c.post("/api/v1/storage/drives/mount", {"device": args.items[0]}))
+    elif a == "browse":
+        out(args, c.get("/api/v1/storage/browse?path=" + quote(args.items[0] if args.items else "/")), lambda r: (
+            print(f"{r['path']}  ({gb(r['free'])} free on {r['disk']})"),
+            [print("  " + f["name"] + ("/  (another disk)" if f["mount"] else "/")) for f in r["folders"]]))
     elif a == "moves":
         out(args, c.get("/api/v1/moves"), lambda rows: table(
             [[m["id"], m["status"], gb(m["size"]), f"{m['source']} -> {m['dest']}", m["leftover"] or "-"] for m in rows],
@@ -786,9 +799,11 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("show", "set"))
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
-                                       "trash-folder NAME, move PATH NEW-PLACE, moves, move-back ID, delete-old ID")
+                                       "trash-folder NAME, drives, mount DEVICE, browse [PATH], move PATH NEW-PLACE, "
+                                       "moves, move-back ID, delete-old ID")
     p.add_argument("action", nargs="?", choices=("show", "remove-images", "remove-orphans", "trash-files",
-                                                 "trash-folder", "move", "moves", "move-back", "delete-old"))
+                                                 "trash-folder", "drives", "mount", "browse", "move", "moves", "move-back",
+                                                 "delete-old"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")

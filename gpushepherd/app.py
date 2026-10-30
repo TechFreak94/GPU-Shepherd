@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, first_run, host as host_mod, instance_templates as tpl, logins, model_library, moves, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, host as host_mod, instance_templates as tpl, logins, model_library, moves, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -181,7 +181,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     # everything the dashboard changes goes through the same calls as the JSON API and the command
     svc = Shepherd(store, engine, jobs, llama_client, loading=app.state.loading,
-                   mover=moves.LocalMover() if demo else None)
+                   mover=moves.LocalMover() if demo else None,
+                   host_fs=drives.LocalHost(drives.demo_drives()) if demo else None)
     app.state.svc = svc
     try:
         svc.trash.purge_older(store.settings().trash_days)
@@ -952,7 +953,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)
     def storage_page(request: Request):
-        return page(request, "storage.html", st=svc.storage())
+        return page(request, "storage.html", st=svc.storage(), drives=drives_info())
 
     def storage_done(action):
         """Run one clean-up, then show the Storage page again with what happened."""
@@ -992,6 +993,77 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     def move_form(raw) -> tuple[str, str]:
         return str(raw.get("source", "")), str(raw.get("dest", ""))
+
+    def picker_context(source: str) -> dict:
+        m = svc._movable(source)
+        return {"source": m.path, "label": m.label, "name": Path(m.path).name}
+
+    def picker_roots(found: list[drives.Drive]) -> list[dict]:
+        """Where the tree starts: each mounted drive (not the system's), then the whole machine."""
+        roots = [{"path": d.mountpoint, "title": d.name, "meta": f"{d.fstype} · {gb(d.size)}"}
+                 for d in found if d.state == "mounted" and not d.system and d.mountpoint.startswith("/")]
+        return roots + [{"path": "/", "title": "This machine", "meta": "all folders"}]
+
+    @app.get("/storage/pick", response_class=HTMLResponse)
+    def storage_pick(request: Request, source: str = "", path: str = ""):
+        """The "where to?" dialog: drives, and a folder tree."""
+        try:
+            ctx = picker_context(source)
+            info = drives_info()
+        except Problem as err:
+            return problem(err)
+        resp = page(request, "partials/folder_picker.html", **ctx, **info, picking=True, roots=picker_roots(info["found"]),
+                    start=drives.clean_path(path) if path else "")
+        resp.headers["HX-Retarget"] = "#modal-body"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        resp.headers["HX-Trigger-After-Swap"] = "open-modal"
+        return resp
+
+    def drives_info() -> dict:
+        d = svc.drives()
+        return {"found": [drives.Drive(**x) for x in d["drives"]], "drives_error": d["error"], "auto_mount": d["auto_mount"]}
+
+    @app.get("/storage/drives", response_class=HTMLResponse)
+    def storage_drives(request: Request, source: str = "", picking: str = ""):
+        return page(request, "partials/drives.html", **drives_info(), source=source, picking=bool(picking))
+
+    @app.post("/storage/drives/mount", response_class=HTMLResponse)
+    async def storage_drive_mount(request: Request):
+        raw = await request.form()
+        source, picking = str(raw.get("source", "")), bool(raw.get("picking"))
+        kind, msg = "info", ""
+        try:
+            msg = svc.mount_drive(str(raw.get("device", "")))
+        except Problem as err:
+            msg, kind = err.msg, err.kind
+        resp = page(request, "partials/drives.html", **drives_info(), source=source, picking=picking)
+        return toast(resp, msg, kind)
+
+    @app.post("/storage/drives/auto")
+    async def storage_drives_auto(request: Request):
+        raw = await request.form()
+        return storage_done(lambda: svc.set_auto_mount(raw.get("on") == "1"))
+
+    @app.get("/storage/tree", response_class=HTMLResponse)
+    def storage_tree(request: Request, path: str = "/", source: str = "", root: str = ""):
+        """The folders inside one folder, for the tree (or, with root, the tree starting at it)."""
+        try:
+            li = svc.browse(path)
+        except Problem as err:
+            return problem(err)
+        return page(request, "partials/folder_tree.html", li=li, source=source, root=bool(root),
+                    title=next((d.name for d in svc.scan_drives(False) if d.mountpoint == li.path), ""), meta="")
+
+    @app.get("/storage/pick/info", response_class=HTMLResponse)
+    def storage_pick_info(request: Request, source: str = "", pick: str = "", name: str = ""):
+        """What picking this folder would mean: the new place, room on the disk, or why not."""
+        if not pick:
+            return HTMLResponse('<p class="muted small">Pick a folder in the list.</p>')
+        try:
+            info = svc.pick_place(source, pick, name)
+        except Problem as err:
+            info = {"error": err.msg}
+        return page(request, "partials/pick_info.html", p=info)
 
     @app.post("/storage/move/check", response_class=HTMLResponse)
     async def storage_move_check(request: Request):
@@ -1045,5 +1117,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             log.warning("autostart skipped: %s", err)
     if autostart is not False:            # tests turn the background work off
         svc.start_measuring()
+        svc.watch_drives()
 
     return app

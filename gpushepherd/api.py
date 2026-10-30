@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import time
+from dataclasses import asdict
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -369,6 +370,31 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def get_storage(request: Request):
         return svc.storage()
+
+    @r.get("/api/v1/storage/drives")
+    @handle
+    def get_drives(request: Request):
+        """The machine's drives (a new one is mounted first if Settings say so)."""
+        return svc.drives()
+
+    @r.post("/api/v1/storage/drives/mount")
+    @handle
+    async def mount_drive(request: Request):
+        return {"message": svc.mount_drive(str((await body(request)).get("device", "")))}
+
+    @r.put("/api/v1/storage/drives/auto")
+    @handle
+    async def auto_mount(request: Request):
+        return {"message": svc.set_auto_mount(bool((await body(request)).get("enabled")))}
+
+    @r.get("/api/v1/storage/browse")
+    @handle
+    def browse_folders(request: Request, path: str = "/"):
+        """The folders inside `path` on this machine, and the room on its disk."""
+        li = svc.browse(path)
+        if li.error:
+            raise Problem(li.error, status=404)
+        return asdict(li)
 
     @r.post("/api/v1/storage/move")
     @handle

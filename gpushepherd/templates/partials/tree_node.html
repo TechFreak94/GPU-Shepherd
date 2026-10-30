@@ -1,0 +1,11 @@
+{# A folder in the folder tree; it loads what is inside it when it is opened. #}
+{% macro node(path, title, meta="", mount=False, start_open=False) %}
+<li><div class="tree-row">
+  <input type="radio" name="pick" value="{{ path }}" aria-label="Choose {{ path }}">
+  <details{{ ' open' if start_open }} hx-get="/storage/tree" hx-trigger="toggle once{{ ', load' if start_open }}"
+    hx-vals='{{ {"path": path, "source": source}|tojson }}' hx-target="find .tree-kids" hx-swap="innerHTML">
+    <summary>{{ title }}{% if mount %} <span class="tag">another disk</span>{% endif %}{% if meta %} <span class="small muted">{{ meta }}</span>{% endif %}</summary>
+    <div class="tree-kids small muted">Loading…</div>
+  </details>
+</div></li>
+{% endmacro %}

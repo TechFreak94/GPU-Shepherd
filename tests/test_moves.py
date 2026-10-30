@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import gpushepherd.gpu as gpu_mod
-from gpushepherd import auth, moves
+from gpushepherd import auth, drives, moves
 from gpushepherd.app import create_app
 from gpushepherd.backend import FakeBackend
 from gpushepherd.config import Store
@@ -217,3 +217,146 @@ def test_storage_page_moves(stack):
     wait(app)
     html = page.get("/storage").text
     assert "Move back" in html and "Delete old copy" in html
+
+
+# --------------------------------------------------------------------------- drives and the folder picker
+
+LSBLK = """{"blockdevices": [
+ {"name": "sda", "kname": "sda", "size": 500107862016, "type": "disk", "fstype": null, "model": "System SSD", "rm": false, "ro": false,
+  "children": [
+   {"name": "sda1", "kname": "sda1", "size": 536870912, "type": "part", "fstype": "vfat", "uuid": "AAAA-1111", "mountpoint": "/boot/efi",
+    "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "rm": false, "ro": false},
+   {"name": "sda2", "kname": "sda2", "size": 499000000000, "type": "part", "fstype": "ext4", "uuid": "root-uuid", "mountpoint": "/", "fsavail": 300000000000}]},
+ {"name": "sdb", "kname": "sdb", "size": 1000204886016, "type": "disk", "fstype": null, "model": "Fast SSD", "rm": false, "ro": false,
+  "children": [
+   {"name": "sdb1", "kname": "sdb1", "size": 1000000000000, "type": "part", "fstype": "ext4", "label": "Models Disk", "uuid": "bbbb-2222", "mountpoint": null},
+   {"name": "sdb2", "kname": "sdb2", "size": 1000000, "type": "part", "fstype": "crypto_LUKS", "uuid": "cccc-3333", "mountpoint": null}]},
+ {"name": "sdc", "kname": "sdc", "size": 2000000000000, "type": "disk", "fstype": null, "model": "New Disk", "rm": true, "ro": false},
+ {"name": "loop0", "kname": "loop0", "size": 1000, "type": "loop", "fstype": "squashfs", "mountpoint": "/snap/x"}]}"""
+
+
+def test_lsblk_is_read_into_drives():
+    found = {d.device: d for d in drives.parse_lsblk(LSBLK)}
+    assert set(found) == {"/dev/sda1", "/dev/sda2", "/dev/sdb1", "/dev/sdb2", "/dev/sdc"}      # no loop device, no bare parent disks
+    assert found["/dev/sda2"].state == "mounted" and found["/dev/sda2"].system
+    assert found["/dev/sdb1"].state == "ready" and found["/dev/sdb1"].name == "Models Disk"
+    assert found["/dev/sdb2"].state == "unsupported" and "encrypted" in found["/dev/sdb2"].note
+    assert found["/dev/sdc"].state == "empty" and found["/dev/sdc"].removable and "never formats" in found["/dev/sdc"].note
+
+
+def test_mount_names_are_new_folders_under_mnt():
+    d = drives.Drive("/dev/sdb1", "x", label="Models Disk", uuid="bbbb-2222")
+    assert drives.mount_name(d, set()) == "/mnt/Models-Disk"
+    assert drives.mount_name(d, {"/mnt/Models-Disk"}) == "/mnt/Models-Disk-2"
+    assert drives.mount_name(drives.Drive("/dev/sdb1", "x", uuid="bbbb-2222"), set()) == "/mnt/disk-bbbb2222"
+    assert drives.mount_name(drives.Drive("/dev/sdb1", "x", label="../../etc", uuid="u"), set()).startswith("/mnt/etc")
+
+
+class FakeHost(drives.Host):
+    def __init__(self):
+        self.found = drives.parse_lsblk(LSBLK)
+        self.mounts = []
+
+    def scan(self):
+        return [drives.Drive(**d.__dict__) for d in self.found]
+
+    def mount(self, drive, base, persist):
+        self.mounts.append((drive.device, base, persist))
+        mine = next(d for d in self.found if d.device == drive.device)
+        mine.state, mine.mountpoint = "mounted", base
+        return base
+
+    def browse(self, path):
+        return drives.Listing(path, [drives.Folder("models", False), drives.Folder("disk2", True)], 10, 20, "/dev/sda2")
+
+
+@pytest.fixture
+def host_stack(stack):
+    app, client, backend, data, models, disk2 = stack
+    app.state.svc.host_fs = FakeHost()
+    page = TestClient(app)
+    page.post("/login", data={"user": "admin", "password": "correct-horse"})
+    return app.state.svc, page, models
+
+
+def test_a_new_drive_with_data_is_mounted_and_others_are_left_alone(host_stack, stack):
+    svc, _, _ = host_stack
+    client = stack[1]
+    r = client.get("/api/v1/storage/drives").json()
+    by = {d["device"]: d for d in r["drives"]}
+    assert svc.host_fs.mounts == [("/dev/sdb1", "/mnt/Models-Disk", True)]
+    assert by["/dev/sdb1"]["state"] == "mounted" and by["/dev/sdb1"]["by_us"]
+    assert by["/dev/sdc"]["state"] == "empty" and by["/dev/sdb2"]["state"] == "unsupported"      # never touched
+    client.get("/api/v1/storage/drives")
+    assert len(svc.host_fs.mounts) == 1                                                       # not mounted twice
+
+
+def test_automatic_mounting_can_be_turned_off(host_stack, stack):
+    svc, _, _ = host_stack
+    client = stack[1]
+    assert client.put("/api/v1/storage/drives/auto", json={"enabled": False}).status_code == 200
+    by = {d["device"]: d for d in client.get("/api/v1/storage/drives").json()["drives"]}
+    assert by["/dev/sdb1"]["state"] == "ready" and not svc.host_fs.mounts
+    assert client.post("/api/v1/storage/drives/mount", json={"device": "/dev/sdb1"}).status_code == 200
+    assert svc.host_fs.mounts[0][0] == "/dev/sdb1"
+    assert client.post("/api/v1/storage/drives/mount", json={"device": "/dev/sdc"}).status_code == 409       # empty: no
+    assert client.post("/api/v1/storage/drives/mount", json={"device": "/dev/sdz"}).status_code == 404
+
+
+def test_a_failed_mount_is_reported_and_not_retried(host_stack, stack):
+    svc, _, _ = host_stack
+    client = stack[1]
+
+    def boom(drive, base, persist):
+        raise ValueError("wrong fs type")
+    svc.host_fs.mount = boom
+    by = {d["device"]: d for d in client.get("/api/v1/storage/drives").json()["drives"]}
+    assert by["/dev/sdb1"]["state"] == "failed" and "wrong fs type" in by["/dev/sdb1"]["note"]
+    svc.host_fs.mount = lambda *a: pytest.fail("tried again by itself")
+    assert client.get("/api/v1/storage/drives").json()["drives"]
+
+
+def test_the_picker_dialog_and_tree(host_stack):
+    svc, client, models = host_stack
+    r = client.get("/storage/pick", params={"source": str(models)}, headers=HX)
+    assert r.status_code == 200 and "Where should Models go?" in r.text
+    assert "Models Disk" in r.text and "/mnt/Models-Disk" in r.text and "This machine" in r.text
+    assert "System SSD" in r.text and 'hx-get="/storage/tree?root=1&path=/mnt/Models-Disk' in r.text
+    t = client.get("/storage/tree", params={"path": "/mnt/x", "source": str(models)}, headers=HX).text
+    assert 'value="/mnt/x/disk2"' in t and "another disk" in t
+    assert client.get("/storage/pick", params={"source": "/nope"}, headers=HX).status_code == 204       # a toast
+
+
+def test_picking_a_folder_gives_the_new_place(host_stack):
+    svc, client, models = host_stack
+    ok = client.get("/storage/pick/info", params={"source": str(models), "pick": "/mnt/disk2", "name": "models"}, headers=HX).text
+    assert 'data-pick-file="/mnt/disk2/models"' in ok and "/dev/sda2" in ok
+    bad = client.get("/storage/pick/info", params={"source": str(models), "pick": "/etc", "name": "models"}, headers=HX).text
+    assert "system folder" in bad and "data-pick-file" not in bad
+    inside = client.get("/storage/pick/info", params={"source": str(models), "pick": str(models), "name": "new"}, headers=HX).text
+    assert "inside" in inside
+    slash = client.get("/storage/pick/info", params={"source": str(models), "pick": "/mnt/d", "name": "a/b"}, headers=HX).text
+    assert "just a folder name" in slash
+
+
+def test_browse_api_and_local_listing(stack, tmp_path):
+    app, client, *_ = stack
+    (tmp_path / "disk2" / "sub").mkdir()
+    r = client.get("/api/v1/storage/browse", params={"path": str(tmp_path / "disk2")}).json()
+    assert [f["name"] for f in r["folders"]] == ["sub"] and r["free"] > 0
+    assert client.get("/api/v1/storage/browse", params={"path": "/nonexistent-x"}).status_code == 404
+    root = client.get("/api/v1/storage/browse", params={"path": "/"}).json()
+    assert not {"proc", "etc", "sys"} & {f["name"] for f in root["folders"]}
+
+
+def test_drive_scripts_and_listing_parse(stack):
+    """The listing script, and the host script for a drive, run in the right places and with the right limits."""
+    app, client, backend, data, models, disk2 = stack
+    h = drives.HelperHost(backend, "img")
+    h.browse("/mnt/some disk")
+    script, vols = backend.tasks[-1]
+    assert vols == [("/", "/host", True)] and "P=/host'/mnt/some disk'" in script
+    with pytest.raises(ValueError):
+        h.mount(drives.Drive("/dev/x", "x", uuid="a;rm -rf /"), "/mnt/x", True)
+    parsed = drives.parse_listing("/", "DISK /dev/sda2\nTOTAL 100\nFREE 40\nDIR\tmnt\t0\nDIR\tetc\t0\nDIR\tdata\t1\n")
+    assert [f.name for f in parsed.folders] == ["data", "mnt"] and parsed.free == 40 * 1024 and parsed.folders[0].mount

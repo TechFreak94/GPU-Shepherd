@@ -1,0 +1,28 @@
+{# The machine's drives. Polled, so a drive that is attached shows up (and is mounted) within seconds. #}
+<div id="drives" hx-get="/storage/drives?source={{ source|urlencode }}{{ '&picking=1' if picking }}"
+  hx-trigger="{% if picking %}every 5s [document.getElementById('modal').open]{% else %}every 10s{% endif %}" hx-swap="outerHTML">
+  {% if drives_error %}<p class="muted small" style="margin:0">{{ drives_error }}</p>
+  {% else %}
+  {% for d in found %}
+  <div class="drive-row">
+    <div><strong>{{ d.name }}</strong>
+      <span class="tag{{ ' warn' if d.state == 'failed' else '' }}">{{ {"mounted": "Mounted", "ready": "Not mounted", "empty": "Empty", "unsupported": "Left alone", "failed": "Could not mount"}[d.state] }}</span>
+      {% if d.system %}<span class="tag">system</span>{% elif d.removable %}<span class="tag">removable</span>{% endif %}
+      <div class="small muted"><span class="mono">{{ d.device }}</span> · {{ d.size|gb }}{% if d.fstype %} · {{ d.fstype }}{% endif %}
+        {% if d.mountpoint %} · at <span class="mono">{{ d.mountpoint }}</span>{% if d.free is not none %} · {{ d.free|gb }} free{% endif %}{% endif %}
+        {% if d.by_us %} · mounted by GPU Shepherd{% endif %}</div>
+      {% if d.note and d.state != "mounted" %}<div class="small muted">{{ d.note }}</div>{% endif %}
+    </div>
+    <div class="actions" style="margin:0">
+      {% if d.state in ("ready", "failed") %}
+      <button type="button" class="small" hx-post="/storage/drives/mount" hx-target="#drives" hx-swap="outerHTML"
+        hx-vals='{{ {"device": d.device, "source": source, "picking": "1" if picking else ""}|tojson }}'>{{ "Try again" if d.state == "failed" else "Mount" }}</button>
+      {% elif picking and d.state == "mounted" and not d.system and d.mountpoint.startswith("/") %}
+      <button type="button" class="small" hx-get="/storage/tree?root=1&path={{ d.mountpoint|urlencode }}&source={{ source|urlencode }}"
+        hx-target="#pick-tree" hx-swap="innerHTML">Browse</button>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}<p class="muted small" style="margin:0">No drives found.</p>{% endfor %}
+  {% endif %}
+</div>

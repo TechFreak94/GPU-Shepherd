@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, budget, downloads, gpu as gpu_mod, host, instance_templates as tpl, logins,
+from . import (app_updates, auth, budget, downloads, drives, gpu as gpu_mod, host, instance_templates as tpl, logins,
                model_library, moves, storage, tuning, updates)
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
@@ -111,6 +111,9 @@ class Shepherd:
     mover: moves.Mover | None = None
     move_log: moves.History | None = None
     move_interval: float = 5.0          # seconds between looks at a copy
+    host_fs: drives.Host | None = None
+    drive_log: drives.Memory | None = None
+    drive_error: str = ""               # why the machine's drives can't be looked at, if they can't
     _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
 
     def __post_init__(self):
@@ -128,6 +131,11 @@ class Shepherd:
             self.mover = moves.HelperMover(self.backend, HELPER_IMAGE)
         if self.move_log is None:
             self.move_log = moves.History(self.store.root)
+        if self.host_fs is None:
+            self.host_fs = drives.HelperHost(self.backend, HELPER_IMAGE)
+        if self.drive_log is None:
+            self.drive_log = drives.Memory(self.store.root)
+        self._drive_lock = threading.Lock()
 
     @property
     def backend(self):
@@ -394,6 +402,109 @@ class Shepherd:
                 "movable": [asdict(m) | {"size": next((f.size for f in scan.folders if f.path == m.path), None)}
                             for m in self.movable(instances)],
                 "moves": self.move_history()}
+
+    # ------------------------------------------------------------------ drives and folders (drives.py)
+    def scan_drives(self, mount_new: bool = True) -> list[drives.Drive]:
+        """The machine's drives. A drive that has data on it but no mount point is mounted now when
+        Settings say so (and it has not failed before): GPU Shepherd never formats or writes to one."""
+        with self._drive_lock:
+            try:
+                found = self.host_fs.scan()
+            except (BackendError, OSError, ValueError) as err:
+                self.drive_error = f"The machine's drives can't be looked at from here: {err}"
+                log.debug("drive scan failed: %s", err)
+                return []
+            self.drive_error = ""
+            memory = self.drive_log.read()
+            for d in found:
+                if d.uuid in memory["mounted"] and d.state == "mounted":
+                    d.by_us = True
+                if d.state == "ready" and d.uuid in memory["failed"]:
+                    d.state, d.note = "failed", memory["failed"][d.uuid]
+            if mount_new and self.store.settings().auto_mount_drives:
+                for d in found:
+                    if d.state == "ready":
+                        self._mount(d, found, persist=True)
+            return sorted(found, key=lambda d: (d.system, d.device))
+
+    def _mount(self, d: drives.Drive, known: list[drives.Drive], persist: bool) -> None:
+        taken = {x.mountpoint for x in known if x.mountpoint}
+        try:
+            where = self.host_fs.mount(d, drives.mount_name(d, taken), persist)
+        except (BackendError, OSError, ValueError) as err:
+            d.state, d.note = "failed", f"Could not mount it: {err}"
+            self.drive_log.update(d.uuid, failed=d.note)
+            log.warning("mounting %s failed: %s", d.device, err)
+            return
+        d.state, d.mountpoint, d.by_us, d.note = "mounted", where, True, getattr(self.host_fs, "note", "")
+        self.drive_log.update(d.uuid, mounted=where)
+        log.info("mounted %s (%s) at %s", d.device, d.name, where)
+
+    def drives(self) -> dict:
+        found = self.scan_drives()
+        return {"drives": [asdict(d) for d in found], "error": self.drive_error,
+                "auto_mount": self.store.settings().auto_mount_drives}
+
+    def mount_drive(self, device: str) -> str:
+        """Mount one drive now (also one that failed before, or when automatic mounting is off)."""
+        with self._drive_lock:
+            try:
+                found = self.host_fs.scan()
+            except (BackendError, OSError, ValueError) as err:
+                raise Problem(f"The machine's drives can't be looked at from here: {err}", status=500) from err
+            d = next((x for x in found if x.device == device), None)
+            if not d:
+                raise Problem(f"{device} is not there any more.", status=404)
+            if d.state == "mounted":
+                return f"{d.name} is already mounted at {d.mountpoint}."
+            if d.state in ("empty", "unsupported"):
+                raise Problem(f"{d.name} can't be mounted: {d.note or 'it has no filesystem'}", status=409)
+            self._mount(d, found, persist=True)
+            if d.state == "failed":
+                raise Problem(d.note, status=500)
+            return f"Mounted {d.name} at {d.mountpoint}." + (f" {d.note}" if d.note else "")
+
+    def set_auto_mount(self, on: bool) -> str:
+        s = self.store.settings()
+        s.auto_mount_drives = on
+        self.store.save_settings(Settings.model_validate(s.model_dump()))
+        return ("New drives are mounted as soon as they are attached." if on
+                else "New drives are listed, and mounted when you ask.")
+
+    def watch_drives(self, interval: float = 5.0) -> None:
+        """Look at the kernel's list of block devices every few seconds, and when it changes (a
+        drive was attached) scan and mount. Also once at start."""
+        def loop():
+            seen = None
+            while True:
+                sig = drives.proc_signature()
+                if sig != seen:
+                    seen = sig
+                    try:
+                        self.scan_drives()
+                    except Exception as err:  # noqa: BLE001 - watching must never stop
+                        log.debug("drive watch failed: %s", err)
+                threading.Event().wait(interval)
+        threading.Thread(target=loop, daemon=True, name="drives").start()
+
+    def browse(self, path: str) -> drives.Listing:
+        try:
+            return self.host_fs.browse(path)
+        except (BackendError, OSError, ValueError) as err:
+            raise Problem(f"Could not look at {path}: {err}", status=500) from err
+
+    def pick_place(self, source: str, folder: str, name: str) -> dict:
+        """The new place for `source` if it goes in `folder` under `name`: the path, whether it
+        would be allowed, and how much room the disk has."""
+        m = self._movable(source)
+        folder = drives.clean_path(folder)
+        name = name.strip().strip("/")
+        li = self.browse(folder)
+        dest = folder.rstrip("/") + "/" + name if name else folder
+        err = li.error or ("" if "/" not in name and name not in (".", "..") else "Write just a folder name, without /")
+        err = err or moves.check_paths(m.path, dest, str(self.engine.host_data_dir))
+        return {"folder": folder, "name": name, "dest": dest, "error": err, "free": li.free, "total": li.total,
+                "disk": li.disk}
 
     # ------------------------------------------------------------------ moving folders (moves.py)
     def movable(self, instances: dict[str, Instance] | None = None) -> list[moves.Movable]:

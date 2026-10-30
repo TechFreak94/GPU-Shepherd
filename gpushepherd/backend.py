@@ -88,7 +88,7 @@ class Backend(Protocol):
                    user: str | None, kind: str) -> None: ...
     def helpers(self, kind: str) -> dict[str, "HelperState"]: ...
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
-                 user: str | None = None) -> str: ...
+                 user: str | None = None, host: bool = False) -> str: ...
     def images(self, refs: list[str]) -> dict[str, int]: ...
     def remove_image(self, ref: str) -> None: ...
     def ping(self) -> str: ...
@@ -363,13 +363,18 @@ class DockerBackend:
         return out
 
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
-                 user: str | None = None) -> str:
+                 user: str | None = None, host: bool = False) -> str:
         """Run `sh -c script` in a throwaway container with `volumes` mounted and wait for it: for
-        file work in folders GPU Shepherd can't write itself. Raises BackendError if it fails."""
+        file work in folders GPU Shepherd can't write itself. With host, the container is
+        privileged and sees the host's processes, so the script can step into the host's own
+        namespaces (nsenter): for looking at and mounting the machine's drives. Raises BackendError
+        if it fails."""
+        extra = {"privileged": True, "pid_mode": "host"} if host else {}
         try:
             out = self.client.containers.run(
                 image, ["-c", script], entrypoint="sh", remove=True, stdout=True, stderr=True, user=user,
-                volumes=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], labels={LABEL_HELPER: "task"})
+                volumes=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], labels={LABEL_HELPER: "task"},
+                **extra)
             return out.decode("utf-8", "replace")
         except self._errors.ContainerError as err:
             text = (err.stderr or b"").decode("utf-8", "replace").strip()
@@ -492,7 +497,7 @@ class FakeBackend:
         self.calls.append(f"helper {name}")
 
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
-                 user: str | None = None) -> str:
+                 user: str | None = None, host: bool = False) -> str:
         self.tasks.append((script, volumes))
         self.calls.append("task")
         return ""
