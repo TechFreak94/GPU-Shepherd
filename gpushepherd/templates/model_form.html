@@ -38,9 +38,10 @@
   <div class="section">
     <h3 style="margin-top:0">Runtime</h3>
     <div class="fields">
-      <div><label for="ctx_size">Context (tokens, all slots together)</label><input type="number" id="ctx_size" name="ctx_size" min="512" value="{{ f.ctx_size }}"></div>
+      <div><label for="ctx_size">Context (tokens, all slots together)</label><input type="number" id="ctx_size" name="ctx_size" min="512" value="{{ f.ctx_size }}">
+        <div class="hint">Total memory for conversation, shared by all slots. More context needs more GPU memory, and GPU Shepherd counts it when it decides how many GPUs the model needs.</div></div>
       <div><label for="parallel">Parallel slots</label><input type="number" id="parallel" name="parallel" min="1" max="64" value="{{ f.parallel }}">
-        <div class="hint">Requests served at once; each gets context ÷ slots.</div></div>
+        <div class="hint">How many requests the model answers at the same time. 1 queues the rest. Each slot gets context ÷ slots, so with 32,768 tokens and 2 slots a conversation can be 16,384 tokens long. The total memory stays the same. Use 1 for a single user or long documents, more when several apps share it.</div></div>
       <div><label for="kv_cache">KV cache</label><select id="kv_cache" name="kv_cache">
         {% for k, label in [("f16", "f16 (default)"), ("bf16", "bf16 - same size, try it if answers turn to gibberish"), ("q8_0", "q8_0 - half the memory"), ("q5_1", "q5_1 - a third of the memory"), ("q4_0", "q4_0 - smallest")] %}
         <option value="{{ k }}" {{ "selected" if f.kv_cache == k }}>{{ label }}</option>{% endfor %}</select>
@@ -68,12 +69,12 @@
       <div><label for="mtp_draft">MTP draft file (optional)</label><input type="text" id="mtp_draft" name="mtp_draft" value="{{ f.mtp_draft }}" placeholder="/models/mtp-model.gguf">
         <div class="hint">Only for models that ship it as a separate mtp-….gguf file (Gemma 4); others have it built in.</div></div>
       <div><label for="ttl">Unload when idle (seconds)</label><input type="number" id="ttl" name="ttl" min="0" max="604800" value="{{ f.ttl }}">
-        <div class="hint">Frees its memory after this long without requests. 0 = stays loaded until another model is asked for.</div></div>
+        <div class="hint">Frees its memory after this long without requests. 0 = stays loaded until another model is asked for (unless it is kept loaded).</div></div>
     </div>
     <label class="check" style="margin-top:10px"><input type="checkbox" name="keep_loaded" {{ "checked" if f.keep_loaded }}> Keep loaded beside other models</label>
     <div class="hint">Normally loading one model unloads the last. A small embeddings model can stay loaded next to the chat model instead (give it 0 layers on the GPU below so it runs on the CPU).</div>
     <label class="check" style="margin-top:8px"><input type="checkbox" name="preload" {{ "checked" if f.preload }}> Load as soon as the server starts</label>
-    <div class="hint">The first request doesn't wait for it to load. Pick one model to swap with, plus any kept-loaded ones.</div>
+    <div class="hint">The first request doesn't wait for it to load. Only the models ticked here (and kept-loaded ones) are ready when the server starts; any other model loads when a tag or ID asks for it. Pick one model to swap with, plus any kept-loaded ones.</div>
   </div>
   <div class="section">
     <h3 style="margin-top:0">GPU and system RAM</h3>
@@ -96,7 +97,7 @@
       raise the number until the model loads, then lower it for speed. For dense models, lower the layers on GPU instead.</div>
     <div class="fields" style="margin-top:12px">
       <div><label for="gpus">GPUs it uses</label><input type="number" id="gpus" name="gpus" min="0" max="64" value="{{ f.gpus }}">
-        <div class="hint">0 = the fewest that hold it (its file and context). Set a number to spread it over more GPUs.</div></div>
+        <div class="hint">0 = the fewest GPUs that hold its file and context, so the other GPUs stay free for other apps. Set a number to spread it over more GPUs.</div></div>
       <div><label for="split_mode">With 2 or more GPUs, split by</label><select id="split_mode" name="split_mode">
         {% for k, label in [("layer", "Layers (default, best for most machines)"), ("row", "Rows (can be faster with fast links between GPUs)"), ("tensor", "Tensors (newer, experimental)")] %}
         <option value="{{ k }}" {{ "selected" if f.split_mode == k }}>{{ label }}</option>{% endfor %}</select></div>

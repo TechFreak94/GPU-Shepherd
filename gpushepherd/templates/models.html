@@ -24,7 +24,7 @@
 
 <div class="card scroll" id="catalog" {% if loading %}hx-get="/instances/{{ inst.id }}/models" hx-select="#catalog" hx-swap="outerHTML" hx-trigger="every 3s"{% endif %}>
   <table class="table">
-    <thead><tr><th>Model</th><th>File</th><th>Context</th><th title="Clients can ask for a model by any of its tags">Tags</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Model</th><th>File</th><th title="Context is the total memory for conversation; slots are requests answered at once, each getting context ÷ slots">Context and slots</th><th title="Clients can ask for a model by any of its tags">Tags</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {% for m in cat.models %}
       <tr>
