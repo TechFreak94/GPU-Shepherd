@@ -4,6 +4,14 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.9 - 2026-10-30
+
+- MoE suggested models now let llama.cpp spread them across the GPUs itself, and the Models page shows why a model didn't start. (#36)
+- Models added by hand are checked against this machine: too big to load at all is refused, other problems are warned about. (#36)
+- Machines with 3 or more GPUs: installs can pick "Up to N free GPUs", and GPU lists are shortened ("GPUs 0-7"). `--demo-gpus N` tries a bigger machine in demo mode. (#36)
+- Model servers can run each model on the fewest GPUs that hold it and leave the other GPUs free for other apps ("Use only the GPUs each model needs"; a per-model "GPUs it uses" setting). (#36)
+- Suggested adjustments: GPU Shepherd learns how much GPU memory and speed each model really uses and suggests changes on the Models page. Nothing changes until you apply one; every decision stays listed to undo or apply later. "Apply suggested adjustments by itself" is optional. (#36)
+
 ## 0.13.8 - 2026-10-29
 
 - The LLM server's Logins card explains its browser login: any user name, the API key as password. (#35)
