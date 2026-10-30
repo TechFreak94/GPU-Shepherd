@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 
 from . import placement
-from .config import Catalog
+from .config import Catalog, load_yaml
 
 GB = 1e9
 FULL = 0.95            # a model using more than this share of its GPUs' memory may run out
@@ -58,7 +58,7 @@ class _YamlState:
     def _load(self) -> dict:
         if self._data is None:
             try:
-                raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+                raw = load_yaml(self.path.read_text(encoding="utf-8")) or {}
                 self._data = raw if isinstance(raw, dict) else {}
             except (OSError, yaml.YAMLError):
                 self._data = {}

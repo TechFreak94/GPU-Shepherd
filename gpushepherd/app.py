@@ -202,6 +202,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     def dashboard_ctx(request: Request) -> dict:
         problems, unknown = list(notices), False
+        job = jobs.current                  # read once: the job can finish while the page is built
         try:
             snap = engine.snapshot()
         except Exception as err:  # noqa: BLE001 - Docker restarting or gone: say so instead of an error page
@@ -244,7 +245,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                     and st.config_hash != engine.config_hash(inst)),
                     "loaded": [], "models_error": cat_error, "model_count": 0, "aliases": {}, "offload": {},
                     "loading": sorted(app.state.loading.get(inst.id, set())),
-                    "waiting": (jobs.current.waiting.get(inst.id) if jobs.current else None)}
+                    "waiting": (job.waiting.get(inst.id) if job else None)}
             if cat is not None:
                 card["model_count"] = len(cat.models)
                 try:
@@ -275,7 +276,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "host": machine, "cpu_rows": cpu_rows, "mem_rows": mem_rows,
                 "mem_other": max(machine.mem_used - sum(r["value"] for r in mem_rows), 0),
                 "running_count": len(running), "instance_count": len(snap.instances),
-                "job": jobs.current, "last_job": (jobs.history[0] if jobs.history else None),
+                "job": job, "last_job": (jobs.history[0] if jobs.history else None),
                 "now": time.time(), "u": updates.status(store.root), "app_updates": app_update_count(),
                 "low_space": low_space()}
 

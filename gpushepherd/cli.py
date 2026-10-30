@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-from .config import CatalogModel, ConfigError, parse_command, parse_env, parse_ports, parse_volumes
+from .config import CatalogModel, ConfigError, load_yaml, parse_command, parse_env, parse_ports, parse_volumes
 from .scheduler import gpu_list
 
 # instance fields set as text, as the dashboard's form takes them (lines separated by ";" here)
@@ -282,7 +282,7 @@ def cmd_logins(args, c: Client) -> int:
 def read_file(name: str) -> dict:
     try:
         text = sys.stdin.read() if name == "-" else Path(name).read_text(encoding="utf-8")
-        data = yaml.safe_load(text)
+        data = load_yaml(text)
     except (OSError, yaml.YAMLError) as err:
         raise Failed(f"can't read {name}: {err}") from err
     if not isinstance(data, dict):

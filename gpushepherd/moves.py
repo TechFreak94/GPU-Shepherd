@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from .config import Instance
+from .config import Instance, load_yaml
 
 KIND = "move"                          # label of the helper containers
 SYSTEM = ("/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/run", "/sbin", "/sys", "/usr", "/var/run")
@@ -86,7 +86,7 @@ class History:
 
     def all(self) -> list[Record]:
         try:
-            raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or []
+            raw = load_yaml(self.path.read_text(encoding="utf-8")) or []
         except (OSError, yaml.YAMLError):
             return []
         out = []

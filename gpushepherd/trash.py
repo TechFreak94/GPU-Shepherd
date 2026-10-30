@@ -23,6 +23,8 @@ from pathlib import Path
 
 import yaml
 
+from .config import load_yaml
+
 log = logging.getLogger("gpushepherd")
 DAY = 86400
 
@@ -191,7 +193,7 @@ class Trash:
 
     def _load(self, eid: str) -> Entry | None:
         try:
-            raw = yaml.safe_load((self.root / eid / "manifest.yaml").read_text(encoding="utf-8")) or {}
+            raw = load_yaml((self.root / eid / "manifest.yaml").read_text(encoding="utf-8")) or {}
             return Entry(eid, str(raw.get("title", eid)), float(raw.get("deleted", 0)),
                          [str(x) for x in raw.get("instances") or []],
                          [Item(str(i["original"]), str(i.get("stored", "")), str(i.get("folder", "")))

@@ -73,6 +73,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def state():
         snap = engine.snapshot()
         machine = host_mod.query()
+        job = jobs.current
         return {
             "version": __version__,
             "commit": build.get("commit", ""),
@@ -86,8 +87,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             "host": {"cpu_pct": machine.cpu_pct, "cpu_threads": machine.cpu_threads, "load": machine.load,
                      "mem_total": machine.mem_total, "mem_used": machine.mem_used,
                      "mem_available": machine.mem_available},
-            "job": jobs.current.title if jobs.current else None,
-            "waiting_for": dict(jobs.current.waiting) if jobs.current else {},
+            "job": job.title if job else None,
+            "waiting_for": dict(job.waiting) if job else {},
         }
 
     r.get("/api/state")(state)           # the original read-only endpoint, kept for existing scripts

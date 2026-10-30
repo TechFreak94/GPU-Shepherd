@@ -50,6 +50,17 @@ def test_store_round_trip_and_port_clash(tmp_path):
     assert list(found) == ["a"] and "broken.yaml" in problems[0]
 
 
+def test_store_sees_hand_edits_and_hands_out_fresh_copies(tmp_path):
+    store = Store(tmp_path)
+    store.save_instance(Instance(id="a", name="A", image="img:1", env={"X": "1"}))
+    first = store.instance("a")
+    first.env["X"] = "changed"                    # a caller changing what it got back...
+    assert store.instance("a").env == {"X": "1"}  # ...does not change the next read
+    path = tmp_path / "instances" / "a.yaml"
+    path.write_text(path.read_text().replace("name: A", "name: Edited by hand"))
+    assert store.instance("a").name == "Edited by hand"
+
+
 def test_settings_created_with_secret(tmp_path):
     s = Store(tmp_path).settings()
     assert len(s.session_secret) == 64

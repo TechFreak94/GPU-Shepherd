@@ -588,7 +588,7 @@ class Shepherd:
         users = [i.name for i in instances.values() if any(moves.inside(v.host, path) for v in i.volumes)]
         if users:
             raise Problem(f"{users[0]} still uses {path}, so it is not deleted.", status=409)
-        if self.jobs.current and self.jobs.current.id == rec.job:
+        if (current := self.jobs.current) and current.id == rec.job:
             raise Problem("That move is still running.", "warn", 409)
         try:
             self.mover.stop(rec.id)
