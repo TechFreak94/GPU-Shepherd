@@ -29,19 +29,19 @@
 <h3>Containers</h3>
 <form class="card" hx-post="/settings/general">
   <div class="fields">
-    <div><label for="bind_address">Publish ports on</label><input type="text" id="bind_address" name="bind_address" value="{{ s.bind_address }}">
-      <div class="hint">0.0.0.0 = your whole network, 127.0.0.1 = this machine only.</div></div>
-    <div><label for="network">Docker network</label><input type="text" id="network" name="network" value="{{ s.network }}">
-      <div class="hint">Instances reach each other by ID on this network.</div></div>
+    <div><label for="bind_address">Who can reach your apps</label><input type="text" id="bind_address" name="bind_address" value="{{ s.bind_address }}">
+      <div class="hint">Type 0.0.0.0 so other devices on your network can open the apps, or 127.0.0.1 to allow only this machine. Takes effect when an app next starts.</div></div>
+    <div><label for="network">Private network name</label><input type="text" id="network" name="network" value="{{ s.network }}">
+      <div class="hint">Apps talk to each other over this private network, using their IDs as addresses. Most people never need to change it.</div></div>
   </div>
   <div class="actions"><button class="primary" type="submit">Save</button></div>
 </form>
 
-<h3>API and command line</h3>
+<h3>Automation (API and command line)</h3>
 <div class="card" id="api-token">
-  <p class="small" style="margin-top:0">Everything on these pages can also be done with the
+  <p class="small" style="margin-top:0">You don't need this to use GPU Shepherd. It is for scripts and other programs: everything on these pages can also be done with the
     <span class="mono">gpu-shepherd</span> command (on the server: <span class="mono">sudo docker exec gpu-shepherd gpu-shepherd status</span>)
-    or the JSON API at <span class="mono">/api/v1</span>. Both use this token, sent as <span class="mono">Authorization: Bearer &lt;token&gt;</span>.
+    or the JSON API at <span class="mono">/api/v1</span>. Both use this secret token, sent as <span class="mono">Authorization: Bearer &lt;token&gt;</span>.
     The command on the server reads it from the data folder by itself. Whoever has it can change everything here, like the admin login.</p>
   <details><summary>Show the API token</summary><p class="mono small" style="word-break:break-all">{{ api_token }}</p></details>
   <div class="actions"><button type="button" hx-post="/settings/api-token"
@@ -61,17 +61,16 @@
 </div>
 {% if not u.image %}{# the published image is pulled with docker, not downloaded by update.sh #}
 <div class="card" id="credentials">
-  <strong>Private repository</strong>
+  <strong>Private repository</strong> <span class="muted">(updates from a private GitHub repository)</span>
   <p class="small" style="margin-top:4px">{% if u.credentials %}Updates download as <strong>{{ u.credentials }}</strong>, with a saved GitHub token.
-    {% else %}Only needed when the GPU Shepherd repository you installed from is private.{% endif %}
-    GitHub doesn't accept passwords for git, so use an access token:
+    {% else %}Skip this unless you installed from a private GitHub repository.{% endif %}
+    GitHub needs an access token instead of your password:
     <a class="ext" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">create a fine-grained token</a>
-    for just this repository with <em>Contents: Read-only</em>. It is stored on the server in the clone's
-    <span class="mono">.git</span> folder, readable only by its owner and root, and never shown or logged.</p>
+    for just this repository, with <em>Contents: Read-only</em>. It is kept on the server, readable only by its owner and root, and never shown or logged.</p>
   {% if u.dashboard_updates %}
   <form hx-post="/ui/update/credentials" hx-target="#modal-body" autocomplete="off">
     <div class="fields"><div><label for="gh_user">GitHub user name</label><input type="text" id="gh_user" name="user" value="{{ u.credentials }}" autocomplete="off" spellcheck="false"></div>
-    <div><label for="gh_token">Access token</label><input type="password" id="gh_token" name="token" placeholder="github_pat_…" autocomplete="new-password" spellcheck="false"></div></div>
+    <div><label for="gh_token">Access token (like a password for GitHub)</label><input type="password" id="gh_token" name="token" placeholder="github_pat_…" autocomplete="new-password" spellcheck="false"></div></div>
     <div class="actions"><button class="primary" type="submit">{% if u.credentials %}Replace token{% else %}Save token{% endif %}</button>
       {% if u.credentials %}<button type="button" hx-post="/ui/update/credentials" hx-vals='{"clear": "1"}' hx-target="#modal-body" hx-confirm="Forget the saved GitHub token? Updates from a private repository stop working until you save a new one.">Remove token</button>{% endif %}</div>
   </form>
@@ -87,7 +86,7 @@
   <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }} ·
     <button class="link" hx-get="/ui/changelog" hx-target="#modal-body">Changelog</button></p>
   <p>Data folder: <span class="mono">{{ data_dir }}</span>{% if host_data_dir != data_dir %} (on the host: <span class="mono">{{ host_data_dir }}</span>){% endif %}</p>
-  <p class="muted" style="margin-bottom:0">Everything you change here is stored as YAML in that folder - back it up, or keep it in git.
-    GPU Shepherd controls Docker, which is root-equivalent on this machine: keep it on a trusted network.</p>
+  <p class="muted" style="margin-bottom:0">Everything you change is saved as text files in that folder, so you can back it up by copying it.
+    GPU Shepherd can start and stop anything on this machine, so only use it on a network you trust.</p>
 </div>
 {% endblock %}
