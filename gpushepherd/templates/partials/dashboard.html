@@ -96,7 +96,7 @@
     {# Each detail shows its value; the ⓘ next to it explains it (hover, keyboard focus or tap) #}
     <div class="row head">
       <div class="title">
-        <h2>{{ i.name }}<span class="tag kind {{ 'server' if i.kind == 'llama-swap' or c.tag.endswith(' Server') else ('ui' if c.tag.endswith(' UI') else 'app') }}">{{ c.tag }}</span></h2>
+        <h2>{{ i.name }}{% for t in c.tag.split(' / ') %}<span class="tag kind {{ 'server' if i.kind == 'llama-swap' or t.endswith(' Server') else ('ui' if t.endswith(' UI') else 'app') }}">{{ t }}</span>{% endfor %}</h2>
         {% if i.description %}{% call info(i.id ~ "-about", i.name) %}<span class="tl">{{ i.description }}</span>{% endcall %}{% endif %}
       </div>
       {% if c.running %}<span class="pill on" title="{{ c.state.status_text }}">running</span>
