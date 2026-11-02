@@ -279,9 +279,30 @@ def host_stack(stack):
     return app.state.svc, page, models
 
 
+def attach_later(svc, device="/dev/sdb1"):
+    """Start with `device` unplugged and scan, then plug it in: only then is it newly attached."""
+    host = svc.host_fs
+    drive = next(d for d in host.found if d.device == device)
+    host.found.remove(drive)
+    svc.scan_drives()
+    host.found.append(drive)
+
+
+def test_drives_already_there_at_start_are_not_mounted(host_stack, stack):
+    svc, _, _ = host_stack
+    by = {d["device"]: d for d in stack[1].get("/api/v1/storage/drives").json()["drives"]}
+    assert by["/dev/sdb1"]["state"] == "ready" and not svc.host_fs.mounts       # Mount does it by hand
+
+
+def test_mounting_never_reloads_systemd():
+    # a daemon-reload takes the GPUs away from running containers (NVML "Unknown Error")
+    assert "daemon-reload" not in drives.MOUNT and "systemctl" not in drives.MOUNT
+
+
 def test_a_new_drive_with_data_is_mounted_and_others_are_left_alone(host_stack, stack):
     svc, _, _ = host_stack
     client = stack[1]
+    attach_later(svc)
     r = client.get("/api/v1/storage/drives").json()
     by = {d["device"]: d for d in r["drives"]}
     assert svc.host_fs.mounts == [("/dev/sdb1", "/mnt/Models-Disk", True)]
@@ -310,6 +331,7 @@ def test_a_failed_mount_is_reported_and_not_retried(host_stack, stack):
     def boom(drive, base, persist):
         raise ValueError("wrong fs type")
     svc.host_fs.mount = boom
+    attach_later(svc)
     by = {d["device"]: d for d in client.get("/api/v1/storage/drives").json()["drives"]}
     assert by["/dev/sdb1"]["state"] == "failed" and "wrong fs type" in by["/dev/sdb1"]["note"]
     svc.host_fs.mount = lambda *a: pytest.fail("tried again by itself")
@@ -318,6 +340,7 @@ def test_a_failed_mount_is_reported_and_not_retried(host_stack, stack):
 
 def test_the_picker_dialog_and_tree(host_stack):
     svc, client, models = host_stack
+    attach_later(svc)                                   # mounted by itself, so it shows as a place
     r = client.get("/storage/pick", params={"source": str(models)}, headers=HX)
     assert r.status_code == 200 and "Where should Models go?" in r.text
     assert "Models Disk" in r.text and "/mnt/Models-Disk" in r.text and "This machine" in r.text

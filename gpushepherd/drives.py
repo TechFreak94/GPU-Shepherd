@@ -233,7 +233,10 @@ class Host:
 
 # On the host (through nsenter): the disks as JSON.
 SCAN = "lsblk -J -b -o {cols} 2>/dev/null || lsblk -J -b -o {cols}"
-# On the host: mount a drive found by its ID. Prints MOUNTED <where> or ERROR <why>.
+# On the host: mount a drive found by its ID. Prints MOUNTED <where> or ERROR <why>. Never run
+# `systemctl daemon-reload` here: on systemd hosts it takes the GPUs away from running containers
+# (nvidia-smi then fails with "Failed to initialize NVML: Unknown Error"). The fstab line is read
+# at the next boot without it.
 MOUNT = r"""dev=/dev/disk/by-uuid/{uuid}; base={base}
 [ -b "$dev" ] || {{ echo "ERROR the drive is not there any more"; exit 0; }}
 now=$(lsblk -no MOUNTPOINT "$dev" 2>/dev/null | head -n 1)
@@ -245,9 +248,8 @@ while grep -q " $d " /proc/mounts || {{ [ -e "$d" ] && [ -n "$(ls -A "$d" 2>/dev
 mkdir -p "$d" || {{ echo "ERROR could not make $d"; exit 0; }}
 out=$(mount -o nosuid,nodev "$dev" "$d" 2>&1) || {{ rmdir "$d" 2>/dev/null; echo "ERROR $out" | head -n 3; exit 0; }}
 if [ {persist} = 1 ] && ! grep -q "UUID={uuid}" /etc/fstab 2>/dev/null; then
-  if printf 'UUID=%s %s auto defaults,nofail,nosuid,nodev 0 0\n' {uuid} "$d" >> /etc/fstab 2>/dev/null; then
-    systemctl daemon-reload >/dev/null 2>&1 || true
-  else echo "NOTE it will not be mounted again after a restart (could not write /etc/fstab)"; fi
+  printf 'UUID=%s %s auto defaults,nofail,nosuid,nodev 0 0\n' {uuid} "$d" >> /etc/fstab 2>/dev/null \
+    || echo "NOTE it will not be mounted again after a restart (could not write /etc/fstab)"
 fi
 echo "MOUNTED $d"
 """

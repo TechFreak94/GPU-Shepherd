@@ -140,6 +140,7 @@ class Shepherd:
             self.image_log = image_updates.Records(self.store.root)
         self._auto_tried: set[tuple[str, str]] = set()     # (instance, version) automatic updates tried
         self._drive_lock = threading.Lock()
+        self._drives_seen: set[str] | None = None   # drive IDs at the last scan (None: no scan yet)
 
     @property
     def backend(self):
@@ -409,8 +410,9 @@ class Shepherd:
 
     # ------------------------------------------------------------------ drives and folders (drives.py)
     def scan_drives(self, mount_new: bool = True) -> list[drives.Drive]:
-        """The machine's drives. A drive that has data on it but no mount point is mounted now when
-        Settings say so (and it has not failed before): GPU Shepherd never formats or writes to one."""
+        """The machine's drives. A drive attached since the last scan that has data on it but no mount
+        point is mounted now when Settings say so (and it has not failed before): GPU Shepherd never
+        formats or writes to one."""
         with self._drive_lock:
             try:
                 found = self.host_fs.scan()
@@ -425,9 +427,15 @@ class Shepherd:
                     d.by_us = True
                 if d.state == "ready" and d.uuid in memory["failed"]:
                     d.state, d.note = "failed", memory["failed"][d.uuid]
+            # Only drives attached since the last scan are mounted by themselves: the ones already
+            # there when GPU Shepherd starts are left as the owner set them up (Mount on the Storage
+            # page does those).
+            present = {d.uuid for d in found if d.uuid}
+            attached = present - self._drives_seen if self._drives_seen is not None else set()
+            self._drives_seen = present
             if mount_new and self.store.settings().auto_mount_drives:
                 for d in found:
-                    if d.state == "ready":
+                    if d.state == "ready" and d.uuid in attached:
                         self._mount(d, found, persist=True)
             return sorted(found, key=lambda d: (d.system, d.device))
 
@@ -477,7 +485,7 @@ class Shepherd:
 
     def watch_drives(self, interval: float = 5.0) -> None:
         """Look at the kernel's list of block devices every few seconds, and when it changes (a
-        drive was attached) scan and mount. Also once at start."""
+        drive was attached) scan and mount it. The scan at start only notes the drives already there."""
         def loop():
             seen = None
             while True:
