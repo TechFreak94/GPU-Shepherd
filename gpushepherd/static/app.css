@@ -209,3 +209,10 @@ nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke
 :root:not([data-theme]) .t-system,:root[data-theme=light] .t-light,:root[data-theme=dark] .t-dark{display:block !important}
 .themes{display:flex;gap:6px;flex-wrap:wrap}
 .themes button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.tree{list-style:none;margin:0;padding:0}.tree .tree{padding-left:22px}
+.tree-row{display:flex;gap:8px;align-items:flex-start;padding:3px 0}.tree-row>input{margin-top:4px}
+.tree-row details{flex:1;min-width:0}.tree-row summary{cursor:pointer;overflow-wrap:anywhere}
+.tree-kids{margin-top:2px}
+.picker-tree{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:8px 0}
+.drive-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}
+.drive-row:first-child{border-top:0}.drive-row>div:first-child{min-width:0;overflow-wrap:anywhere}

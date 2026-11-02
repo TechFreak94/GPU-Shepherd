@@ -13,6 +13,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import yaml
@@ -387,6 +388,38 @@ def cmd_app_updates(args, c: Client) -> int:
     return 0
 
 
+def cmd_app_versions(args, c: Client) -> int:
+    a = args.action or "list"
+    if a == "list":
+        def show(r):
+            when = lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(t)) if t else "-"  # noqa: E731
+            words = {"available": "new version available", "restart": "downloaded, restart to use it",
+                     "current": "newest", "unknown": "not checked"}
+            table([[x["instance"], x["image"], words.get(x["state"], x["state"]) + (f" ({x['error']})" if x["error"] else ""),
+                    "automatic" if x["auto_update"] else "manual"] for x in r["instances"]],
+                  ["INSTANCE", "IMAGE", "VERSION", "UPDATES"])
+            print(f"Last checked {when(r['checked'])}; " + (f"every {r['every_hours']} hours." if r["every_hours"]
+                                                            else "only when asked."))
+        out(args, c.get("/api/v1/image-updates"), show)
+        return 0
+    if a == "check":
+        out(args, c.post("/api/v1/image-updates/check"))
+        return 0
+    if not args.id:
+        raise Failed(f"which instance? e.g. gpu-shepherd app-versions {a} webui")
+    if a == "auto":
+        if args.on not in ("on", "off"):
+            raise Failed(f"on or off? e.g. gpu-shepherd app-versions auto {args.id} on")
+        out(args, c.call("PUT", f"/api/v1/instances/{args.id}/auto-update", {"on": args.on == "on"}))
+        return 0
+    r = c.post(f"/api/v1/image-updates/{args.id}/update")
+    if args.json:
+        out(args, r)
+        return 0
+    print(r["message"])
+    return follow(c, r["job"])
+
+
 def model_table(m: dict) -> None:
     loaded = m["loaded"]
     table([[x["id"], x["file"], x["ctx_size"], ", ".join(x["aliases"]) or "-",
@@ -566,6 +599,18 @@ def cmd_storage(args, c: Client) -> int:
             return 0
         print(r["message"])
         return 0 if args.no_wait else follow(c, r["job"])
+    elif a == "drives":
+        out(args, c.get("/api/v1/storage/drives"), lambda r: table(
+            [[d["device"], d["name"], gb(d["size"]), d["fstype"] or "-", d["state"], d["mountpoint"] or d["note"] or "-"]
+             for d in r["drives"]], ["DRIVE", "NAME", "SIZE", "FILESYSTEM", "STATE", "MOUNTED AT / NOTE"]))
+    elif a == "mount":
+        if len(args.items) != 1:
+            raise Failed("which drive? e.g. gpu-shepherd storage mount /dev/sdb1 (see gpu-shepherd storage drives)")
+        out(args, c.post("/api/v1/storage/drives/mount", {"device": args.items[0]}))
+    elif a == "browse":
+        out(args, c.get("/api/v1/storage/browse?path=" + quote(args.items[0] if args.items else "/")), lambda r: (
+            print(f"{r['path']}  ({gb(r['free'])} free on {r['disk']})"),
+            [print("  " + f["name"] + ("/  (another disk)" if f["mount"] else "/")) for f in r["folders"]]))
     elif a == "moves":
         out(args, c.get("/api/v1/moves"), lambda rows: table(
             [[m["id"], m["status"], gb(m["size"]), f"{m['source']} -> {m['dest']}", m["leftover"] or "-"] for m in rows],
@@ -680,7 +725,7 @@ def cmd_token(args, c: Client | None) -> int:
 
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
-            "apps": cmd_apps, "app-updates": cmd_app_updates, "models": cmd_models, "jobs": cmd_jobs,
+            "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
             "settings": cmd_settings, "storage": cmd_storage, "trash": cmd_trash,
             "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
 
@@ -726,6 +771,12 @@ def add_commands(sub) -> None:
     p.add_argument("instance", nargs="?")
     p.add_argument("key", nargs="?")
     p.add_argument("--all", action="store_true", help="apply every update")
+
+    p = sub.add_parser("app-versions", help="new releases of the apps' images: list, check, update INSTANCE, "
+                                            "auto INSTANCE on|off")
+    p.add_argument("action", nargs="?", choices=("list", "check", "update", "auto"))
+    p.add_argument("id", nargs="?")
+    p.add_argument("on", nargs="?")
 
     p = sub.add_parser("models", help="a model server's models, auto names and settings")
     msub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
@@ -782,13 +833,16 @@ def add_commands(sub) -> None:
     p = sub.add_parser("jobs", help="recent changes: list, show N, skip N (stop waiting), cancel N")
     p.add_argument("action", nargs="?", choices=("list", "show", "skip", "cancel"))
     p.add_argument("job", nargs="?", type=int)
-    p = sub.add_parser("settings", help="show, or set bind_address=... network=... trash_days=...")
+    p = sub.add_parser("settings", help="show, or set bind_address=... network=... trash_days=... "
+                                        "image_check_hours=...")
     p.add_argument("action", nargs="?", choices=("show", "set"))
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
-                                       "trash-folder NAME, move PATH NEW-PLACE, moves, move-back ID, delete-old ID")
+                                       "trash-folder NAME, drives, mount DEVICE, browse [PATH], move PATH NEW-PLACE, "
+                                       "moves, move-back ID, delete-old ID")
     p.add_argument("action", nargs="?", choices=("show", "remove-images", "remove-orphans", "trash-files",
-                                                 "trash-folder", "move", "moves", "move-back", "delete-old"))
+                                                 "trash-folder", "drives", "mount", "browse", "move", "moves", "move-back",
+                                                 "delete-old"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")

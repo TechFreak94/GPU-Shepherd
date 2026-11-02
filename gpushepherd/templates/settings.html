@@ -81,6 +81,18 @@
 </div>
 {% endif %}
 
+<h3>App updates</h3>
+<form class="card" hx-post="/settings/app-updates">
+  <p class="small" style="margin-top:0">GPU Shepherd looks for new releases of the apps you installed. Each app's card says when one is out;
+    apps set to update automatically (under the card's Advanced details, or Edit) install it by themselves.
+    {% if image_checked %}Last checked {{ image_checked|ago }}.{% else %}Not checked yet.{% endif %}</p>
+  <div class="fields"><div><label for="image_hours">Look for new versions every (hours)</label>
+    <input type="number" id="image_hours" name="hours" min="0" max="720" value="{{ s.image_check_hours }}">
+    <div class="hint">0 only looks when you press Check now.</div></div></div>
+  <div class="actions"><button class="primary" type="submit">Save</button>
+    <button type="button" hx-post="/ui/image-updates/check" title="Ask each app's image registry now">Check now</button></div>
+</form>
+
 <h3>About</h3>
 <div class="card small">
   <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }} ·

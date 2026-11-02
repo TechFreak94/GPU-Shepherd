@@ -1,0 +1,20 @@
+<div class="dlg-head"><strong id="modal-title">Where should {{ label }} go?</strong><button data-close-modal>Cancel</button></div>
+<div class="dlg-body">
+  <h4 style="margin:0 0 4px">Drives</h4>
+  {% include "partials/drives.html" %}
+  <h4 style="margin:12px 0 0">Folders</h4>
+  <p class="small muted" style="margin:2px 0 0">Open a folder to see what is inside it, and choose where {{ label }} should be put. A drive that was just attached is mounted for you and shows up in a few seconds.</p>
+  <form hx-get="/storage/pick/info" hx-trigger="change, keyup changed delay:300ms from:#pick-name" hx-target="#pick-info" hx-swap="innerHTML">
+    <input type="hidden" name="source" value="{{ source }}">
+    <div class="picker-tree" id="pick-tree">
+      {% from "partials/tree_node.html" import node with context %}
+      <ul class="tree">
+        {% for r in roots %}{{ node(r.path, r.title, r.meta, False, loop.last) }}{% endfor %}
+      </ul>
+    </div>
+    <div class="fields"><div><label for="pick-name">Folder to put it in</label>
+      <input id="pick-name" name="name" value="{{ name }}" autocomplete="off">
+      <div class="hint">Made inside the folder chosen above. Leave it empty to use the chosen folder itself, if it is empty.</div></div></div>
+    <div id="pick-info"><p class="muted small" style="margin:6px 0">Choose a folder in the list.</p></div>
+  </form>
+</div>

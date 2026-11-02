@@ -15,12 +15,21 @@
   {% else %}<p class="muted small" style="margin:0">No disks to show.</p>{% endfor %}
 </div>
 
+<h3>Drives</h3>
+<div class="card" id="drives-card">
+  <p class="small muted" style="margin-top:0">The disks in this machine. {% if drives.auto_mount %}A drive that is attached and has data on it is mounted within seconds, under /mnt, and again after a restart.{% else %}Automatic mounting is off: use Mount on a drive.{% endif %}
+    GPU Shepherd never formats or changes a drive.</p>
+  {% set found = drives.found %}{% set drives_error = drives.error %}{% set source = "" %}{% set picking = False %}
+  {% include "partials/drives.html" %}
+  <div class="actions" style="margin-top:8px"><button type="button" class="small" hx-post="/storage/drives/auto" hx-vals='{"on": "{{ 0 if drives.auto_mount else 1 }}"}'>{{ "Stop mounting new drives automatically" if drives.auto_mount else "Mount new drives automatically" }}</button></div>
+</div>
+
 <h3>Move to another disk</h3>
 <div class="card">
   <p class="small muted" style="margin-top:0">Move models or an app's data to another place, such as a bigger disk. GPU Shepherd stops
     the apps that use the folder (letting running work finish), copies it, checks every file arrived, points the apps at
     the new place and starts them again. The old copy stays until you delete it here, so you can move back.
-    The new disk must already be mounted on this machine.</p>
+    A newly attached disk is mounted for you (see Drives below); GPU Shepherd never formats one.</p>
   {% if st.movable %}
   <form hx-post="/storage/move/check">
     <div class="fields">
@@ -30,9 +39,10 @@
         </select></div>
       <div><label for="move-dest">New place</label>
         <input id="move-dest" name="dest" required placeholder="/mnt/disk2/models" autocomplete="off">
-        <div class="hint">A new or empty folder. The folder it goes in must already exist.</div></div>
+        <div class="hint">A new or empty folder. The folder it goes in must already exist. Type it, or choose it from the drives and folders.</div></div>
     </div>
-    <div class="actions"><button type="submit">Check and move…</button></div>
+    <div class="actions"><button type="button" hx-get="/storage/pick" hx-include="#move-source">Choose where…</button>
+      <button type="submit">Check and move…</button></div>
   </form>
   {% else %}<p class="muted small" style="margin:0">No app uses a models or app data folder yet.</p>{% endif %}
   {% if st.moves %}

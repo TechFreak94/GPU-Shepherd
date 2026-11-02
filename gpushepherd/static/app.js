@@ -92,6 +92,7 @@
       e.preventDefault();
       const input = document.querySelector("[name=" + (pick.dataset.pickTarget || "file") + "]");
       if (input) { input.value = pick.dataset.pickFile; input.focus(); }
+      if (pick.hasAttribute("data-pick-close")) closeModal();
       const id = document.querySelector("[name=id]");
       if (id && !id.value && pick.dataset.suggestId) id.value = pick.dataset.suggestId;
       return;

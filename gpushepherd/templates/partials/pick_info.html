@@ -1,0 +1,6 @@
+{% if p.error %}<p class="small" style="margin:6px 0">{{ p.error }}</p>
+{% else %}
+<p class="small" style="margin:6px 0">New place: <span class="mono">{{ p.dest }}</span>
+  {% if p.disk %}<br><span class="muted">on {{ p.disk }}, {{ p.free|gb }} free of {{ p.total|gb }}</span>{% endif %}</p>
+<button type="button" class="primary" data-pick-file="{{ p.dest }}" data-pick-target="dest" data-pick-close>Use this place</button>
+{% endif %}

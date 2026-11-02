@@ -13,6 +13,7 @@ re-creating its container (its data lives in volumes, so nothing is lost).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import random
 import re
@@ -59,6 +60,7 @@ class ContainerState:
     image: str
     status_text: str = ""       # Docker's own summary, e.g. "Up 3 hours" or "Exited (1) 2 minutes ago"
     exit_code: int | None = None
+    image_id: str = ""          # the image the container was created from (a newer one may be pulled since)
 
 
 @dataclass
@@ -88,9 +90,12 @@ class Backend(Protocol):
                    user: str | None, kind: str) -> None: ...
     def helpers(self, kind: str) -> dict[str, "HelperState"]: ...
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
-                 user: str | None = None) -> str: ...
+                 user: str | None = None, host: bool = False) -> str: ...
     def images(self, refs: list[str]) -> dict[str, int]: ...
     def remove_image(self, ref: str) -> None: ...
+    def image_info(self, refs: list[str]) -> dict[str, tuple[str, list[str]]]: ...
+    def registry_digest(self, ref: str) -> str: ...
+    def pull(self, image: str, log) -> None: ...
     def ping(self) -> str: ...
 
 
@@ -188,7 +193,7 @@ class DockerBackend:
                 instance_id=iid, name=name, running=state == "running", status=state,
                 gpus=_gpus_from_label(labels.get(LABEL_GPUS, "")),
                 config_hash=labels.get(LABEL_CONFIG, ""), image=c.get("Image", ""),
-                status_text=c.get("Status", ""))
+                status_text=c.get("Status", ""), image_id=c.get("ImageID", ""))
         return out
 
     def ensure_network(self, name: str) -> None:
@@ -216,6 +221,10 @@ class DockerBackend:
         except self._errors.ImageNotFound:
             pass
         log(f"Pulling {image} (first time only - this can take a while)")
+        self.pull(image, log)
+
+    def pull(self, image: str, log) -> None:
+        """Download the image the tag points at now, even when one is already here."""
         repo, _, tag = image.rpartition(":")
         if not repo or "/" in tag:          # no tag given
             repo, tag = image, "latest"
@@ -363,13 +372,18 @@ class DockerBackend:
         return out
 
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
-                 user: str | None = None) -> str:
+                 user: str | None = None, host: bool = False) -> str:
         """Run `sh -c script` in a throwaway container with `volumes` mounted and wait for it: for
-        file work in folders GPU Shepherd can't write itself. Raises BackendError if it fails."""
+        file work in folders GPU Shepherd can't write itself. With host, the container is
+        privileged and sees the host's processes, so the script can step into the host's own
+        namespaces (nsenter): for looking at and mounting the machine's drives. Raises BackendError
+        if it fails."""
+        extra = {"privileged": True, "pid_mode": "host"} if host else {}
         try:
             out = self.client.containers.run(
                 image, ["-c", script], entrypoint="sh", remove=True, stdout=True, stderr=True, user=user,
-                volumes=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], labels={LABEL_HELPER: "task"})
+                volumes=[bind_spec(h, c, ro, self.selinux) for h, c, ro in volumes], labels={LABEL_HELPER: "task"},
+                **extra)
             return out.decode("utf-8", "replace")
         except self._errors.ContainerError as err:
             text = (err.stderr or b"").decode("utf-8", "replace").strip()
@@ -397,6 +411,28 @@ class DockerBackend:
                 raise BackendError(f"{ref} is still used by a container") from err
             raise BackendError(err.explanation or str(err)) from err
 
+    def image_info(self, refs: list[str]) -> dict[str, tuple[str, list[str]]]:
+        """The images among `refs` that are on this machine: (image ID, registry digests)."""
+        out = {}
+        for ref in refs:
+            try:
+                img = self.api.inspect_image(ref)
+            except self._errors.ImageNotFound:
+                continue
+            except self._errors.APIError as err:
+                raise BackendError(err.explanation or str(err)) from err
+            out[ref] = (img.get("Id", ""), list(img.get("RepoDigests") or []))
+        return out
+
+    def registry_digest(self, ref: str) -> str:
+        """The digest the image's tag points at in its registry now (asked through Docker)."""
+        try:
+            return self.api.inspect_distribution(ref)["Descriptor"]["digest"]
+        except self._errors.APIError as err:
+            raise BackendError(err.explanation or str(err)) from err
+        except (KeyError, TypeError) as err:
+            raise BackendError(f"the registry gave no digest for {ref}") from err
+
 
 def _ago(since: float) -> str:
     secs = max(int(time.time() - since), 0)
@@ -421,8 +457,14 @@ class FakeBackend:
         self.helper_exit = 0
         self.tasks: list[tuple[str, list[tuple[str, str, bool]]]] = []   # (script, volumes) of run_task
         self.present: dict[str, int] = {}     # images "on this machine" -> size
+        # image versions: what the registry has (ref -> digest) and what is here (ref -> digest);
+        # an image not listed is the same in both
+        self.remote: dict[str, str] = {}
+        self.local: dict[str, str] = {}
+        self.registry_error: dict[str, str] = {}
         self.execs: list[tuple[str, list[str], dict[str, str], str]] = []   # (name, cmd, env, workdir)
         self.exec_reply = lambda name, cmd, env: (0, "[]")                  # what an exec answers
+        self._ids: dict[str, str] = {}        # container -> image ID it was created from
         self._lock = threading.Lock()
 
     def ping(self) -> str:
@@ -433,7 +475,7 @@ class FakeBackend:
             return {spec.instance_id: ContainerState(
                 instance_id=spec.instance_id, name=name, running=self.running[name],
                 status="running" if self.running[name] else "exited", gpus=list(spec.gpus),
-                config_hash=spec.config_hash, image=spec.image,
+                config_hash=spec.config_hash, image=spec.image, image_id=self._ids.get(name, ""),
                 status_text=(f"Up {_ago(self.started.get(name, time.time()))}" if self.running[name]
                              else "Exited (0)"))
                 for name, spec in self.containers.items()}
@@ -448,6 +490,7 @@ class FakeBackend:
         time.sleep(self.slow)
         with self._lock:
             self.containers[spec.name] = spec
+            self._ids[spec.name] = self._image_id(spec.image)
             self.running[spec.name] = True
             self.started[spec.name] = time.time()
         self.calls.append(f"create {spec.name} gpus={','.join(map(str, spec.gpus))}")
@@ -492,7 +535,7 @@ class FakeBackend:
         self.calls.append(f"helper {name}")
 
     def run_task(self, image: str, script: str, volumes: list[tuple[str, str, bool]],
-                 user: str | None = None) -> str:
+                 user: str | None = None, host: bool = False) -> str:
         self.tasks.append((script, volumes))
         self.calls.append("task")
         return ""
@@ -505,6 +548,25 @@ class FakeBackend:
             raise BackendError(f"{ref} is still used by a container")
         self.present.pop(ref, None)
         self.calls.append(f"rmi {ref}")
+
+    def _digest(self, ref: str, where: dict[str, str]) -> str:
+        return where.get(ref) or "sha256:" + hashlib.sha256(ref.encode()).hexdigest()
+
+    def _image_id(self, ref: str) -> str:
+        return "sha256:id-" + self._digest(ref, self.local)[7:19]
+
+    def image_info(self, refs: list[str]) -> dict[str, tuple[str, list[str]]]:
+        return {r: (self._image_id(r), [f"{r.rpartition(':')[0] or r}@{self._digest(r, self.local)}"]) for r in refs}
+
+    def registry_digest(self, ref: str) -> str:
+        if ref in self.registry_error:
+            raise BackendError(self.registry_error[ref])
+        return self._digest(ref, self.remote)
+
+    def pull(self, image: str, log) -> None:
+        time.sleep(self.slow)
+        self.local[image] = self._digest(image, self.remote)
+        self.calls.append(f"pull {image}")
 
     def helpers(self, kind: str) -> dict[str, HelperState]:
         """Demo helpers run for helper_seconds, then exit 0 (or helper_exit)."""
