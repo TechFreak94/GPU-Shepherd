@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.12 - 2026-11-02
+
+- Moving storage: pick the new place from your drives and a folder tree; newly attached drives with data are mounted automatically. (#39)
+- Apps can now find and install new releases of their images, by hand or automatically per app, with a notice on the app's card. (#39)
+
 ## 0.13.11 - 2026-10-30
 
 - Move a models folder or an app's data folder to another disk from Settings > Storage, with a verified copy and "Move back". (#38)
