@@ -160,20 +160,25 @@ theme is the one exception: it is a choice saved in each browser.
 | `models show SERVER MODEL` | One model's settings. | Models › Edit |
 | `models set SERVER MODEL KEY=VALUE...` | Add a model or change one, by the keys in [Models](advanced.md#models): `file=/models/x.gguf ctx_size=32768 kv_cache=q8_0 aliases=chat,coder sampling="--temp 0.6" thinking=off mtp=2 keep_loaded=true`. `id=new-id` renames it (auto names follow). GPU and RAM: `offload.2.cpu_moe=999`, `offload.1.gpu_layers=30`, `offload.2=` removes the row for 2 GPUs. | Models › Add / Edit |
 | `models suggested SERVER` | The [suggested models](advanced.md#suggested-models): how each fits this machine, whether it is downloaded (or how far along), and whether the server has it. | Models › Suggested models |
+| `models add-link SERVER LINK [--name NAME] [--mmproj LINK]` | Add a model by the link of its `.gguf` file (and its vision projector), downloading it like a suggested one. | Models › Add a model from a link |
+| `models tuning SERVER` | [Suggested adjustments](advanced.md#tuning) and what was decided about each. `models tuning-apply`, `tuning-dismiss` and `tuning-undo SERVER KEY` decide one. | Models › Suggested adjustments |
 | `models add-suggested SERVER KEY` | Add a suggested model with its makers' settings, downloading it if needed: `models add-suggested llm qwen3-coder-30b-a3b`. | Suggested models › Add |
 | `models download SERVER KEY`, `models stop-download SERVER KEY` | Download (or resume) a suggested model's files; stop a download (starting it again resumes). | Download / Stop |
 | `models delete SERVER MODEL` | Remove a model. | Models › Delete |
 | `models load SERVER MODEL`, `models unload SERVER [MODEL]` | Load a model now; unload one, or all of them. Unloading refuses while the server is answering. | Load / Unload |
 | `models auto-set SERVER ALIAS DEFAULT [N=MODEL...]` | Add or replace an auto name: `models auto-set llm coder small-coder 2=big-coder`. | Models › Auto names |
 | `models auto-delete SERVER ALIAS` | Remove an auto name. | Models › Auto names |
-| `models settings SERVER [KEY=VALUE...]` | Show or change `threads`, `health_timeout` and `llama_server`. `--new-api-key` gives the server a new API key. | Models › Server settings |
+| `models settings SERVER [KEY=VALUE...]` | Show or change `threads`, `health_timeout`, `llama_server`, `fit_gpus` and `auto_tune`. `--new-api-key` gives the server a new API key. | Models › Server settings |
 | `app-updates` | Settings added to installed apps since you installed them. `app-updates apply INSTANCE KEY` (or `--all`) applies one, `app-updates skip INSTANCE KEY` stops it being offered. | App updates banner |
+| `app-versions` | New releases of the apps' images. `app-versions check` looks now, `app-versions update INSTANCE` installs one, `app-versions auto INSTANCE on\|off` sets automatic installs. | App cards › Update, Settings › App updates |
 | `storage` | Free space per disk, folder sizes, app images and what looks unused. `storage remove-images` and `remove-orphans` clean up; `storage trash-files PATH...` and `trash-folder NAME` move unused model files or an app data folder to the trash. | Storage |
+| `storage drives`, `storage mount DEVICE`, `storage browse [PATH]` | The machine's drives, mount one that holds data, list the folders in a place. | Storage › Other disks |
+| `storage move PATH NEW-PLACE`, `storage moves`, `storage move-back ID`, `storage delete-old ID` | [Move a folder to another disk](advanced.md#other-disks) (asks first; `-y` doesn't, `--no-wait` returns at once), list moves, point the apps back at the old copy, delete the old copy. | Storage › Move to another disk |
 | `trash`, `trash restore ID`, `trash delete ID`, `trash empty` | What is in the trash, put one back, delete one for good, empty it (`-y` doesn't ask). | Storage › Trash |
 | `jobs` | Recent changes and how they ended. | Dashboard › last change |
 | `jobs show N` | Follow a change's log. | Log |
 | `jobs skip N`, `jobs cancel N` | While a change waits for running work: stop without waiting longer, or call it off. | Stop now / Cancel change |
-| `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address`, `network` and `trash_days`. | Settings › Containers, Storage › Trash |
+| `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address`, `network`, `trash_days` and `image_check_hours`. | Settings › Containers, Storage › Trash |
 | `password` | Change the admin password (asks for the current and the new one). | Settings › Password |
 | `token` | Print the API token. `--new` makes a new one; the old one stops working. Reads the data folder, so it works without the app running. | Settings › API and command line |
 | `update` | Running version, and whether an update is waiting. | Version number |

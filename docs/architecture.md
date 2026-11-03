@@ -19,6 +19,11 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
                       ├─ storage.py / trash.py   what takes disk space; the trash deletes go to first
+                      ├─ drives.py / moves.py   attached drives and moving a folder to another disk (a helper container)
+                      ├─ image_updates.py   new releases of the apps' images, found by asking the registries
+                      ├─ placement.py / gguf.py / budget.py   fewest GPUs per model, KV-cache sizes from GGUF headers, memory checks
+                      ├─ tuning.py     measured VRAM and speed -> suggested adjustments (offered, never forced)
+                      ├─ first_run.py  creates a preset on the first start without install.sh
                       ├─ app_updates.py  settings installed apps are missing from their current template
                       ├─ logins.py     apps' accounts: read them, scripts that set a new password (pure)
                       ├─ credits.py    open-source projects and licenses for the Credits dialog

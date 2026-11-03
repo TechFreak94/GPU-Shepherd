@@ -1,0 +1,16 @@
+# Weekly update pull requests. Each merge makes a release, so these are labelled "no release":
+# create the labels "dependencies" and "no release" once (Issues > Labels).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    labels: ["dependencies", "no release"]
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+    labels: ["dependencies"]
+  - package-ecosystem: docker
+    directory: /
+    schedule: {interval: weekly}
+    labels: ["dependencies"]

@@ -1,0 +1,49 @@
+name: Bug report
+description: Something doesn't work, or works differently than the docs say
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Don't paste API keys, tokens, passwords or your `settings.yaml`.**
+        For security problems use the private reporting link on the issue chooser instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Install ... 2. Start ... 3. ..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GPU Shepherd version
+      description: Click the version number at the top of the dashboard, or run `gpu-shepherd update`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is it installed?
+      options: ["install.sh", "docker compose (clone)", "docker compose (published image)", "demo mode", "other"]
+    validations:
+      required: true
+  - type: textarea
+    id: machine
+    attributes:
+      label: Machine
+      description: OS and version, GPUs (model and count), NVIDIA driver, Docker version. Proxmox, Unraid, TrueNAS or WSL2? Say so.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`sudo docker compose logs gpu-shepherd` or the instance's Logs. Remove anything private first."
+      render: text

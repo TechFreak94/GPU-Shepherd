@@ -20,10 +20,11 @@ each instance says what it needs, and starting or stopping anything re-plans who
 ## Features
 
 - **App Center**: install an LLM server (with a chat model, a coding model, an embeddings model for
-  chatting with your documents, or any mix), Ollama, Open WebUI, LibreChat, AnythingLLM, Hermes
-  Agent, Langflow (marked *Experimental*), ComfyUI, InvokeAI or Speaches (speech to text and text
-  to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
-  LibreChat comes with its MongoDB database, which starts and stops with LibreChat. Each card
+  chatting with your documents, or any mix), Ollama, vLLM, Open WebUI, LibreChat, AnythingLLM,
+  Hermes Agent, SillyTavern, Open Notebook, Langflow (marked *Experimental*), ComfyUI, InvokeAI or
+  Speaches (speech to text and text to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
+  LibreChat comes with its MongoDB database and Open Notebook with its SurrealDB database; they
+  start and stop with the app. Each card
   shows the app's license and project page. **Logins** on an app's card lists its accounts and
   sets a new password when one is forgotten.
   **Install** asks only what it can't work out: it picks a free ID and port, mounts the right
@@ -64,6 +65,10 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Model settings**: thinking on or off, MTP (multi-token prediction, up to twice as fast),
   KV cache size, how a model is split over several GPUs, unloading when idle, and an embeddings
   model that stays loaded beside the chat model instead of swapping it out.
+- **Fewer GPUs for small models, and tuning**: a model that fits on one GPU runs on one, leaving
+  the others free (models are kept apart per GPU); GPU Shepherd also measures how much GPU memory
+  and how many tokens a second each model really gets and **offers** adjustments, which you apply,
+  dismiss or undo. Nothing changes without your say-so unless you turn on automatic tuning.
 - **GPU + system RAM**: keep part of a model (MoE expert layers or whole layers) in system RAM so
   models larger than your GPUs still run, set per GPU count.
 
@@ -77,6 +82,11 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Storage and trash**: free space per disk, folder sizes, unused app images and model files, and a
   trash that deleting an instance or a file goes to first, so you can put it back.
 - **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
+  Separately, GPU Shepherd checks the registries for newer **releases of each app's image** and
+  updates the app on a button, or by itself if you choose.
+- **Other disks**: attached drives (mounted for you if you allow it, never formatted) and a folder
+  picker for models and app data. **Move to another disk** copies a folder, checks the copy, points
+  the apps at it and keeps the old one until you delete it.
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.
@@ -96,6 +106,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - [JSON API](docs/api.md): `/api/v1`, the API token, and every endpoint with examples.
 - [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
   the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
+- [Contributing](CONTRIBUTING.md): how to propose a change, what a pull request needs and how
+  changes are reviewed and merged. [Security policy](SECURITY.md), [Code of conduct](CODE_OF_CONDUCT.md).
 - [Presets](gpushepherd/presets/README.md): ready-made sets of instances, and how to make your own.
 - [Architecture](docs/architecture.md): how the code fits together.
 
@@ -157,7 +169,6 @@ Same requirements, nothing to build: [compose.standalone.yaml](compose.standalon
 image published with every release. Save it as `compose.yaml` in an empty folder, then:
 
 ```bash
-sudo docker login ghcr.io     # while the image is private: GitHub user + a token with read:packages
 sudo docker compose up -d
 sudo docker compose logs gpu-shepherd | grep "First start"   # the generated admin password
 ```
@@ -295,6 +306,9 @@ the previous version next to it as `<file>.prev`. Every key is described in
 
 ## Security
 
+To report a vulnerability, use GitHub's private reporting, not a public issue: see
+[SECURITY.md](SECURITY.md).
+
 GPU Shepherd controls Docker through its socket, which is root-equivalent on the host. It has a
 login (scrypt-hashed password, `SameSite=strict` session cookie), refuses state-changing requests
 that don't come from its own pages, and sends a strict Content-Security-Policy. Still: keep it on
@@ -309,11 +323,11 @@ pytest
 gpu-shepherd --demo                      # fake GPUs/containers, admin / demo-password
 ```
 
-See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and
+[docs/architecture.md](docs/architecture.md) for how the code fits together.
 
 ## Roadmap
 
-- More model servers: vLLM.
 - Shared GPUs: let several small instances share one GPU with memory budgets.
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).
@@ -325,13 +339,18 @@ See [docs/architecture.md](docs/architecture.md) and [CONTRIBUTING.md](CONTRIBUT
 Apache-2.0 - see [LICENSE](LICENSE). Bundles [htmx](https://htmx.org) (Zero-Clause BSD,
 `gpushepherd/static/htmx.LICENSE.txt`).
 
+GPU Shepherd is an independent project. It isn't affiliated with or endorsed by NVIDIA, Docker or
+the projects it runs; their names are trademarks of their owners and are used only to say what
+GPU Shepherd works with. The Apache license doesn't grant rights to the GPU Shepherd name.
+
 ## Acknowledgements
 
 GPU Shepherd is built on, and runs, other people's open-source work: FastAPI, htmx, Docker, the
 NVIDIA Container Toolkit, llama.cpp and llama-swap, and every app in the App Center (Open WebUI,
-ComfyUI, Ollama, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Agent). Apps and
+ComfyUI, Ollama, vLLM, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Agent,
+SillyTavern, Open Notebook). Apps and
 models are downloaded from their own publishers and keep their own licenses, shown on each App
-Store card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and
+Center card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and
 what it's used for; the dashboard has the same list under the version number, **Credits**.
 
 ![Open-source credits in the dashboard](docs/screenshots/credits.png)

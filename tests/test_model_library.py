@@ -24,7 +24,7 @@ def test_suggestions_are_generic_and_complete():
         assert m.id == s.key and m.file == f"/models/{s.key}/{s.model.name}"
         assert ml.for_file(m.file) is s
         assert (m.mmproj != "") == s.vision and (m.mtp_draft != "") == (s.draft is not None)
-        assert "zimage" not in s.key and "kdp" not in s.key
+        assert "personal" not in s.key
 
 
 def test_fit_for_machines():
