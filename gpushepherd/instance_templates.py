@@ -1,4 +1,4 @@
-"""The App Store's apps: built-in templates for installing an app as an instance.
+"""The App Center's apps: built-in templates for installing an app as an instance.
 
 A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, LibreChat, Hermes
 Agent...) that asks a few questions and fills in everything else. What it creates is an ordinary
@@ -16,6 +16,7 @@ instances, folders) and gets pydantic objects back.
 from __future__ import annotations
 
 import base64
+import json
 import re
 import secrets
 from dataclasses import dataclass, field
@@ -74,18 +75,22 @@ class Template:
     models: tuple[ModelSlot, ...] = ()        # model servers: the models picked while installing
     connects: str = ""                         # how it is told about a model server (see CONNECTS)
     command: tuple[str, ...] = ()
-    login: tuple[str, str] | None = None       # (user env var, password env var) of its own login
+    login: tuple[str, str] | None = None       # (user env var or "" for a password only, password env var)
     data_owner: tuple[int, int] | None = None  # uid:gid the app runs as, for the folders made for it
     needs: str = ""
     docs: str = ""
-    license: str = ""                          # the app's own license, credited in the App Store
-    badge: str = ""                            # a few characters for its App Store icon
+    license: str = ""                          # the app's own license, credited in the App Center
+    badge: str = ""                            # a few characters for its App Center icon
     tag: str = ""                              # what kind of instance it is, on its dashboard card
     companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
-    hidden: bool = False                       # a companion: not offered in the App Store itself
+    hidden: bool = False                       # a companion: not offered in the App Center itself
     after_install: str = ""                    # what is left to do in the app itself once it runs
-    experimental: str = ""                     # why it is marked Experimental in the App Store ("" = it isn't)
+    experimental: str = ""                     # why it is marked Experimental in the App Center ("" = it isn't)
     secrets: tuple[str, ...] = ()              # environment variables given a fresh random value when installed
+    shares_env: tuple[str, ...] = ()           # a companion: variables it takes from its app (a shared password)
+    user: str | None = None                    # run as this user (uid:gid) instead of the image's own
+    shm_size: str | None = None                # shared memory, for apps that split work across GPUs
+    engine: str = ""                           # "vllm": a model server with its own install answers (see VLLM_*)
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -124,6 +129,22 @@ TEMPLATES: tuple[Template, ...] = (
                       "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
                       "LLM server through its llama.cpp integration instead.",
         needs="An NVIDIA GPU", license="MIT", docs="https://docs.ollama.com"),
+    Template(
+        key="vllm", tag="Model Server", badge="vL", title="vLLM", group="Model servers", engine="vllm",
+        blurb="A fast OpenAI-compatible server for one Hugging Face model, built for many people chatting at once.",
+        points=("One model, kept loaded, split across the GPUs you give it",
+                "Downloads the model from Hugging Face into the models folder's huggingface/ subfolder",
+                "Chat apps here can use it like the LLM server, as the model chat"),
+        default_id="vllm", default_name="vLLM", description="vLLM model server",
+        image="vllm/vllm-openai:latest", container_port=8000, host_port=8000, gpu="one",
+        models_mount=("huggingface", "/root/.cache/huggingface", False), secrets=("VLLM_API_KEY",),
+        shm_size="8g",   # its GPUs talk through shared memory when a model is split across them
+        after_install="Its first start downloads the model, which can take a while: watch its log on the dashboard. "
+                      "It answers at http://this-machine:PORT/v1 with the key VLLM_API_KEY (under Edit), as the model "
+                      "chat. It takes the GPUs' memory for itself while it runs, and keeps the number of GPUs you "
+                      "picked: to change it, install it again with another count rather than editing its GPUs.",
+        needs="An NVIDIA GPU with driver 580 or newer, and a model that fits in the GPUs' memory (no system RAM)",
+        license="Apache-2.0", docs="https://docs.vllm.ai"),
     Template(
         key="open-webui", tag="Chat UI", badge="OW", title="Open WebUI", group="Chat and agents",
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
@@ -202,6 +223,36 @@ TEMPLATES: tuple[Template, ...] = (
                       "block with the same address and the model embed, if the server has an embeddings model.",
         needs="An LLM server for its flows to use", license="MIT", docs="https://docs.langflow.org"),
     Template(
+        key="sillytavern", tag="Chat UI", badge="ST", title="SillyTavern", group="Chat and agents",
+        blurb="Chat and role-play with characters you make or import, with group chats, lore books and extensions.",
+        points=("No GPU needed", "Connects to a model server for you, API key included",
+                "Its own login for the web page"),
+        default_id="sillytavern", default_name="SillyTavern", description="Character chat",
+        image="ghcr.io/sillytavern/sillytavern:latest", container_port=8000, host_port=8000, gpu="none",
+        # reachable from other machines only with a login: its default only lets this machine in
+        env={"NODE_ENV": "production", "SILLYTAVERN_WHITELISTMODE": "false", "SILLYTAVERN_BASICAUTHMODE": "true"},
+        login=("SILLYTAVERN_BASICAUTHUSER_USERNAME", "SILLYTAVERN_BASICAUTHUSER_PASSWORD"),
+        appdata=(("config", "/home/node/app/config"), ("data", "/home/node/app/data"),
+                 ("plugins", "/home/node/app/plugins"), ("extensions", "/home/node/app/public/scripts/extensions/third-party")),
+        connects="sillytavern",
+        after_install="Open it and log in with the user name and password you chose. It is already connected to the "
+                      "model server (API Connections: Chat Completion, Custom), so pick a character and chat.",
+        needs="An LLM server to chat with", license="AGPL-3.0", docs="https://docs.sillytavern.app"),
+    Template(
+        key="open-notebook", tag="Research UI", badge="ON", title="Open Notebook", group="Chat and agents",
+        blurb="A private NotebookLM: add PDFs, web pages and videos, then chat with them, take notes and make podcasts.",
+        points=("No GPU needed", "Connects to a model server for you, API key included",
+                "Installs its SurrealDB database alongside, which starts and stops with it"),
+        default_id="notebook", default_name="Open Notebook", description="Research notebooks",
+        image="lfnovo/open_notebook:v1-latest", container_port=8502, host_port=8502, gpu="none",
+        env={"SURREAL_USER": "root", "SURREAL_NAMESPACE": "open_notebook", "SURREAL_DATABASE": "open_notebook"},
+        secrets=("SURREAL_PASS", "OPEN_NOTEBOOK_ENCRYPTION_KEY"), login=("", "OPEN_NOTEBOOK_PASSWORD"),
+        appdata=(("data", "/app/data"),), companions=("open-notebook-surrealdb",), connects="opennotebook",
+        after_install="Open it and log in with the password you chose. Under Settings, Models, press Sync for "
+                      "OpenAI Compatible, then pick chat as the default chat model (and embed as the embedding "
+                      "model, if the server has one, to search your sources).",
+        needs="An LLM server to chat with", license="MIT", docs="https://github.com/lfnovo/open-notebook"),
+    Template(
         key="invokeai", tag="Image UI", badge="INV", title="InvokeAI", group="Image and video",
         blurb="Image generation with a polished canvas: inpainting, layers and a model manager, in the browser.",
         points=("Takes one GPU, whichever is free", "Outranks model servers when GPUs run short",
@@ -249,12 +300,20 @@ TEMPLATES: tuple[Template, ...] = (
         image="mongo:8.0", command=("mongod", "--noauth", "--bind_ip_all"), container_port=27017, host_port=0,
         gpu="none", appdata=(("mongodb", "/data/db"),), license="SSPL v1 (MongoDB Community Server)",
         docs="https://www.librechat.ai/docs/local/docker"),
+    Template(
+        key="open-notebook-surrealdb", tag="Database", badge="DB", title="Open Notebook database", group="Companions",
+        blurb="SurrealDB for Open Notebook's notebooks, sources and notes.", points=(), hidden=True,
+        default_id="surrealdb", default_name="database", description="SurrealDB for Open Notebook",
+        image="surrealdb/surrealdb:v2", command=("start", "--log", "info", "rocksdb:/mydata/mydatabase.db"),
+        container_port=8000, host_port=0, gpu="none", appdata=(("surrealdb", "/mydata"),),
+        shares_env=("SURREAL_USER", "SURREAL_PASS"), user="0:0",   # root, as upstream runs it, so it can write its folder
+        license="BSL-1.1 (SurrealDB, Apache-2.0 after four years)", docs="https://github.com/lfnovo/open-notebook"),
 )
 
 # the model server an app with a connection can install alongside itself, and the model slot it fills
 BUNDLED_SERVER = "llm-server"
 BUNDLED_SLOT = "chat"
-# App Store keys from before there was one LLM server app
+# App Center keys from before there was one LLM server app
 RENAMED = {"llm-chat": "llm-server", "llm-coder": "llm-server"}
 NEW_SERVER = "new"
 
@@ -265,16 +324,21 @@ GPU_CHOICES = {
 }
 
 
-def gpu_choices(gpus: list) -> dict[str, str]:
+def gpu_choices(gpus: list, t: Template | None = None) -> dict[str, str]:
     """The GPU answers an install offers on a machine with these GPUs (gpu.Gpu): GPU_CHOICES, plus
     "up:N" for each in-between count when there are 3 or more GPUs, and "pin:I" per GPU when there
-    are 2 or more."""
+    are 2 or more. vLLM splits its model across a fixed number of GPUs, so it gets "gpus:N"
+    (2, 4 or 8: counts a model's layers split evenly into) instead of "up to" counts."""
+    pins = {f"pin:{g.index}": f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)" for g in gpus} \
+        if len(gpus) > 1 else {}
+    if t is not None and t.engine == "vllm":
+        out = {"one": GPU_CHOICES["one"]}
+        out |= {f"gpus:{n}": f"{n} free GPUs (splits the model across them)" for n in (2, 4, 8) if n <= len(gpus)}
+        return out | pins
     out = {"one": GPU_CHOICES["one"]}
     out |= {f"up:{n}": f"Up to {n} free GPUs (splits a model across them), at least one" for n in range(2, len(gpus))}
     out["all"] = GPU_CHOICES["all"]
-    if len(gpus) > 1:
-        out |= {f"pin:{g.index}": f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)" for g in gpus}
-    return out | {"none": GPU_CHOICES["none"]}
+    return out | pins | {"none": GPU_CHOICES["none"]}
 
 OFFLOAD_CHOICES = {
     "auto": "Decide from the file size and your GPUs",
@@ -292,11 +356,11 @@ def matches(t: Template, inst: Instance) -> bool:
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
 
 
-OTHER_TAG = "App"        # an instance that isn't from the App Store
+OTHER_TAG = "App"        # an instance that isn't from the App Center
 
 
 def tag_for(inst: Instance) -> str:
-    """The kind tag on an instance's dashboard card: from its App Store app, else generic."""
+    """The kind tag on an instance's dashboard card: from its App Center app, else generic."""
     return next((t.tag for t in TEMPLATES if matches(t, inst)), OTHER_TAG)
 
 
@@ -318,7 +382,7 @@ def app_name(inst: Instance) -> str:
 
 
 def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
-    """Template key -> the instances installed from it (App Store apps only, not companions)."""
+    """Template key -> the instances installed from it (App Center apps only, not companions)."""
     return {t.key: [i for i in instances.values() if matches(t, i)] for t in TEMPLATES if not t.hidden}
 
 
@@ -416,8 +480,9 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
             "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy, "speech": speech,
             **{f"{s.key}_file": "" for s in slots(t)}, **{f"{s.key}_ctx": s.ctx_size for s in slots(t)},
             "offload": "auto", "autostart": False,
-            "login_user": "admin" if t.login else "", "password": secrets.token_urlsafe(12) if t.login else "",
-            "hass_url": "", "hass_token": ""}
+            "login_user": "admin" if t.login and t.login[0] else "",
+            "password": secrets.token_urlsafe(12) if t.login else "",
+            "hass_url": "", "hass_token": "", "hf_model": VLLM_MODEL, "hf_token": "", "max_len": VLLM_MAX_LEN}
 
 
 def answer_keys(t: Template) -> list[str]:
@@ -436,7 +501,9 @@ def answer_keys(t: Template) -> list[str]:
     if slots(t):
         keys.append("offload")
     if t.login:
-        keys += ["login_user", "password"]
+        keys += ["login_user", "password"] if t.login[0] else ["password"]
+    if t.engine == "vllm":
+        keys += ["hf_model", "hf_token", "max_len"]
     if t.connects == "hermes":
         keys += ["hass_url", "hass_token"]
     return keys + ["autostart"]
@@ -478,9 +545,10 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
     env = dict(t.env) | {k: secrets.token_urlsafe(24) for k in t.secrets}
     if t.login:
         user, password = str(a.get("login_user", "")).strip(), str(a.get("password", "")).strip()
-        if not user or len(password) < 8:
-            raise ConfigError("Login: enter a user name and a password of at least 8 characters")
-        env |= {t.login[0]: user, t.login[1]: password}
+        if t.login[0] and not user or len(password) < 8:
+            raise ConfigError("Login: enter a user name and a password of at least 8 characters"
+                              if t.login[0] else "Login: enter a password of at least 8 characters")
+        env |= ({t.login[0]: user} if t.login[0] else {}) | {t.login[1]: password}
     if t.connects == "openwebui":
         env.update(_openwebui(a, m))
     elif t.connects == "hermes":
@@ -489,11 +557,20 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         env.update(_librechat(a, m, requires))
     elif t.connects == "langflow":
         env.update(_langflow(a, m))
+    elif t.connects == "sillytavern":
+        env.update(_server_env(a, m))
+    elif t.connects == "opennotebook":
+        env |= {"SURREAL_URL": f"ws://{requires[0]}:8000/rpc"} | _opennotebook(_server(a, m), m)
+    command = list(t.command)
+    if t.engine == "vllm":
+        command, hf_env = _vllm(a, gpu)
+        env |= hf_env
 
     inst = Instance(id=iid, name=str(a.get("name", "")).strip() or iid, description=t.description, kind=t.kind,
-                    image=t.image, command=list(t.command), env=env,
+                    image=t.image, command=command, env=env,
                     ports=[PortMap(host=int(port), container=t.container_port)], volumes=volumes, gpu=gpu,
-                    autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key, requires=requires)
+                    autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key, requires=requires,
+                    shm_size=t.shm_size, user=t.user)
     return inst, _models(t, a, m)
 
 
@@ -516,9 +593,11 @@ def companions(t: Template, inst: Instance) -> list[Instance]:
         cid = companion_id(inst.id, c)
         if cid not in inst.requires or not appdata:
             continue
+        shared = {k: inst.env[k] for k in c.shares_env if k in inst.env}
         out.append(Instance(
             id=cid, name=f"{inst.name} {c.default_name}", description=c.description, image=c.image,
-            command=list(c.command), env=dict(c.env), gpu=_gpu_policy("none", c.priority), app=c.key,
+            command=list(c.command), env=dict(c.env) | shared, gpu=_gpu_policy("none", c.priority), app=c.key,
+            user=c.user, shm_size=c.shm_size,
             volumes=[VolumeMap(host=f"{appdata}/{sub}", container=inside) for sub, inside in c.appdata + c.files]))
     return out
 
@@ -563,6 +642,8 @@ def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
         out["server.env"] = _anythingllm_env(_server_url(server, m) if info else "", info or {})
     elif t.connects == "librechat":
         out["librechat.yaml"] = LIBRECHAT_YAML
+    elif t.connects == "sillytavern" and info:
+        out |= _sillytavern_files(_server_url(server, m), info)
     for name, _ in t.files:
         out.setdefault(name, "")
     return out
@@ -627,6 +708,10 @@ def app_env(t: Template, server: str, m: Machine) -> dict[str, str]:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
     elif t.connects == "langflow" and a["server"]:
         env |= _langflow_server(server, m)
+    elif t.connects == "sillytavern" and a["server"]:
+        env |= _server_env(a, m)
+    elif t.connects == "opennotebook" and a["server"]:
+        env |= _opennotebook(server, m)
     return env
 
 
@@ -646,6 +731,8 @@ def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
         return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=1, priority=priority)
     if choice == "all":
         return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=0, priority=priority)
+    if choice.startswith("gpus:") and choice[5:].isdigit() and int(choice[5:]) >= 1:
+        return GpuPolicy(mode="elastic", min_gpus=int(choice[5:]), max_gpus=int(choice[5:]), priority=priority)
     if choice.startswith("up:") and choice[3:].isdigit() and int(choice[3:]) >= 1:
         return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=int(choice[3:]), priority=priority)
     if choice.startswith("pin:") and choice[4:].isdigit():
@@ -695,6 +782,66 @@ def _librechat(a: dict, m: Machine, requires: list[str]) -> dict[str, str]:
     if server:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
     return env
+
+
+def _server_env(a: dict, m: Machine) -> dict[str, str]:
+    """The model server's address and key, for apps whose own settings hold the connection: kept in
+    the environment so they show under Edit and app updates can tell which server it uses."""
+    server = _server(a, m)
+    return {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]} if server else {}
+
+
+def _sillytavern_files(url: str, info: dict) -> dict[str, str]:
+    """SillyTavern's first user's settings, connected to the model server: a Custom (OpenAI-compatible)
+    chat completion source that connects when the page opens. SillyTavern fills in everything else
+    from its defaults and moves the key into its own secrets format on its first start."""
+    settings = {"main_api": "openai", "power_user": {"auto_connect": True},
+                "oai_settings": {"chat_completion_source": "custom", "custom_url": url,
+                                 "custom_model": info.get("default_model") or "chat"}}
+    return {"data/default-user/settings.json": json.dumps(settings, indent=4) + "\n",
+            "data/default-user/secrets.json": json.dumps({"api_key_custom": info["api_key"]}, indent=4) + "\n"}
+
+
+def _opennotebook(server: str, m: Machine) -> dict[str, str]:
+    """Open Notebook's OpenAI Compatible provider, which it reads from the environment."""
+    if not server:
+        return {}
+    return {"OPENAI_COMPATIBLE_BASE_URL": _server_url(server, m), "OPENAI_COMPATIBLE_API_KEY": m.servers[server]["api_key"]}
+
+
+# vLLM: the model it serves when none is picked (small enough for one 8 GB GPU), and its context
+VLLM_MODEL = "Qwen/Qwen3-8B-AWQ"
+VLLM_MAX_LEN = 8192
+VLLM_ALIAS = "chat"
+HF_MODEL = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+
+def _vllm(a: dict, gpu: GpuPolicy) -> tuple[list[str], dict[str, str]]:
+    """vLLM's arguments (the image runs `vllm serve`) and Hugging Face token. It splits the model
+    across exactly the GPUs it gets, so the count is fixed when it is installed."""
+    model = str(a.get("hf_model", "")).strip() or VLLM_MODEL
+    if not HF_MODEL.match(model):
+        raise ConfigError("Model: enter a Hugging Face model name like Qwen/Qwen3-8B-AWQ")
+    length = str(a.get("max_len", "")).strip() or str(VLLM_MAX_LEN)
+    if not length.isdigit() or int(length) < 512:
+        raise ConfigError("Context: enter a whole number of tokens, 512 or more")
+    if gpu.mode == "none" or (gpu.mode == "elastic" and gpu.min_gpus != gpu.max_gpus):
+        raise ConfigError("GPUs: vLLM needs a set number of GPUs")
+    count = len(gpu.gpus) if gpu.mode == "fixed" else gpu.min_gpus
+    command = [model, "--served-model-name", VLLM_ALIAS, model, "--host", "0.0.0.0", "--port", "8000",
+               "--tensor-parallel-size", str(count), "--max-model-len", length, "--gpu-memory-utilization", "0.90"]
+    token = str(a.get("hf_token", "")).strip()
+    return command, {"HF_TOKEN": token} if token else {}
+
+
+def vllm_server(inst: Instance) -> dict | None:
+    """A vLLM instance as a model server apps can connect to (like Machine.servers' entries), or None."""
+    if inst.app != "vllm" or not inst.env.get("VLLM_API_KEY"):
+        return None
+    args = inst.command
+    ctx = next((int(args[i + 1]) for i, x in enumerate(args[:-1]) if x == "--max-model-len" and args[i + 1].isdigit()), 0)
+    names = next((args[i + 1] for i, x in enumerate(args[:-1]) if x == "--served-model-name"), VLLM_ALIAS)
+    return {"api_key": inst.env["VLLM_API_KEY"], "name": inst.name, "default_model": names, "ctx": ctx, "embed": ""}
 
 
 def _langflow(a: dict, m: Machine) -> dict[str, str]:

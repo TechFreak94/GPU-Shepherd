@@ -39,7 +39,7 @@
 <div class="pagehead">
   <div><h1>Install {{ t.title }}</h1>
   <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}{% if t.license %} · License: {{ t.license }}{% endif %}</div></div>
-  <a class="btn" href="/apps">Back to the App Store</a>
+  <a class="btn" href="/apps">Back to the App Center</a>
 </div>
 {% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}
 {% if t.experimental %}<div class="notice need" role="note"><strong>Experimental.</strong> {{ t.experimental }} The steps are under Afterwards, below.</div>{% endif %}
@@ -95,7 +95,7 @@
   <div class="section">
     <h3 style="margin-top:0"><span class="step"></span>Login</h3>
     <div class="fields">
-      <div><label for="login_user">User name</label><input type="text" id="login_user" name="login_user" value="{{ f.login_user }}" required autocomplete="off"></div>
+      {% if t.login[0] %}<div><label for="login_user">User name</label><input type="text" id="login_user" name="login_user" value="{{ f.login_user }}" required autocomplete="off"></div>{% endif %}
       <div><label for="password">Password</label><input type="text" id="password" name="password" value="{{ f.password }}" required minlength="8" autocomplete="new-password" spellcheck="false">
         <div class="hint">For {{ t.title }}'s own web page. A random one is suggested: write it down, or find it later under Logins on the dashboard.</div></div>
     </div>
@@ -125,7 +125,7 @@
           <option value="">Nothing (no voice input or read-aloud)</option>
           {% for id, name in speech %}<option value="{{ id }}" {{ "selected" if f.speech == id }}>{{ name }} ({{ id }})</option>{% endfor %}
         </select>
-        <div class="hint">{% if speech %}Pick your Speaches instance to talk to the chat and have answers read aloud.{% else %}Install Speaches from the App Store first to talk to the chat.{% endif %}</div></div>
+        <div class="hint">{% if speech %}Pick your Speaches instance to talk to the chat and have answers read aloud.{% else %}Install Speaches from the App Center first to talk to the chat.{% endif %}</div></div>
       {% endif %}
     </div>
     <div class="subsection" data-server="{{ new_server }}">
@@ -140,6 +140,20 @@
       {{ suggestion_picker(suggested, slots) }}
       {{ file_picker(files, slots) }}
       {% for n in file_notes %}<div class="hint">{{ n }}</div>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if t.engine == "vllm" %}
+  <div class="section">
+    <h3 style="margin-top:0"><span class="step"></span>Model</h3>
+    <div class="fields">
+      <div><label for="hf_model">Hugging Face model</label><input type="text" id="hf_model" name="hf_model" value="{{ f.hf_model }}" required spellcheck="false">
+        <div class="hint">Its name on huggingface.co, like <span class="mono">Qwen/Qwen3-8B-AWQ</span>. vLLM runs safetensors models (AWQ, GPTQ and FP8 versions are smaller), not .gguf files, and the whole model must fit in the GPUs' memory. Apps ask for it as <span class="mono">chat</span>.</div></div>
+      <div><label for="max_len">Context (tokens)</label><input type="number" id="max_len" name="max_len" min="512" value="{{ f.max_len }}">
+        <div class="hint">vLLM won't start if this much context doesn't fit beside the model: lower it if its log says so.</div></div>
+      <div><label for="hf_token">Hugging Face token <span class="muted small">(optional)</span></label><input type="password" id="hf_token" name="hf_token" value="{{ f.hf_token }}" autocomplete="off">
+        <div class="hint">Only for gated models (some Llama and Gemma models): create one under your Hugging Face settings, Access Tokens.</div></div>
     </div>
   </div>
   {% endif %}

@@ -1,7 +1,7 @@
 """Open-source credits: the projects GPU Shepherd is built on and works with, and their licenses.
 
 Shown in the dashboard's Credits dialog and written out in ACKNOWLEDGEMENTS.md (a test keeps the
-two in step). App Store apps and suggested models carry their own license in instance_templates.py
+two in step). App Center apps and suggested models carry their own license in instance_templates.py
 and model_library.py; this module lists the rest.
 """
 from __future__ import annotations
@@ -55,6 +55,6 @@ WORKS_WITH: tuple[Credit, ...] = (
            "Speaches' default text-to-speech model (ONNX build by speaches-ai)"),
 )
 
-NOTE = ("App Store apps and models are downloaded from their own publishers when you install them; GPU "
+NOTE = ("App Center apps and models are downloaded from their own publishers when you install them; GPU "
         "Shepherd doesn't change or redistribute them, and each keeps its own license. Thank you to everyone "
         "who builds and maintains these projects.")

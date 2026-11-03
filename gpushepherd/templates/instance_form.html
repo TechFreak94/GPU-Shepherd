@@ -4,7 +4,7 @@
 <div id="editor">
 <div class="pagehead">
   <div><h1>{% if editing %}Edit {{ f.name }}{% elif app_t %}Install {{ app_t.title }}{% else %}{{ "Add model server" if f.kind == "llama-swap" else "Add instance" }}{% endif %}</h1>
-  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.{% if not editing and not app_t %} Prefer a few questions instead? <a href="/apps">Pick an app in the App Store</a>.{% endif %}</div></div>
+  <div class="small muted">Saved to <span class="mono">instances/{{ f.id or "&lt;id&gt;"|safe }}.yaml</span>. Changes apply the next time it (re)starts.{% if not editing and not app_t %} Prefer a few questions instead? <a href="/apps">Pick an app in the App Center</a>.{% endif %}</div></div>
   <a class="btn" href="{{ '/' if editing else ('/apps/' ~ app_t.key if app_t else '/apps') }}">Back</a>
 </div>
 {% if app_t %}{% with manual = True %}{% include "partials/install_mode.html" %}{% endwith %}{% endif %}

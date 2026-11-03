@@ -13,7 +13,7 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       │     ├─ gpu.py         nvidia-smi
                       │     ├─ backend.py     DockerBackend (docker SDK) / FakeBackend
                       │     └─ connectors/llamaswap.py   render config, talk to llama-swap
-                      ├─ instance_templates.py   the App Store's apps and what they build (pure)
+                      ├─ instance_templates.py   the App Center's apps and what they build (pure)
                       ├─ model_library.py   suggested models, whether they fit, their settings (pure)
                       ├─ downloads.py  fetches suggested models in a helper container (curl)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
@@ -124,5 +124,5 @@ mounts/environment, and a client with `models()`, `running()`, `load()`, `unload
   client with network calls intercepted (no daemon needed).
 - `tests/test_drain.py` - each busy check against a small fake HTTP server, plus timeout, Stop now
   and cancel.
-- `tests/test_instance_templates.py` - the App Store's apps, what they build and automatic offload.
+- `tests/test_instance_templates.py` - the App Center's apps, what they build and automatic offload.
 - `tests/test_host.py` - host CPU and memory from a fake `/proc`.

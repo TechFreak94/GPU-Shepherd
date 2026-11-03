@@ -9,7 +9,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 
 - **Built on**: Python packages GPU Shepherd installs and runs on. Only one file is bundled in this
   repository: htmx, with its license in `gpushepherd/static/htmx.LICENSE.txt`.
-- **Works with** and **App Store apps**: GPU Shepherd starts these as containers, using the
+- **Works with** and **App Center apps**: GPU Shepherd starts these as containers, using the
   images their own publishers release (Docker Hub or GitHub's registry). It doesn't change,
   rebuild or redistribute them, and each keeps its own license. Some are not plain open-source
   licenses (Open WebUI's branding terms, MongoDB's SSPL, NVIDIA's driver): read them if you
@@ -48,21 +48,25 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [Distil-Whisper large-v3 (faster-whisper build)](https://huggingface.co/Systran/faster-distil-whisper-large-v3) | MIT | Speaches' default speech-to-text model |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | Apache-2.0 | Speaches' default text-to-speech model (ONNX build by speaches-ai) |
 
-## App Store apps
+## App Center apps
 
 | App | License | Image |
 | :- | :- | :- |
 | [LLM server](https://github.com/mostlygeek/llama-swap) | MIT (llama-swap and llama.cpp) | `ghcr.io/mostlygeek/llama-swap:cuda` |
 | [Ollama](https://docs.ollama.com) | MIT | `ollama/ollama:latest` |
+| [vLLM](https://docs.vllm.ai) | Apache-2.0 | `vllm/vllm-openai:latest` |
 | [Open WebUI](https://docs.openwebui.com) | Open WebUI License (BSD-3-Clause plus branding terms) | `ghcr.io/open-webui/open-webui:main` |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/docker) | MIT | `nousresearch/hermes-agent:latest` |
 | [LibreChat](https://www.librechat.ai/docs) | MIT | `librechat/librechat:latest` |
 | [AnythingLLM](https://docs.anythingllm.com/installation-docker/overview) | MIT | `mintplexlabs/anythingllm:latest` |
 | [Langflow](https://docs.langflow.org) | MIT | `langflowai/langflow:latest` |
+| [SillyTavern](https://docs.sillytavern.app) | AGPL-3.0 | `ghcr.io/sillytavern/sillytavern:latest` |
+| [Open Notebook](https://github.com/lfnovo/open-notebook) | MIT | `lfnovo/open_notebook:v1-latest` |
 | [InvokeAI](https://invoke.ai) | Apache-2.0 | `ghcr.io/invoke-ai/invokeai:latest` |
 | [ComfyUI](https://github.com/YanWenKun/ComfyUI-Docker) | GPL-3.0 (ComfyUI), Mulan PSL v2 (the image) | `yanwk/comfyui-boot:cu130-slim-v2` |
 | [Speaches](https://speaches.ai) | MIT | `ghcr.io/speaches-ai/speaches:latest-cuda` |
 | [LibreChat database](https://www.librechat.ai/docs/local/docker) | SSPL v1 (MongoDB Community Server) | `mongo:8.0` |
+| [Open Notebook database](https://github.com/lfnovo/open-notebook) | BSL-1.1 (SurrealDB, Apache-2.0 after four years) | `surrealdb/surrealdb:v2` |
 
 ## Suggested models
 

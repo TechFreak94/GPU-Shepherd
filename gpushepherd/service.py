@@ -250,7 +250,7 @@ class Shepherd:
         elif self.store.instance_path(inst.id).exists():
             raise ConfigError(f"an instance called '{inst.id}' already exists")
         self.store.save_instance(inst)
-        if inst.app and not editing:              # an App Store app installed by hand: its folders and helpers too
+        if inst.app and not editing:              # an App Center app installed by hand: its folders and helpers too
             try:
                 t = tpl.get(inst.app)
             except ConfigError:
@@ -740,7 +740,7 @@ class Shepherd:
         return out
 
     def _image_candidates(self, instances: dict[str, Instance]) -> set[str]:
-        """Images GPU Shepherd may have pulled: the App Store's, the download helper, and the
+        """Images GPU Shepherd may have pulled: the App Center's, the download helper, and the
         instances' own. Other images on the machine are none of its business."""
         return {t.image for t in tpl.TEMPLATES} | {HELPER_IMAGE} | {i.image for i in instances.values()}
 
@@ -801,7 +801,7 @@ class Shepherd:
             self.backend.remove(n)
         return f"Removed {len(names)} container(s) left without an instance." if names else "Nothing to remove."
 
-    # ------------------------------------------------------------------ App Store
+    # ------------------------------------------------------------------ App Center
     def machine(self) -> tpl.Machine:
         instances, _ = self.store.instances()
         servers = {}
@@ -817,6 +817,10 @@ class Shepherd:
                                 "default_model": alias or (model.id if model else ""),
                                 "ctx": model.ctx_size if model else 0,
                                 "embed": ("embed" if "embed" in embed.aliases else embed.id) if embed else ""}
+        for inst in instances.values():           # vLLM servers: one model each, under the name chat
+            info = tpl.vllm_server(inst)
+            if info:
+                servers[inst.id] = info
         return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in self.engine.snapshot().gpus],
                            instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb())
 
@@ -864,7 +868,7 @@ class Shepherd:
 
     @checked
     def install(self, key: str, answers: dict, fill_defaults: bool = False) -> Installed:
-        """Install an App Store app from its install form's answers. With fill_defaults, the
+        """Install an App Center app from its install form's answers. With fill_defaults, the
         answers only need what differs from the form's defaults (for the API and the command)."""
         t = tpl.get(key)
         m = self.machine()
@@ -1207,7 +1211,7 @@ class Shepherd:
         if m.in_container and not running and m.app != "anythingllm":
             status = f"Start {inst.name} to see the accounts in {m.where}."
         elif not accounts:
-            status = (f"{inst.name} has no password yet." if m.app in ("anythingllm", "hermes")
+            status = (f"{inst.name} has no password yet." if m.app in ("anythingllm", *logins.ENV_LOGINS)
                       else f"No accounts yet: the first one is made in {inst.name} itself.")
         return {"instance": iid, "name": inst.name, "where": m.where, "note": m.note, "running": running,
                 "multi_user": multi, "status": status, "accounts": [asdict(a) for a in accounts],
@@ -1225,9 +1229,10 @@ class Shepherd:
         logins.check_password(password)
         user = user.strip()
         running = self._running(iid)
-        if m.app == "hermes":
-            inst.env = inst.env | {"HERMES_DASHBOARD_BASIC_AUTH_USERNAME": user or "admin",
-                                   "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": password}
+        if m.app in logins.ENV_LOGINS:
+            user_var, password_var = tpl.get(m.app).login
+            inst.env = inst.env | ({user_var: user or inst.env.get(user_var) or "admin"} if user_var else {}) \
+                | {password_var: password}
             self.store.save_instance(inst)
             return self._restart_for_login(inst, running), password
         multi = False

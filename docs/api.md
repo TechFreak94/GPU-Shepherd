@@ -7,7 +7,7 @@ give the same messages.
 
 - [Authentication](#authentication)
 - [Conventions](#conventions)
-- [State](#state), [Instances](#instances), [Changes (jobs)](#changes-jobs), [App Store](#app-store),
+- [State](#state), [Instances](#instances), [Changes (jobs)](#changes-jobs), [App Center](#app-center),
   [Model servers](#model-servers), [Settings](#settings), [Updates](#updates)
 - [Examples](#examples)
 
@@ -77,7 +77,7 @@ GPU Shepherd makes one change at a time. Each start, stop, restart, delete and a
 | `POST /api/v1/jobs/{id}/skip` | While it waits for running work: stop without waiting longer (*Stop now*). |
 | `POST /api/v1/jobs/{id}/cancel` | Call the change off before anything is stopped (*Cancel change*). |
 
-## App Store
+## App Center
 
 | Request | What it does |
 |---|---|

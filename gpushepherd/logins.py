@@ -1,7 +1,9 @@
-"""Logins of apps installed from the App Store: who can log in, and setting a new password.
+"""Logins of apps installed from the App Center: who can log in, and setting a new password.
 
 Each app keeps its accounts its own way:
-    Hermes Agent    one user name and password in the instance's environment, read when it starts
+    Hermes Agent,   one user name (Open Notebook: only a password) and password in the instance's
+    SillyTavern,    environment, read when it starts
+    Open Notebook
     AnythingLLM     one password (AUTH_TOKEN) in its own settings file, server.env; in multi-user
                     mode, accounts in its database (storage/anythingllm.db)
     Open WebUI      accounts in its database (data/webui.db)
@@ -29,6 +31,8 @@ from .config import ConfigError, Instance
 MIN_PASSWORD = 8
 SINGLE_USER = "(password only)"        # AnythingLLM without multi-user mode: no user name
 ANY_USER = "(any user name)"           # the LLM server: only the password, its API key, is checked
+# apps whose login is in the instance's environment (Template.login), read when they start
+ENV_LOGINS = ("hermes", "sillytavern", "open-notebook")
 
 
 @dataclass
@@ -62,9 +66,10 @@ def method(inst: Instance) -> Method | None:
                       "as the password. Apps connected to it already have the key. To change it, use New API key "
                       "in its Models page, Server settings; apps connected to it then need the new key too.")
     app = next((t.key for t in tpl.TEMPLATES if tpl.matches(t, inst)), "")    # older ones by their image
-    if app == "hermes":
-        return Method("hermes", "its environment (the dashboard login)", False,
-                      "Setting a new password restarts Hermes Agent if it is running.")
+    if app in ENV_LOGINS:
+        t = tpl.get(app)
+        return Method(app, "its environment" + (" (the dashboard login)" if app == "hermes" else ""), False,
+                      f"Setting a new password restarts {t.title} if it is running.")
     if app == "anythingllm":
         return Method("anythingllm", "its settings file, server.env, or in multi-user mode its database", True,
                       "Without a password anyone who can open AnythingLLM can use it. Setting its password "
@@ -88,11 +93,12 @@ def readable(m: Method, inst: Instance, settings_file: str | None, api_key: str 
     """The accounts of a method that keeps them outside a database."""
     if m.app == "llm-server":
         return [Account(ANY_USER, "API key", api_key)] if api_key else []
-    if m.app == "hermes":
-        user = inst.env.get("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "")
-        if not user:
+    if m.app in ENV_LOGINS:
+        user_var, password_var = tpl.get(m.app).login
+        user = inst.env.get(user_var, "") if user_var else SINGLE_USER
+        if not user or not inst.env.get(password_var):
             return []
-        return [Account(user, "dashboard", inst.env.get("HERMES_DASHBOARD_BASIC_AUTH_PASSWORD", ""))]
+        return [Account(user, "dashboard" if m.app == "hermes" else "login", inst.env[password_var])]
     if m.app == "anythingllm":
         token = env_value(settings_file or "", "AUTH_TOKEN")
         return [Account(SINGLE_USER, "everyone", token)] if token else []

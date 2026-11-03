@@ -12,7 +12,7 @@ def inst(app, **env):
 def test_methods():
     assert logins.method(inst("comfyui")) is None and logins.method(inst("")) is None
     assert not logins.method(inst("hermes")).in_container
-    old = Instance(id="x", name="X", image="ghcr.io/open-webui/open-webui:main")       # from before the App Store
+    old = Instance(id="x", name="X", image="ghcr.io/open-webui/open-webui:main")       # from before the App Center
     assert logins.method(old).where == "its database"
     for app in ("open-webui", "librechat", "langflow", "anythingllm"):
         m = logins.method(inst(app))
@@ -62,3 +62,11 @@ def test_check_password():
     for bad in ("short", "has'quote", "two\nlines"):
         with pytest.raises(ConfigError):
             logins.check_password(bad)
+
+
+def test_logins_in_the_environment():
+    st = inst("sillytavern", SILLYTAVERN_BASICAUTHUSER_USERNAME="me", SILLYTAVERN_BASICAUTHUSER_PASSWORD="pw")
+    assert logins.readable(logins.method(st), st, None) == [logins.Account("me", "login", "pw")]
+    nb = inst("open-notebook", OPEN_NOTEBOOK_PASSWORD="pw")                  # a password, no user name
+    assert logins.readable(logins.method(nb), nb, None) == [logins.Account(logins.SINGLE_USER, "login", "pw")]
+    assert logins.readable(logins.method(inst("open-notebook")), inst("open-notebook"), None) == []

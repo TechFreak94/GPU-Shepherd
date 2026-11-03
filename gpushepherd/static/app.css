@@ -156,13 +156,13 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .toast.error{background:var(--bad);color:#fff}.toast.warn{background:var(--warn);color:#fff}
 .login{max-width:380px;margin:9vh auto 0}
 .changes{margin:0 0 12px;padding-left:18px;font-size:13px;max-height:280px;overflow:auto}.changes li{margin:2px 0}
-/* App Store install forms */
+/* App Center install forms */
 .points{margin:0 0 4px;padding-left:18px;font-size:13px}
 form.guided{counter-reset:step}
 .step::before{counter-increment:step;content:counter(step)}
 .step{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;
 background:var(--accent);color:var(--accent-fg);font-size:12px;margin-right:6px;letter-spacing:0}
-/* App Store */
+/* App Center */
 .filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px}
 .grid.templates{grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
 main a.chip,main a.mode{text-decoration:none}
