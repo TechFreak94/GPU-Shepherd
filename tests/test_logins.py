@@ -62,3 +62,11 @@ def test_check_password():
     for bad in ("short", "has'quote", "two\nlines"):
         with pytest.raises(ConfigError):
             logins.check_password(bad)
+
+
+def test_logins_in_the_environment():
+    st = inst("sillytavern", SILLYTAVERN_BASICAUTHUSER_USERNAME="me", SILLYTAVERN_BASICAUTHUSER_PASSWORD="pw")
+    assert logins.readable(logins.method(st), st, None) == [logins.Account("me", "login", "pw")]
+    nb = inst("open-notebook", OPEN_NOTEBOOK_PASSWORD="pw")                  # a password, no user name
+    assert logins.readable(logins.method(nb), nb, None) == [logins.Account(logins.SINGLE_USER, "login", "pw")]
+    assert logins.readable(logins.method(inst("open-notebook")), inst("open-notebook"), None) == []

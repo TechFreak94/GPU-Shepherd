@@ -531,7 +531,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         have = {x["container_path"] for x in files}
         files = [x for x in files if not x["name"].startswith(("mmproj", "mtp-"))]   # these go with a model
         gpus = engine.snapshot().gpus
-        choices = list(tpl.gpu_choices(gpus).items())
+        choices = list(tpl.gpu_choices(gpus, t).items())
         comfy = [(i.id, i.name) for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"]
         keys = {sl.key for sl in tpl.slots(t)}
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
@@ -594,7 +594,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         slot_fields = [f"{x.key}_{part}" for x in tpl.slots(t) for part in ("file", "ctx")]
         f = {k: str(raw.get(k, "")) for k in ["name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
                                               "comfyui", "speech", "offload", "login_user", "password", "hass_url",
-                                              "hass_token", *slot_fields]}
+                                              "hass_token", "hf_model", "hf_token", "max_len", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
         then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None
         if raw.get("action") == "advanced":

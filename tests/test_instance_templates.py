@@ -179,7 +179,7 @@ def test_installed_counts_older_instances():
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
                    "librechat": [], "anythingllm": [], "langflow": [], "ollama": [], "invokeai": [],
-                   "speaches": []}
+                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": []}
 
 
 def test_kind_tags():
@@ -302,3 +302,67 @@ def test_app_name_replaces_a_name_that_only_repeats_the_tag():
     assert tpl.app_name(Instance(id="x", name="App", image="nginx")) == "App"
     assert tpl.app_name(Instance(id="h", name="Agent UI", image="x", app="hermes")) == "Hermes Agent"
     assert all(t.default_name != t.tag for t in tpl.TEMPLATES)
+
+
+def test_sillytavern():
+    import json
+    m, t = server_machine(), tpl.get("sillytavern")
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["login_user"] == "admin" and len(f["password"]) >= 8
+    inst, _ = tpl.build(t, f, m)
+    env = inst.env
+    assert env["SILLYTAVERN_BASICAUTHMODE"] == "true" and env["SILLYTAVERN_WHITELISTMODE"] == "false"
+    assert env["SILLYTAVERN_BASICAUTHUSER_USERNAME"] == "admin" and env["SILLYTAVERN_BASICAUTHUSER_PASSWORD"] == f["password"]
+    assert env["LLM_BASE_URL"] == "http://llm:8080/v1" and tpl.connected_server(inst, m) == "llm"
+    assert {v.container: v.host for v in inst.volumes}["/home/node/app/data"] == "/a/sillytavern/data"
+    seed = tpl.seed_files(t, f, m)
+    settings = json.loads(seed["data/default-user/settings.json"])
+    assert settings["oai_settings"] == {"chat_completion_source": "custom", "custom_url": "http://llm:8080/v1",
+                                        "custom_model": "chat"} and settings["power_user"]["auto_connect"]
+    assert json.loads(seed["data/default-user/secrets.json"]) == {"api_key_custom": "sk-abc"}
+    assert tpl.seed_files(t, f | {"server": ""}, m) == {}          # no server: SillyTavern's own defaults
+    assert tpl.app_env(t, "llm", m)["LLM_API_KEY"] == "sk-abc"
+
+
+def test_open_notebook():
+    m, t = server_machine(), tpl.get("open-notebook")
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert "login_user" not in tpl.answer_keys(t) and "password" in tpl.answer_keys(t)
+    inst, _ = tpl.build(t, f | {"login_user": ""}, m)
+    env = inst.env
+    assert inst.requires == ["notebook-surrealdb"] and env["SURREAL_URL"] == "ws://notebook-surrealdb:8000/rpc"
+    assert env["OPEN_NOTEBOOK_PASSWORD"] == f["password"] and len(env["OPEN_NOTEBOOK_ENCRYPTION_KEY"]) >= 24
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "http://llm:8080/v1" and env["OPENAI_COMPATIBLE_API_KEY"] == "sk-abc"
+    (db,) = tpl.companions(t, inst)
+    assert db.id == "notebook-surrealdb" and db.ports == [] and db.user == "0:0"
+    assert db.env == {"SURREAL_USER": "root", "SURREAL_PASS": env["SURREAL_PASS"]}     # the app's password
+    assert {v.container: v.host for v in db.volumes} == {"/mydata": "/a/notebook/surrealdb"}
+    with pytest.raises(ConfigError, match="password"):
+        tpl.build(t, f | {"password": "short"}, m)
+
+
+def test_vllm():
+    def gpus(n):
+        return [Gpu(i, "Test GPU", 0, 8192, 0) for i in range(n)]
+    m, t = machine(), tpl.get("vllm")
+    assert list(tpl.gpu_choices(gpus(1), t)) == ["one"]
+    assert list(tpl.gpu_choices(gpus(4), t)) == ["one", "gpus:2", "gpus:4", "pin:0", "pin:1", "pin:2", "pin:3"]
+    f = tpl.defaults(t, m, "/srv/models", "/a")
+    assert {"hf_model", "hf_token", "max_len"} <= set(tpl.answer_keys(t))
+    inst, models = tpl.build(t, f, m)
+    assert not models and inst.kind == "container" and inst.shm_size == "8g" and len(inst.env["VLLM_API_KEY"]) >= 24
+    assert inst.command[0] == tpl.VLLM_MODEL and inst.command[inst.command.index("--tensor-parallel-size") + 1] == "1"
+    assert {v.container: v.host for v in inst.volumes} == {"/root/.cache/huggingface": "/srv/models/huggingface"}
+    two, _ = tpl.build(t, f | {"gpu": "gpus:2", "hf_model": "org/Model-AWQ", "max_len": "4096", "hf_token": "hf_x"}, m)
+    assert (two.gpu.mode, two.gpu.min_gpus, two.gpu.max_gpus) == ("elastic", 2, 2) and two.env["HF_TOKEN"] == "hf_x"
+    assert two.command[two.command.index("--tensor-parallel-size") + 1] == "2" and "4096" in two.command
+    for bad in ({"gpu": "all"}, {"gpu": "none"}, {"hf_model": "not a model"}, {"max_len": "lots"}):
+        with pytest.raises(ConfigError):
+            tpl.build(t, f | bad, m)
+    # chat apps can use it as a model server, under the name chat
+    info = tpl.vllm_server(two)
+    assert info == {"api_key": two.env["VLLM_API_KEY"], "name": "vLLM", "default_model": "chat", "ctx": 4096, "embed": ""}
+    m2 = machine(instances={"vllm": two}, servers={"vllm": info})
+    web = tpl.build(tpl.get("open-webui"), tpl.defaults(tpl.get("open-webui"), m2, "/m", "/a") | {"server": "vllm"}, m2)[0]
+    assert web.env["OPENAI_API_BASE_URLS"] == "http://vllm:8000/v1" and web.env["DEFAULT_MODELS"] == "chat"
+    assert tpl.vllm_server(Instance(id="x", name="x", image="x")) is None

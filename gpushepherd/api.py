@@ -198,7 +198,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         out = app_json(t, tpl.installed(m.instances)[t.key])
         out["answers"] = {k: answers.get(k) for k in tpl.answer_keys(t)}
         out["choices"] = {
-            "gpu": tpl.gpu_choices(gpus),
+            "gpu": tpl.gpu_choices(gpus, t),
             "offload": tpl.OFFLOAD_CHOICES if tpl.slots(t) else {},
             "server": ({tpl.NEW_SERVER: "Install an LLM server with it"} | {k: v["name"] for k, v in m.servers.items()})
             if t.connects else {},
