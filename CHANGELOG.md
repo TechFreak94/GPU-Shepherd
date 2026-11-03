@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.13 - 2026-11-03
+
+- Fixed: after updating, the GPU panel and GPU apps could lose their GPUs ("nvidia-smi failed ... exit status 255") because mounting a drive reloaded systemd. Drives already attached when GPU Shepherd starts are no longer mounted by themselves. (#40)
+
 ## 0.13.12 - 2026-11-02
 
 - Moving storage: pick the new place from your drives and a folder tree; newly attached drives with data are mounted automatically. (#39)
