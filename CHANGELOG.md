@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.14 - 2026-11-03
+
+- The App Store is now called the App Center. (#41)
+- New App Center apps: vLLM (a fast model server for one Hugging Face model, split across 1, 2, 4 or 8 GPUs), SillyTavern (character chat) and Open Notebook (a private NotebookLM with its own database). Each one connects to your model server for you. (#41)
+- Chat apps can use a vLLM server as their model server. (#41)
+- Logins shows and resets SillyTavern's and Open Notebook's passwords. (#41)
+
 ## 0.13.13 - 2026-11-03
 
 - Fixed: after updating, the GPU panel and GPU apps could lose their GPUs ("nvidia-smi failed ... exit status 255") because mounting a drive reloaded systemd. Drives already attached when GPU Shepherd starts are no longer mounted by themselves. (#40)
