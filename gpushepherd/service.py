@@ -250,7 +250,7 @@ class Shepherd:
         elif self.store.instance_path(inst.id).exists():
             raise ConfigError(f"an instance called '{inst.id}' already exists")
         self.store.save_instance(inst)
-        if inst.app and not editing:              # an App Store app installed by hand: its folders and helpers too
+        if inst.app and not editing:              # an App Center app installed by hand: its folders and helpers too
             try:
                 t = tpl.get(inst.app)
             except ConfigError:
@@ -740,7 +740,7 @@ class Shepherd:
         return out
 
     def _image_candidates(self, instances: dict[str, Instance]) -> set[str]:
-        """Images GPU Shepherd may have pulled: the App Store's, the download helper, and the
+        """Images GPU Shepherd may have pulled: the App Center's, the download helper, and the
         instances' own. Other images on the machine are none of its business."""
         return {t.image for t in tpl.TEMPLATES} | {HELPER_IMAGE} | {i.image for i in instances.values()}
 
@@ -801,7 +801,7 @@ class Shepherd:
             self.backend.remove(n)
         return f"Removed {len(names)} container(s) left without an instance." if names else "Nothing to remove."
 
-    # ------------------------------------------------------------------ App Store
+    # ------------------------------------------------------------------ App Center
     def machine(self) -> tpl.Machine:
         instances, _ = self.store.instances()
         servers = {}
@@ -864,7 +864,7 @@ class Shepherd:
 
     @checked
     def install(self, key: str, answers: dict, fill_defaults: bool = False) -> Installed:
-        """Install an App Store app from its install form's answers. With fill_defaults, the
+        """Install an App Center app from its install form's answers. With fill_defaults, the
         answers only need what differs from the form's defaults (for the API and the command)."""
         t = tpl.get(key)
         m = self.machine()

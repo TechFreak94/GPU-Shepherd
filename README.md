@@ -19,7 +19,7 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
-- **App Store**: install an LLM server (with a chat model, a coding model, an embeddings model for
+- **App Center**: install an LLM server (with a chat model, a coding model, an embeddings model for
   chatting with your documents, or any mix), Ollama, Open WebUI, LibreChat, AnythingLLM, Hermes
   Agent, Langflow (marked *Experimental*), ComfyUI, InvokeAI or Speaches (speech to text and text
   to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
@@ -31,7 +31,7 @@ each instance says what it needs, and starting or stopping anything re-plans who
   decides whether a model needs system RAM. **Manual** opens every field instead, filled in with
   the same defaults, and *Any Docker image* covers apps that aren't listed.
 
-  ![App Store](docs/screenshots/app-store.png)
+  ![App Center](docs/screenshots/app-store.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
   forms. One compact card per instance with Start / Stop / Restart / Open / Logs, its name (Open
   WebUI, ComfyUI...) and a tag saying what it is (*Model Server*, *Chat UI*, *Image Server*, *Agent UI*,
@@ -174,7 +174,7 @@ Toolkit yourself.
 ### First login
 
 Open `http://<server>:8090` and log in as `admin` with the password the installer printed (also in
-`INITIAL_PASSWORD.txt` in the data folder). Then open the **App Store**.
+`INITIAL_PASSWORD.txt` in the data folder). Then open the **App Center**.
 
 Lost the password? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one.
 It works at once, no restart needed.
@@ -328,7 +328,7 @@ Apache-2.0 - see [LICENSE](LICENSE). Bundles [htmx](https://htmx.org) (Zero-Clau
 ## Acknowledgements
 
 GPU Shepherd is built on, and runs, other people's open-source work: FastAPI, htmx, Docker, the
-NVIDIA Container Toolkit, llama.cpp and llama-swap, and every app in the App Store (Open WebUI,
+NVIDIA Container Toolkit, llama.cpp and llama-swap, and every app in the App Center (Open WebUI,
 ComfyUI, Ollama, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Agent). Apps and
 models are downloaded from their own publishers and keep their own licenses, shown on each App
 Store card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and

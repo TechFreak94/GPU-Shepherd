@@ -9,7 +9,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 
 - **Built on**: Python packages GPU Shepherd installs and runs on. Only one file is bundled in this
   repository: htmx, with its license in `gpushepherd/static/htmx.LICENSE.txt`.
-- **Works with** and **App Store apps**: GPU Shepherd starts these as containers, using the
+- **Works with** and **App Center apps**: GPU Shepherd starts these as containers, using the
   images their own publishers release (Docker Hub or GitHub's registry). It doesn't change,
   rebuild or redistribute them, and each keeps its own license. Some are not plain open-source
   licenses (Open WebUI's branding terms, MongoDB's SSPL, NVIDIA's driver): read them if you
@@ -48,7 +48,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [Distil-Whisper large-v3 (faster-whisper build)](https://huggingface.co/Systran/faster-distil-whisper-large-v3) | MIT | Speaches' default speech-to-text model |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | Apache-2.0 | Speaches' default text-to-speech model (ONNX build by speaches-ai) |
 
-## App Store apps
+## App Center apps
 
 | App | License | Image |
 | :- | :- | :- |

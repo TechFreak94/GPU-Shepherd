@@ -177,7 +177,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def control_job(request: Request, jid: int, op: str):
         return {"message": svc.control_job(jid, op)}
 
-    # ------------------------------------------------------------------ App Store
+    # ------------------------------------------------------------------ App Center
     def app_json(t: tpl.Template, installed: list[Instance]) -> dict:
         return {"key": t.key, "title": t.title, "group": t.group, "blurb": t.blurb, "points": list(t.points),
                 "kind": t.kind, "image": t.image, "gpu": t.gpu, "needs": t.needs, "docs": t.docs,

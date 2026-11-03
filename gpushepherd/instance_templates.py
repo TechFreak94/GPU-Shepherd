@@ -1,4 +1,4 @@
-"""The App Store's apps: built-in templates for installing an app as an instance.
+"""The App Center's apps: built-in templates for installing an app as an instance.
 
 A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, LibreChat, Hermes
 Agent...) that asks a few questions and fills in everything else. What it creates is an ordinary
@@ -78,13 +78,13 @@ class Template:
     data_owner: tuple[int, int] | None = None  # uid:gid the app runs as, for the folders made for it
     needs: str = ""
     docs: str = ""
-    license: str = ""                          # the app's own license, credited in the App Store
-    badge: str = ""                            # a few characters for its App Store icon
+    license: str = ""                          # the app's own license, credited in the App Center
+    badge: str = ""                            # a few characters for its App Center icon
     tag: str = ""                              # what kind of instance it is, on its dashboard card
     companions: tuple[str, ...] = ()           # hidden templates installed with it, which it requires
-    hidden: bool = False                       # a companion: not offered in the App Store itself
+    hidden: bool = False                       # a companion: not offered in the App Center itself
     after_install: str = ""                    # what is left to do in the app itself once it runs
-    experimental: str = ""                     # why it is marked Experimental in the App Store ("" = it isn't)
+    experimental: str = ""                     # why it is marked Experimental in the App Center ("" = it isn't)
     secrets: tuple[str, ...] = ()              # environment variables given a fresh random value when installed
 
 
@@ -254,7 +254,7 @@ TEMPLATES: tuple[Template, ...] = (
 # the model server an app with a connection can install alongside itself, and the model slot it fills
 BUNDLED_SERVER = "llm-server"
 BUNDLED_SLOT = "chat"
-# App Store keys from before there was one LLM server app
+# App Center keys from before there was one LLM server app
 RENAMED = {"llm-chat": "llm-server", "llm-coder": "llm-server"}
 NEW_SERVER = "new"
 
@@ -292,11 +292,11 @@ def matches(t: Template, inst: Instance) -> bool:
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
 
 
-OTHER_TAG = "App"        # an instance that isn't from the App Store
+OTHER_TAG = "App"        # an instance that isn't from the App Center
 
 
 def tag_for(inst: Instance) -> str:
-    """The kind tag on an instance's dashboard card: from its App Store app, else generic."""
+    """The kind tag on an instance's dashboard card: from its App Center app, else generic."""
     return next((t.tag for t in TEMPLATES if matches(t, inst)), OTHER_TAG)
 
 
@@ -318,7 +318,7 @@ def app_name(inst: Instance) -> str:
 
 
 def installed(instances: dict[str, Instance]) -> dict[str, list[Instance]]:
-    """Template key -> the instances installed from it (App Store apps only, not companions)."""
+    """Template key -> the instances installed from it (App Center apps only, not companions)."""
     return {t.key: [i for i in instances.values() if matches(t, i)] for t in TEMPLATES if not t.hidden}
 
 

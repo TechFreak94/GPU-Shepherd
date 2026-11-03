@@ -137,11 +137,11 @@ class Instance(BaseModel):
     user: str | None = None           # e.g. "1000:1000"
     memory_limit: str | None = None   # e.g. "4g"
     drain: DrainPolicy = DrainPolicy()  # wait for running work before stopping
-    app: str = ""                     # the App Store app it was installed from, if any
+    app: str = ""                     # the App Center app it was installed from, if any
     requires: list[str] = []          # instances that start with it (e.g. its database)
     skipped_updates: list[str] = []   # app updates the user chose not to apply (see app_updates.py)
     auto_update: bool = False         # bring in a new release of its image by itself (image_updates.py)
-    # the name in its file when the app shows its App Store name instead (older "Chat UI" names);
+    # the name in its file when the app shows its App Center name instead (older "Chat UI" names);
     # restart checks use it, so the better name alone never asks for a restart
     _file_name: str | None = PrivateAttr(default=None)
 
@@ -415,7 +415,7 @@ def friendly_errors(err: ValidationError) -> str:
 
 
 def _named(inst: Instance) -> Instance:
-    """Show an App Store app's real name where its file only says what kind it is ("Chat UI")."""
+    """Show an App Center app's real name where its file only says what kind it is ("Chat UI")."""
     from .instance_templates import app_name   # it builds on this module
     name = app_name(inst)
     if name != inst.name:

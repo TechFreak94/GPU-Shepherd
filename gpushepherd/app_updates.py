@@ -1,4 +1,4 @@
-"""App updates: bring instances installed from the App Store up to what the app sets up today.
+"""App updates: bring instances installed from the App Center up to what the app sets up today.
 
 When an app's template changes (Open WebUI and AnythingLLM using the model server's embeddings
 model, the LLM server's embeddings slot, a suggested model's settings), instances installed before

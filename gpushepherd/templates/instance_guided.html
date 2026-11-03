@@ -39,7 +39,7 @@
 <div class="pagehead">
   <div><h1>Install {{ t.title }}</h1>
   <div class="small muted">{{ t.blurb }}{% if t.docs %} <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}{% if t.license %} · License: {{ t.license }}{% endif %}</div></div>
-  <a class="btn" href="/apps">Back to the App Store</a>
+  <a class="btn" href="/apps">Back to the App Center</a>
 </div>
 {% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}
 {% if t.experimental %}<div class="notice need" role="note"><strong>Experimental.</strong> {{ t.experimental }} The steps are under Afterwards, below.</div>{% endif %}
@@ -125,7 +125,7 @@
           <option value="">Nothing (no voice input or read-aloud)</option>
           {% for id, name in speech %}<option value="{{ id }}" {{ "selected" if f.speech == id }}>{{ name }} ({{ id }})</option>{% endfor %}
         </select>
-        <div class="hint">{% if speech %}Pick your Speaches instance to talk to the chat and have answers read aloud.{% else %}Install Speaches from the App Store first to talk to the chat.{% endif %}</div></div>
+        <div class="hint">{% if speech %}Pick your Speaches instance to talk to the chat and have answers read aloud.{% else %}Install Speaches from the App Center first to talk to the chat.{% endif %}</div></div>
       {% endif %}
     </div>
     <div class="subsection" data-server="{{ new_server }}">

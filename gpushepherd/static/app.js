@@ -107,7 +107,7 @@
     if (del) { e.preventDefault(); del.closest(".autorow").remove(); }
   });
 
-  // App Store: the category chips show one category at a time (the links still jump there without JS)
+  // App Center: the category chips show one category at a time (the links still jump there without JS)
   function filterApps(group) {
     document.querySelectorAll("#apps [data-group]").forEach((el) => { el.hidden = !!group && el.dataset.group !== group; });
     document.querySelectorAll("[data-filter]").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.filter === group)));

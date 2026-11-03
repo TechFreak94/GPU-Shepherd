@@ -1,7 +1,7 @@
 # Instance and model options
 
 Every option you can set in the editors, what it does, and the key it is saved under. The App
-Store's automatic setup fills most of these in for you; open an instance's **Edit** page, or
+Center's automatic setup fills most of these in for you; open an instance's **Edit** page, or
 choose *Manual configuration* (or *Customize every field*) while installing one, to change them.
 
 Instances are saved to `instances/<id>.yaml` in the data folder, model servers' model lists to
@@ -16,7 +16,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
   auto names, server settings
 - [Settings](#settings)
 - [Storage and trash](#storage-and-trash)
-- [What App Store apps fill in](#what-app-store-apps-fill-in)
+- [What App Center apps fill in](#what-app-center-apps-fill-in)
 
 ## Instances
 
@@ -29,7 +29,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
 | - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
-| - | `app` | The App Store app it was installed from (`llm-server`, `hermes`...), for the store's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, *Database*; *App* for anything else). Changing it needs no restart. |
+| - | `app` | The App Center app it was installed from (`llm-server`, `hermes`...), for the App Center's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, *Database*; *App* for anything else). Changing it needs no restart. |
 
 ### GPUs
 
@@ -72,7 +72,7 @@ command there.
 
 | Field | YAML | What it does |
 |---|---|---|
-| Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances installed from the App Store or a preset start with this off. |
+| Start automatically | `autostart` | Started when GPU Shepherd starts, if the GPUs allow it. Instances installed from the App Center or a preset start with this off. |
 | "Open" button port | `open_port` | Host port the Open button links to. Empty = the first port. |
 | "Open" button path | `open_path` | Path after the address, e.g. `/ui`. |
 | Starts with | `requires` | IDs of instances it needs, such as its database. Starting it starts them first (and autostart brings them up too); stopping it stops them too (after it), unless another running instance requires them. Stopping one of them by itself leaves the app running. Starting fails if one of them doesn't exist. Changing it needs no restart. |
@@ -297,9 +297,9 @@ Unused app images and containers without an instance are removed at once; images
 an app needs them. The same things are in the `gpu-shepherd` [commands](cli.md#commands) and the
 [API](api.md#storage-and-trash).
 
-## What App Store apps fill in
+## What App Center apps fill in
 
-Each app in the App Store can be installed two ways. **Install** (automatic setup) asks only what
+Each app in the App Center can be installed two ways. **Install** (automatic setup) asks only what
 it can't work out. **Manual** opens the full form, filled in with the same defaults, so you can
 change anything before it is saved. Either way the result is an ordinary instance (plus, for model
 servers, the models you picked), so every field above can be changed afterwards.
@@ -319,7 +319,7 @@ servers, the models you picked), so every field above can be changed afterwards.
 
 ![Installing the LLM server: suggested models for each name, best fit first](screenshots/llm-install-models.png)
 
-![The App Store's chat and agent apps](screenshots/app-store-chat.png)
+![The App Center's chat and agent apps](screenshots/app-store-chat.png)
 
 ![Installing LibreChat: its database comes with it](screenshots/librechat-install.png)
 
@@ -356,7 +356,7 @@ Agent and single-user AnythingLLM restart to pick it up. The same is in the API 
 
 ![Logins for Hermes Agent: its dashboard user and a new password](screenshots/logins.png)
 
-The App Store doesn't offer LobeChat (its current version needs PostgreSQL, S3 file storage, an
+The App Center doesn't offer LobeChat (its current version needs PostgreSQL, S3 file storage, an
 auth key set and a fixed public address before it starts) or Odysseus (its model servers can only
 be added inside the app); install those with *Any Docker image* or Docker Compose.
 
@@ -374,4 +374,4 @@ where it fits (file size plus 20% for the KV cache and buffers, against the smal
 memory) and moves all MoE expert layers to RAM where it doesn't. Fine-tune it afterwards on the
 model's edit page.
 
-*Any Docker image* skips the questions and opens an empty form, for apps the App Store doesn't list.
+*Any Docker image* skips the questions and opens an empty form, for apps the App Center doesn't list.

@@ -760,7 +760,7 @@ def add_commands(sub) -> None:
     p.add_argument("id")
     p.add_argument("-y", "--yes", action="store_true", help="don't ask")
 
-    p = sub.add_parser("apps", help="the App Store: list, show KEY, install KEY [KEY=VALUE...], manual KEY")
+    p = sub.add_parser("apps", help="the App Center: list, show KEY, install KEY [KEY=VALUE...], manual KEY")
     p.add_argument("action", nargs="?", choices=("list", "show", "install", "manual"))
     p.add_argument("key", nargs="?")
     p.add_argument("answers", nargs="*", metavar="KEY=VALUE")

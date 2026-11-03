@@ -548,7 +548,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     companions=[tpl.get(c) for c in t.companions],
                     no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
 
-    # ------------------------------------------------------------------ App Store
+    # ------------------------------------------------------------------ App Center
     @app.get("/apps", response_class=HTMLResponse)
     def app_store(request: Request):
         instances, _ = store.instances()
@@ -581,7 +581,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return editor(request, blank_instance(kind), editing=False)
 
     @app.get("/instances/new/{key}")
-    def new_from_template(key: str):          # links from before the App Store
+    def new_from_template(key: str):          # links from before the App Center
         return RedirectResponse(f"/apps/{key}", status_code=303)
 
     @app.post("/instances/guided")

@@ -337,7 +337,7 @@ def test_login_without_cookie_explains(stack):
 def test_guided_setup(stack, tmp_path_factory):
     app, client, backend, data = stack
     login(client)
-    page = client.get("/instances/new").text            # the old address opens the App Store
+    page = client.get("/instances/new").text            # the old address opens the App Center
     for key in ("llm-server", "comfyui", "open-webui", "hermes"):
         assert f'href="/apps/{key}"' in page and f'href="/apps/{key}?mode=manual"' in page
     assert 'href="/instances/new/custom"' in page and "llm-coder" not in page and "llm-chat" not in page
@@ -394,7 +394,7 @@ def test_app_store(stack):
     app, client, backend, data = stack
     login(client)
     page = client.get("/apps").text
-    assert "App Store" in page and 'data-filter="chat-and-agents"' in page
+    assert "App Center" in page and 'data-filter="chat-and-agents"' in page
     # the example stack already has Open WebUI, ComfyUI, Hermes and a chat model server
     for key in ("open-webui", "comfyui", "hermes", "llm-server"):
         card = page.split(f'id="app-{key}"')[1].split("</article>")[0]
@@ -616,7 +616,7 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     login(client)
     page = client.get("/apps").text
     assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
-    assert "librechat-mongodb" not in page                     # companions are not on the store
+    assert "librechat-mongodb" not in page                     # companions are not in the App Center
     assert page.count(">Experimental</span>") == 1 and "Experimental." in client.get("/apps/langflow").text
     assert "License: MIT" in client.get("/apps/langflow").text and "License: Apache-2.0" in page
     assert ">Credits</button>" in client.get("/ui/update").text

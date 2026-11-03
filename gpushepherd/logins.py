@@ -1,4 +1,4 @@
-"""Logins of apps installed from the App Store: who can log in, and setting a new password.
+"""Logins of apps installed from the App Center: who can log in, and setting a new password.
 
 Each app keeps its accounts its own way:
     Hermes Agent    one user name and password in the instance's environment, read when it starts
