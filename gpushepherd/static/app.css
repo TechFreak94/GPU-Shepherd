@@ -130,6 +130,13 @@ input:focus,select:focus,textarea:focus,button:focus-visible,.btn:focus-visible,
 .credits td{padding:6px 8px}
 .credits td:last-child{overflow-wrap:anywhere}
 .scroll{overflow-x:auto}
+/* Books page: long names and paths wrap inside their cell; Words, Status and the button keep their width. */
+.books-table td:first-child{overflow-wrap:anywhere;min-width:12em}
+.books-table .grp{min-width:9em;max-width:14em;overflow-wrap:anywhere}
+.books-table .num,.books-table .act{white-space:nowrap}
+.books-table .act button{white-space:nowrap}
+.books-table td:nth-child(4){min-width:9em}
+#book-up-fails{overflow-wrap:anywhere}
 .files{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:6px}
 .files button{text-align:left;display:flex;justify-content:space-between;gap:10px}
 .file-row{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--line)}

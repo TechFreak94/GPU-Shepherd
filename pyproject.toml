@@ -20,7 +20,7 @@ dependencies = [
     "httpx>=0.27",
     "itsdangerous>=2.1",
     "python-multipart>=0.0.9",
-    "pypdf>=4.0",
+    "pypdf[crypto]>=4.0",   # crypto: many shop PDFs are AES-encrypted with an empty password
 ]
 
 [project.optional-dependencies]

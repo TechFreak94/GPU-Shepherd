@@ -162,8 +162,49 @@
 (function () {
   "use strict";
   const BOOK = /\.(epub|pdf|txt|md|markdown|mobi|azw3|prc|zip)$/i;
+  const EBOOK = /\.(epub|pdf|mobi|azw3|prc)$/i, TEXT = /\.(txt|md|markdown)$/i;
+  const TEXT_BOOK = 20480;         // a text file in a zip smaller than this is a readme or licence, not a book
   let busy = false, stopped = false, xhr = null;
   const $ = (id) => document.getElementById(id);
+
+  // The names and sizes in a zip, read from its directory at the end of the file (a few KB, so a
+  // zip of music or videos is never uploaded just to find there are no books in it). null: not a
+  // zip that can be opened; undefined: a layout this doesn't follow (the server looks instead).
+  async function zipEntries(file) {
+    const at = (off, len) => file.slice(off, off + len).arrayBuffer().then((b) => new DataView(b));
+    const tailLen = Math.min(file.size, 65557);
+    const tail = await at(file.size - tailLen, tailLen);
+    let end = -1;
+    for (let i = tail.byteLength - 22; i >= 0; i--) if (tail.getUint32(i, true) === 0x06054b50) { end = i; break; }
+    if (end < 0) return null;
+    let size = tail.getUint32(end + 12, true), off = tail.getUint32(end + 16, true);
+    if (size === 0xffffffff || off === 0xffffffff || tail.getUint16(end + 10, true) === 0xffff) {   // zip64
+      if (end < 20 || tail.getUint32(end - 20, true) !== 0x07064b50) return undefined;
+      const z = await at(Number(tail.getBigUint64(end - 12, true)), 56);
+      if (z.byteLength < 56 || z.getUint32(0, true) !== 0x06064b50) return undefined;
+      size = Number(z.getBigUint64(40, true)); off = Number(z.getBigUint64(48, true));
+    }
+    if (size > 64 * 1048576 || off + size > file.size) return undefined;
+    const cd = await at(off, size), dec = new TextDecoder(), out = [];
+    let p = 0;
+    while (p + 46 <= cd.byteLength && cd.getUint32(p, true) === 0x02014b50) {
+      const n = cd.getUint16(p + 28, true), e = cd.getUint16(p + 30, true), c = cd.getUint16(p + 32, true);
+      out.push({ name: dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, n)), size: cd.getUint32(p + 24, true) });
+      p += 46 + n + e + c;
+    }
+    return p === 0 && size > 0 ? undefined : out;     // directory not where it says (a self-extracting zip)
+  }
+  const isBook = (en) => !en.name.split("/").some((part) => part.startsWith(".") || part === "__MACOSX") &&
+    (EBOOK.test(en.name) || (TEXT.test(en.name) && (en.size >= TEXT_BOOK || en.size === 0xffffffff)));
+
+  // A file the browser can't read (on Windows: a path over 260 characters) fails like a lost
+  // connection, so read its first byte before sending it.
+  async function readable(file) {
+    try { await file.slice(0, 1).arrayBuffer(); return true; } catch (err) { return false; }
+  }
+  const unreadable = (path) => "this browser can't read the file" + (path.length > 200
+    ? " (its path is probably too long for Windows, over 260 characters: move the folder nearer the top of the drive, like C:\\Books, or shorten folder names, then add it again)"
+    : " (moved, renamed, or blocked by the computer?)");
 
   // a dropped folder: walk it (readEntries hands back at most 100 entries a call)
   function walk(entry, prefix, out) {
@@ -217,8 +258,11 @@
     let have = {};
     try { have = (await (await fetch("/books/files", { headers: { "HX-Request": "true" } })).json()).files || {}; } catch (err) { have = {}; }
     const todo = [];
-    let skipped = 0, other = 0;
+    let skipped = 0, other = 0, noBooks = 0;
+    const zips = items.filter((it) => /\.zip$/i.test(it.path)).length;
+    let zipsLooked = 0;
     for (const it of items) {
+      if (stopped) break;
       it.path = it.path.replace(/^\/+/, "");
       const name = it.path.split("/").pop();
       if (name.startsWith(".") || !BOOK.test(name)) { other++; continue; }
@@ -226,6 +270,13 @@
       if (!zip && have[it.path] === it.file.size) { skipped++; continue; }
       if (zip && Object.keys(have).some((p) => p.startsWith(it.path.slice(0, -4) + "/"))) { skipped++; continue; }
       if (it.file.size > (zip ? maxZip : maxBook)) { fail(it.path, "too big to upload here"); continue; }
+      if (zip) {
+        text.textContent = "Looking inside zips: " + (++zipsLooked) + " of " + zips;
+        let list;
+        try { list = await zipEntries(it.file); } catch (err) { fail(it.path, unreadable(it.path)); continue; }
+        if (list === null) { fail(it.path, "not a zip that can be opened (damaged, or not fully downloaded?)"); continue; }
+        if (list && !list.some(isBook)) { noBooks++; continue; }     // music, videos, games: left out quietly
+      }
       todo.push(it);
     }
     const total = todo.reduce((n, it) => n + it.file.size, 0) || 1;
@@ -239,8 +290,12 @@
           " (" + (Math.round((sent + n) / 1048576)) + " of " + Math.round(total / 1048576) + " MB)";
       };
       it.onprogress(0);
+      if (!(await readable(it.file))) { fail(it.path, unreadable(it.path)); sent += it.file.size; continue; }
       let r = await put(it);
-      if (r.net && !stopped) { await new Promise((ok) => setTimeout(ok, 3000)); r = await put(it); }  // one more try
+      if (r.net && !stopped) {                                     // the file, or the connection?
+        if (!(await readable(it.file))) r = { error: unreadable(it.path) };
+        else { await new Promise((ok) => setTimeout(ok, 3000)); r = await put(it); }  // one more try
+      }
       if (r.aborted) break;
       if (r.error) fail(it.path, r.error); else added += (r.added || []).length;
       if (r.status === 401) break;
@@ -251,7 +306,9 @@
     bar.style.width = "100%";
     let msg = (stopped ? "Stopped. " : "") + "Added " + added + " book" + (added === 1 ? "" : "s");
     if (skipped) msg += ", skipped " + skipped + " already there";
+    if (noBooks) msg += ", left out " + noBooks + " zip" + (noBooks === 1 ? "" : "s") + " with no books in " + (noBooks === 1 ? "it" : "them");
     if (other) msg += ", left out " + other + " other file" + (other === 1 ? "" : "s");
+    if (failed.length) msg += ", " + failed.length + " not added (listed below)";
     text.textContent = msg + ".";
     if (added && !stopped) {
       text.textContent = msg + ". Scanning…";

@@ -40,6 +40,8 @@ from .config import load_yaml
 # the lower, the better a copy to read the book from
 RANK = {".epub": 0, ".azw3": 1, ".mobi": 2, ".prc": 3, ".pdf": 4, ".md": 5, ".markdown": 5, ".txt": 6}
 CONVERTS = {".epub", ".pdf", ".md", ".markdown", ".txt"}
+TEXT = {".md", ".markdown", ".txt"}
+TEXT_BOOK_BYTES = 20480      # a text file in a zip smaller than this is a readme or licence, not a book
 MIN_WORDS = 200              # less text than this: nothing to search (a scanned PDF, an empty file)
 SAMPLE_WORDS = 400           # words compared to find the same book under another name
 UPLOAD_MB = 4096             # the biggest book the dashboard takes as an upload (streamed to disk, so only free space matters)
@@ -142,18 +144,38 @@ def files(folder: Path) -> dict[str, int]:
     return out
 
 
-def unpack(zip_path: Path, into: Path) -> tuple[list[str], int]:
+def zip_has_books(path: Path) -> bool | None:
+    """Whether a zip holds any books (None: it can't be opened), read from its directory only, so a
+    zip of music, videos or a game isn't sent or unpacked for nothing. Short text files (a readme,
+    a licence) don't count."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            for m in z.infolist():
+                parts = m.filename.split("/")
+                if m.is_dir() or any(p.startswith(".") or p == "__MACOSX" for p in parts):
+                    continue
+                ext = Path(parts[-1]).suffix.lower()
+                if ext in RANK and (ext not in TEXT or m.file_size >= TEXT_BOOK_BYTES):
+                    return True
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, ValueError):
+        return None
+    return False
+
+
+def unpack(zip_path: Path, into: Path, name: str = "") -> tuple[list[str], int]:
     """Take the books out of a zip into a folder, keeping the zip's folders. Other files are left
-    out. Returns the books' paths relative to `into` and how many other files were left out."""
+    out. Returns the books' paths relative to `into` and how many other files were left out.
+    `name` is what to call the zip in errors (it may be saved under a temporary name)."""
+    name = name or zip_path.name
     saved, other = [], 0
     try:
         with zipfile.ZipFile(zip_path) as z:
             members = [m for m in z.infolist() if not m.is_dir()]
             if sum(m.file_size for m in members) > ZIP_MB << 20:
-                raise BookError(f"{zip_path.name} unpacks to more than {ZIP_MB // 1024} GB")
+                raise BookError(f"{name} unpacks to more than {ZIP_MB // 1024} GB")
             free = shutil.disk_usage(into if into.exists() else into.parent).free
             if sum(m.file_size for m in members) > free:
-                raise BookError(f"{zip_path.name}: not enough free space to unpack it")
+                raise BookError(f"{name}: not enough free space to unpack it")
             for m in members:
                 if m.filename.startswith(("__MACOSX/", "/")):
                     continue
@@ -162,8 +184,9 @@ def unpack(zip_path: Path, into: Path) -> tuple[list[str], int]:
                 except BookError:
                     other += 1
                     continue
-                if rel.lower().endswith(".zip"):
-                    other += 1            # a zip in a zip: not opened
+                ext = Path(rel).suffix.lower()
+                if ext == ".zip" or (ext in TEXT and m.file_size < TEXT_BOOK_BYTES):
+                    other += 1            # a zip in a zip (not opened), a readme or licence
                     continue
                 dest = into / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +196,7 @@ def unpack(zip_path: Path, into: Path) -> tuple[list[str], int]:
                 os.replace(tmp, dest)
                 saved.append(rel)
     except (zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError, RuntimeError) as err:
-        raise BookError(f"{zip_path.name}: can't open the zip ({err})") from err
+        raise BookError(f"{name}: can't open the zip ({err}); is it damaged, or not fully downloaded?") from err
     return saved, other
 
 
@@ -288,23 +311,53 @@ def read_epub(path: Path) -> tuple[str, str, str]:
 def read_pdf(path: Path) -> tuple[str, str, str]:
     try:
         from pypdf import PdfReader
-        from pypdf.errors import PdfReadError
+        from pypdf.errors import DependencyError, PdfReadError
     except ImportError as err:            # pragma: no cover - a dependency
         raise BookError("reading PDFs needs the pypdf package") from err
     try:
         r = PdfReader(str(path))
         if r.is_encrypted and not r.decrypt(""):
             raise BookError("protected by a password or DRM")
-        meta = r.metadata or {}
-        pages = [(p.extract_text() or "").strip() for p in r.pages]
+        try:
+            meta = r.metadata or {}
+        except Exception:  # noqa: BLE001 - broken metadata: still read the text
+            meta = {}
+        n = len(r.pages)
     except BookError:
         raise
+    except DependencyError as err:            # an AES-encrypted PDF with pypdf installed without crypto
+        raise BookError("its encryption needs the cryptography package (pip install 'pypdf[crypto]')") from err
     except (PdfReadError, OSError, ValueError, KeyError, TypeError, AttributeError) as err:
         raise BookError(f"not a readable PDF ({err.__class__.__name__})") from err
-    text = "\n\n".join(re.sub(r"[ \t]+", " ", p) for p in pages if p)
-    if len(text.split()) < MIN_WORDS and len(pages) > 2:
+    pages, bad = [], 0
+    for i in range(n):                        # one broken page doesn't lose the book
+        try:
+            pages.append(pdf_page_text(r.pages[i].extract_text() or ""))
+        except Exception:  # noqa: BLE001 - pypdf raises many kinds of errors on odd pages
+            bad += 1
+    if n and bad == n:
+        raise BookError("not a readable PDF (no page could be read)")
+    text = "\n\n".join(p for p in pages if p)
+    if len(text.split()) < MIN_WORDS and n > 2:
         raise BookError("no text in it (a scanned PDF needs OCR first)")
-    return str(meta.get("/Title") or "").strip(), str(meta.get("/Author") or "").strip(), text
+    return _meta(meta, "/Title"), _meta(meta, "/Author"), text
+
+
+def _meta(meta, key: str) -> str:
+    try:
+        return str(meta.get(key) or "").replace("\x00", "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def pdf_page_text(text: str) -> str:
+    """A PDF page's text, tidied: runs of spaces collapsed, words hyphenated across a line break
+    joined again ("exam-" + "ple"), blank lines squeezed. Lines and indents are kept (code needs them)."""
+    text = text.replace("\x00", "").replace("\u00ad", "")
+    text = re.sub(r"(?<=\S)[ \t]+", " ", text)          # indents (code) kept
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"(?<=[a-z])-\n(?=[a-z])", "", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def read(path: Path) -> tuple[str, str, str]:
