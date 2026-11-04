@@ -86,8 +86,10 @@ runs [`scripts/release.py`](../scripts/release.py), which:
 
 So a pull request never edits the version or the changelog itself, and two open pull requests
 never conflict over them. Commits pushed straight to `main` get a patch release named after the
-commit. The workflow needs permission to push to `main`: if you protect the branch, allow GitHub
-Actions to bypass the rule. Labels that don't exist yet can be created from the pull request's
+commit. The workflow needs permission to push to `main`: if you protect the branch with a rule that
+requires pull requests, the workflow's own token is refused, so save a token that may bypass the
+rule as the repository secret `RELEASE_TOKEN` (see
+[Maintaining a copy](maintainer-security.md#releases-and-protected-branches)). Labels that don't exist yet can be created from the pull request's
 Labels menu.
 
 ## How the dashboard learns about versions

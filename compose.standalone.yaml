@@ -1,7 +1,6 @@
 # GPU Shepherd without cloning the repository: runs the published image, nothing to build.
 # Needs Docker with the Compose plugin, the NVIDIA driver and the NVIDIA Container Toolkit.
 #
-#   sudo docker login ghcr.io   # while the image is private: your GitHub user and a token with read:packages
 #   mkdir gpu-shepherd && cd gpu-shepherd
 #   save this file there as compose.yaml
 #   sudo docker compose up -d

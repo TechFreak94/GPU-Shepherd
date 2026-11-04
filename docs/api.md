@@ -109,14 +109,17 @@ For instances of kind `llama-swap`.
 | `POST /api/v1/instances/{id}/models/{model}/load` | Load it now, in the background (`202`). |
 | `POST /api/v1/instances/{id}/models/{model}/unload` | Unload it; `_all` as the model unloads every model. `409` while the server is answering. |
 | `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto name: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
-| `PATCH /api/v1/instances/{id}/server-settings` | Change any of `threads`, `health_timeout`, `llama_server`; `"new_api_key": true` gives the server a new key. |
+| `PATCH /api/v1/instances/{id}/server-settings` | Change any of `threads`, `health_timeout`, `llama_server`, `fit_gpus` (use only the GPUs each model needs) and `auto_tune` (apply suggested adjustments by itself); `"new_api_key": true` gives the server a new key. |
+| `POST /api/v1/instances/{id}/models/from-link` | Add a model by the link of its `.gguf` file: `{"url": "https://.../Model-Q4_K_M.gguf", "name": "optional", "mmproj_url": "optional vision projector"}`. It is downloaded in the background like a suggested model and listed with them (`201`). `/suggestions/{key}/forget` removes a link from the list. |
+| `GET /api/v1/instances/{id}/tuning` | [Suggested adjustments](advanced.md#tuning): each with a `key`, what it changes, why, and its `status` (new, applied or dismissed). |
+| `POST /api/v1/instances/{id}/tuning` | Decide one: `{"key": "...", "action": "apply" \| "dismiss" \| "undo"}`. It stays listed either way. |
 
 ## Settings
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`. |
-| `PATCH /api/v1/settings` | Change `bind_address`, `network` and/or `trash_days` (the others are YAML only). |
+| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`, `image_check_hours`. |
+| `PATCH /api/v1/settings` | Change `bind_address`, `network`, `trash_days` and/or `image_check_hours` (the others are YAML only). |
 | `POST /api/v1/settings/password` | `{"current": "...", "new": "..."}` (10+ characters). |
 | `POST /api/v1/token` | Make a new API token and answer it as `token`; the one used for this request stops working. |
 
@@ -133,6 +136,13 @@ Deleting an instance or cleaning up a file moves it to the trash first, so it ca
 | `POST /api/v1/storage/orphans` | Remove containers left without an instance. Their data folders are not touched. |
 | `POST /api/v1/storage/files` | `{"paths": [...]}`: move model files from `files` to the trash. |
 | `POST /api/v1/storage/leftovers` | `{"name": "..."}`: move an unused app data folder from `leftover_folders` to the trash. |
+| `GET /api/v1/storage/drives` | The machine's `drives` (device, label, size, filesystem, where mounted, whether it can be mounted and why not), an `error` if they can't be looked at, and `auto_mount`. |
+| `POST /api/v1/storage/drives/mount` | `{"device": "/dev/sdb1"}`: mount a drive that holds data (never formatted or written to). |
+| `PUT /api/v1/storage/drives/auto` | `{"enabled": true}`: mount newly attached drives by itself, or only when asked. |
+| `GET /api/v1/storage/browse?path=/srv` | The folders in `path` and the room on its disk, for a folder picker. |
+| `POST /api/v1/storage/move` | `{"source": "...", "dest": "...", "confirm": true}`: move a folder the storage report lists as movable to another place (a background job, `202`). Without `confirm` it only checks and answers `409` with what the move would do. The old copy is kept until deleted. |
+| `GET /api/v1/moves` | Moves so far: `id`, `source`, `dest`, `status` (including `interrupted`) and `age_days`. |
+| `POST /api/v1/moves/{id}/back` | Point the apps at the old copy again. `DELETE /api/v1/moves/{id}/leftover` deletes the old copy (to the trash). |
 | `GET /api/v1/trash` | What is in it: `id`, `title`, `size`, `age_days`. |
 | `POST /api/v1/trash/{id}/restore` | Put it back (`409` if something is in its place). |
 | `DELETE /api/v1/trash/{id}` | Delete one entry for good. `DELETE /api/v1/trash` empties the trash. |
@@ -145,6 +155,17 @@ Settings that an app's template gained after it was installed (the dashboard's *
 |---|---|
 | `GET /api/v1/app-updates` | A list of `instance`, `key`, `title`, `changes` and `afterwards` (what is left for you to do). |
 | `POST /api/v1/app-updates/{id}/{key}/apply` | Apply it. `/skip` stops it being offered again. |
+
+### App image updates
+
+New releases of the apps' Docker images (checked every `image_check_hours`, 12 by default; `0` = only when asked).
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/image-updates` | Newer releases of the apps' images: when `checked`, `every_hours`, and for each instance its `image`, `state`, `auto_update`, `error`, `checked` and `updated`. |
+| `POST /api/v1/image-updates/check` | Look in the registries now. |
+| `POST /api/v1/image-updates/{id}/update` | Download the new image and restart the app, waiting for running work (`202`, a job). |
+| `PUT /api/v1/instances/{id}/auto-update` | `{"on": true}`: let GPU Shepherd bring in new releases of this app's image by itself. |
 
 ## Updates
 

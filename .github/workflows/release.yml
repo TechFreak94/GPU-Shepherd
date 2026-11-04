@@ -28,6 +28,10 @@ jobs:
         with:
           ref: main        # the newest main, including releases made since this push
           fetch-depth: 0
+          # Pushes the release commit and tag. If main is protected by a rule that requires pull
+          # requests, GITHUB_TOKEN can't push: save a token (or GitHub App token) that is allowed
+          # to bypass the rule as the secret RELEASE_TOKEN. See docs/maintainer-security.md.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
       - name: Find the pull request
         env:

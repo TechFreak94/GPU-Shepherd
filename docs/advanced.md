@@ -79,6 +79,7 @@ command there.
 | Shared memory | `shm_size` | Size of `/dev/shm`, e.g. `1g`. PyTorch apps with several workers often need more than Docker's 64 MB. |
 | Run as user | `user` | `UID:GID` inside the container, e.g. `1000:1000`, so files it writes to your folders are yours. |
 | Memory limit | `memory_limit` | Caps the container's RAM, e.g. `16g`. Empty = no limit. |
+| Install new versions automatically | `auto_update` | Off by default. GPU Shepherd [looks for new releases of the app's image](#app-image-updates); with this on it installs one by itself (waiting for running work), otherwise the card offers an **Update** button. |
 
 The last three are under *Advanced* in the editor.
 
@@ -236,6 +237,26 @@ enough expert layers go to RAM to leave a quarter of the GPUs' memory for the co
 GPUs that is 14 of Qwen3.6 35B-A3B's 40 layers and 38 of Qwen3 Coder Next's 48. Tune them on the
 model's Edit page.
 
+### Add a model from a link
+
+**Add a model from a link** on the Models page takes the link to a `.gguf` file (for example a
+Hugging Face `.../resolve/main/Model-Q4_K_M.gguf` address) and optionally the link to its vision
+projector (`mmproj`). It checks that the model can fit this machine's GPUs plus RAM, downloads it
+in the background like a suggested model, and lists it with them (tagged *your link*, with a
+**Forget** button). Command: `gpu-shepherd models add-link`; API: `POST .../models/from-link`.
+
+### Tuning
+
+GPU Shepherd measures how each model really ran: the most GPU memory it used on the GPUs it had to
+itself, and how many tokens a second it answered (averaged over recent answers). From that it
+**offers** adjustments under **Suggested adjustments** on the Models page: run a model on one more
+GPU, on fewer, or turn *Use only the GPUs each model needs* on. Each says what changes and why.
+**Apply**, **Dismiss** or **Undo** it; decisions stay listed so you can change your mind, and
+applying only takes effect when the server restarts. With *Apply suggested adjustments by itself*
+(`auto_tune`) new suggestions are applied as they come, and can be undone the same way. The
+measurements are in `state/models.yaml` and the decisions in `state/tuning.yaml` in the data
+folder. Commands: `models tuning`, `tuning-apply`, `tuning-dismiss`, `tuning-undo`.
+
 ### Auto names
 
 An auto name (`auto_aliases`) is a model name that points at different models depending on how
@@ -261,6 +282,8 @@ auto_aliases:
 | CPU threads | `threads` | `--threads` for every model. `0` = the number of physical cores, which is best when models spill into RAM. |
 | Load timeout | `health_timeout` | Seconds llama-swap waits for a model to load before giving up. Raise it for very large models on slow disks. |
 | llama-server path | `llama_server` | Where `llama-server` is inside the image. Empty = found on first start. |
+| Use only the GPUs each model needs | `fit_gpus` | On for new servers. A model that fits on fewer GPUs runs on only those (`CUDA_VISIBLE_DEVICES` in its llama-swap entry), because splitting it over more GPUs makes it no faster; models that stay loaded are placed on the last GPUs, and the server asks for no more GPUs than its models can use. A model's `gpus` field (0 = the fewest it fits) overrides this for one model. Existing servers keep it off, with a suggestion to turn it on. |
+| Apply suggested adjustments by itself | `auto_tune` | Off by default. See [Tuning](#tuning). |
 | API key | `api_key` | Clients send it as `Authorization: Bearer <key>`. *Generate a new key* replaces it; update your clients afterwards. |
 
 The bottom of the Models page shows the generated llama-swap config.
@@ -276,6 +299,8 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | Docker network | `network` | The network every instance joins. |
 | Theme | - | System (follows your device), Light or Dark. Saved per browser in a `theme` cookie, not in `settings.yaml`. The theme button at the top of every page cycles through them. |
 | API token | - | For the [JSON API](api.md) and the `gpu-shepherd` commands. Kept in the `api-token` file in the data folder (mode 600), not in `settings.yaml`. *Make a new token* replaces it. |
+| Look for new app versions every | `image_check_hours` | Hours between checks of the registries for newer releases of the apps' images, 12 by default; `0` = only when you press *Check now*. See [App image updates](#app-image-updates). |
+| Mount new drives automatically | `auto_mount_drives` | On by default. A drive that is attached while GPU Shepherd runs and already holds data is mounted for you (see [Other disks](#other-disks)). |
 | Empty the trash after | `trash_days` | Days before the [trash](#storage-and-trash) empties itself, 30 by default; `0` keeps things until you empty it. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
@@ -297,6 +322,34 @@ Unused app images and containers without an instance are removed at once; images
 an app needs them. The same things are in the `gpu-shepherd` [commands](cli.md#commands) and the
 [API](api.md#storage-and-trash).
 
+### App image updates
+
+Apps are installed from image tags that move with each release (`open-webui:main`, `mongo:8.0`).
+GPU Shepherd asks each image's registry, through Docker, which image the tag points at now and
+compares it with the one on the machine (images built locally are never reported). A card whose app
+has a new release shows **Update**: it downloads the image and restarts the app, waiting for running
+work first. A stopped app only gets the download and runs the new version at its next start. Per
+app, `auto_update` does this by itself after the check that finds it. A restart that would move
+other instances is left to you. Command: `app-versions`; API: `/api/v1/image-updates`. Distinct from
+the *App updates* banner, which is about settings an app's template gained.
+
+### Other disks
+
+**Settings > Storage** lists the machine's drives. With *Mount new drives automatically*, a drive
+attached while GPU Shepherd is running that already holds a filesystem it can use is mounted under a
+new folder in `/mnt` named after its label (and an `/etc/fstab` line by UUID with `nofail` keeps it
+across restarts). It is **never formatted, partitioned or written to**: empty, encrypted, RAID/LVM
+member, swap and boot/recovery partitions are only reported, and a drive that was already attached at
+the start is left alone until you press **Mount**. A folder picker (used for the models folder and
+others) browses the machine's folders.
+
+**Move to another disk** copies a folder the apps use (a models folder, an app's data) to a new
+place, checks the copy name by name and size, stops the apps using it, points them at the new place,
+and starts again what was running. The old copy stays until you delete it from the list of moves
+(it goes to the trash), and **Move back** points the apps at it again. A move that fails before the
+switch leaves everything as it was. Moves run in a short-lived helper container, because GPU Shepherd
+itself usually can't see the new disk.
+
 ## What App Center apps fill in
 
 Each app in the App Center can be installed two ways. **Install** (automatic setup) asks only what
@@ -306,6 +359,9 @@ servers, the models you picked), so every field above can be changed afterwards.
 
 | Template | GPUs | Fills in |
 |---|---|---|
+| vLLM | the GPUs you pick (fixed count) | `vllm/vllm-openai` serving one Hugging Face model as `chat`, downloaded on first start into the models folder's `huggingface/` subfolder, a fresh `VLLM_API_KEY`, and 8 GB of shared memory for splitting a model across GPUs. It keeps the model in GPU memory only (no system RAM) and the GPU count it was installed with: install it again with another count to change it. Needs driver 580 or newer. |
+| SillyTavern | none | `ghcr.io/sillytavern/sillytavern` with `config`, `data`, `plugins` and `extensions` in its app data folder, a user name and password you choose (basic authentication, so it can be reached from other machines), and a connection to the model server (Chat Completion, Custom). |
+| Open Notebook | none | `lfnovo/open_notebook` with its data in the app data folder, a password you choose, fresh `SURREAL_PASS` and `OPEN_NOTEBOOK_ENCRYPTION_KEY` secrets, and its database: a second instance `<id>-surrealdb` (`surrealdb/surrealdb`, no port on the host) that it *starts with*. |
 | LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model. *Voice with* picks a Speaches instance for speech to text and text to speech (`AUDIO_STT_*`, `AUDIO_TTS_*` with engine `openai`). |
@@ -339,6 +395,13 @@ afterwards repeat:
   `chat`; the API key is already filled in.
 - **Ollama**: pull a model with `docker exec CONTAINER ollama pull MODEL`. Its port has no login.
 - **InvokeAI**: add models under Model Manager, Starter Models. It has no login.
+- **vLLM**: the first start downloads the model, which can take a while; watch its log. It answers
+  at `http://<server>:<port>/v1` with `VLLM_API_KEY` (under Edit) and the model name `chat`.
+- **SillyTavern**: log in with the user name and password you chose, pick a character and chat.
+- **Open Notebook**: log in with the password you chose, then under Settings, Models press *Sync*
+  for OpenAI Compatible and pick `chat` as the default chat model (and `embed` as the embedding
+  model, if the server has one). Deleting it leaves its database instance; delete that too if you
+  are done with it.
 
 ### Logins
 

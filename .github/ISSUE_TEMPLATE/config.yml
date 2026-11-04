@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/TechFreak94/GPU-Shepherd/security/advisories/new
+    about: Private report to the maintainers. Please don't open a public issue for vulnerabilities.
+  - name: Ask a question or share a setup
+    url: https://github.com/TechFreak94/GPU-Shepherd/discussions
+    about: Questions, ideas and "how do I...?" belong in Discussions, not Issues.

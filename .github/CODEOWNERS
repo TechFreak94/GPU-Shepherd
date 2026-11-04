@@ -1,0 +1,19 @@
+# Who must review changes. With branch protection's "Require review from Code Owners" on, a
+# pull request touching these paths needs an approval from the owner. See CONTRIBUTING.md.
+*                          @TechFreak94
+
+# How the project is built, released, installed and updated, and what handles credentials or Docker
+/.github/                  @TechFreak94
+/install.sh                @TechFreak94
+/update.sh                 @TechFreak94
+/Dockerfile                @TechFreak94
+/compose*.yaml             @TechFreak94
+/scripts/                  @TechFreak94
+/pyproject.toml            @TechFreak94
+/SECURITY.md               @TechFreak94
+/LICENSE                   @TechFreak94
+/gpushepherd/auth.py       @TechFreak94
+/gpushepherd/backend.py    @TechFreak94
+/gpushepherd/updates.py    @TechFreak94
+/gpushepherd/drives.py     @TechFreak94
+/gpushepherd/moves.py      @TechFreak94
