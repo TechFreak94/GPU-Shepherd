@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.16 - 2026-11-04
+
+- Bump docker/setup-buildx-action from 3 to 4 (#43)
+
 ## 0.13.15 - 2026-11-04
 
 - Documentation now covers every App Center app and the newer features (tuning, adding a model from a link, app image updates, other disks). (#42)
