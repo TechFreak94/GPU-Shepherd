@@ -50,6 +50,9 @@ WORKS_WITH: tuple[Credit, ...] = (
            "Downloads models, in the curlimages/curl container"),
     Credit("Tailscale", "https://tailscale.com", "BSD-3-Clause (client)",
            "Optional remote access, only if you choose it in install.sh"),
+    Credit("gpu-unlock", "https://github.com/Zagitta/gpu-unlock", "GPL-2.0-only (NVIDIA firmware under NVIDIA's terms)",
+           "Experimental full-speed tensor math on GeForce cards, built on your server by gpu-unlock.sh only if you "
+           "install it in Settings"),
     Credit("Distil-Whisper large-v3 (faster-whisper build)", "https://huggingface.co/Systran/faster-distil-whisper-large-v3",
            "MIT", "Speaches' default speech-to-text model"),
     Credit("Kokoro-82M", "https://huggingface.co/hexgrad/Kokoro-82M", "Apache-2.0",

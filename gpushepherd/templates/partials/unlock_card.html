@@ -1,0 +1,68 @@
+{# Settings > Experimental > Tensor unlock, refreshed in place. x = gpu_unlock.UnlockStatus #}
+<div class="row"><strong>Tensor unlock <span class="tag warn">experimental</span></strong>
+  {% if x.installed %}<span class="pill {{ 'on' if x.state == 'on' }}">{{ {"on": "On", "armed": "Set for the next boot", "trying": "Checking this boot", "off": "Off"}.get(x.state, x.state) }}</span>{% endif %}</div>
+<p class="small" style="margin-top:6px">GeForce RTX 20, 30 and 40 cards run FP16, BF16 and TF32 tensor math at half speed;
+  <a href="{{ unlock_url }}" target="_blank" rel="noopener">gpu-unlock</a> lifts that limit at boot. Image generation (ComfyUI) and
+  unquantized models get about 30–55% faster; GGUF models gain little and token speed doesn't change.
+  It installs a kernel module and adds an option to the boot line, so <strong>every change needs a reboot</strong>.
+  gpu-unlock is a young community project, not made by NVIDIA or GPU Shepherd: use it at your own risk.</p>
+
+{% if not x.service %}
+<p class="small">To manage it from here, turn on dashboard updates, or on the server run:
+  <span class="mono">{{ x.command }} --install-service</span></p>
+{% else %}
+{% if x.busy %}<p class="small busy-t">{{ x.message or "Waiting for the server…" }}</p>
+{% elif x.stuck %}<p class="small bad">The last change has been quiet for an hour; see the log.</p>
+{% elif x.run == "failed" %}<p class="small bad">{{ x.message }}</p>
+{% elif x.message and x.run == "done" %}<p class="small">{{ x.message }}</p>{% endif %}
+{% if x.note and x.note != x.message %}<p class="small {{ 'bad' if 'turned off' in x.note and x.state == 'off' }}">{{ x.note }}</p>{% endif %}
+{% if x.blocker %}<p class="small warn-text">{{ x.blocker }}</p>{% endif %}
+
+{% if x.cards %}
+<form hx-post="/ui/unlock/set" hx-target="#unlock" hx-confirm="Save these cards for the next boot? Nothing changes until you reboot the server.">
+  <table class="small">
+    <thead><tr><th scope="col">Unlock</th><th scope="col">Card</th><th scope="col">Now</th><th scope="col">After reboot</th></tr></thead>
+    <tbody>
+    {% for c in x.cards %}
+      <tr>
+        <td><input type="checkbox" name="cards" value="{{ c.pci }}" aria-label="Unlock {{ c.name or c.pci }}" {% if c.configured %}checked{% endif %}
+                   {% if not c.supported or not x.installed or x.busy %}disabled{% endif %}></td>
+        <td>{{ c.name or "NVIDIA card" }} <span class="mono muted">{{ c.pci }}</span>
+          {% if c.tier == "experimental" %}<span class="tag warn" title="gpu-unlock lists this generation as experimental">untested generation</span>
+          {% elif not c.supported and x.source %}<span class="tag">not supported</span>{% endif %}
+          {% if c.note %}<div class="muted">{{ c.note }}</div>{% endif %}</td>
+        <td>{% if c.unlocked %}<span class="on">Unlocked</span>{% elif c.active %}<span class="bad">Not unlocked</span>{% else %}Normal{% endif %}</td>
+        <td>{% if c.configured %}Unlocked{% else %}Normal{% endif %}{% if c.reboot_needed %} <span class="tag accent">reboot</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if x.installed %}<div class="actions"><button class="primary" type="submit" {% if x.busy %}disabled{% endif %}>Save for the next boot</button></div>{% endif %}
+</form>
+{% elif x.checked %}<p class="small muted">No NVIDIA cards found.</p>
+{% endif %}
+
+{% if x.reboot_needed %}
+<p class="small"><strong>Reboot the server to apply this</strong> (for example <span class="mono">sudo reboot</span>). Running apps stop
+  during the reboot.</p>
+{% endif %}
+{% if x.installed and (x.configured or x.state != "off") %}
+<p class="small muted">If a boot hangs: switch the machine off and on, open <em>Advanced options</em> in the boot menu and pick
+  <em>recovery mode</em>. That boot runs without the unlock and turns it off. A first boot that doesn't stay up for 10 minutes, or
+  loses a GPU, turns it off by itself too.</p>
+{% endif %}
+
+<div class="actions">
+  <button hx-post="/ui/unlock/check" hx-target="#unlock" {% if x.busy %}disabled{% endif %} title="List this machine's cards and which ones gpu-unlock supports; changes nothing">Check this machine</button>
+  {% if not x.installed %}
+  <button class="primary" hx-post="/ui/unlock/install" hx-target="#unlock" {% if x.busy or x.blocker %}disabled{% endif %}
+          hx-confirm="Install gpu-unlock {{ x.version }} on the server? It builds a kernel module (a few minutes, and a one-time download of NVIDIA's driver package for its firmware). No card is unlocked until you choose cards and reboot.">Install…</button>
+  {% else %}
+  {% if x.configured %}<button hx-post="/ui/unlock/set" hx-target="#unlock" {% if x.busy %}disabled{% endif %}
+          hx-confirm="Unlock no card from the next boot? Reboot afterwards to put the cards back to normal.">Turn off for every card</button>{% endif %}
+  <button class="danger" hx-post="/ui/unlock/uninstall" hx-target="#unlock" {% if x.busy %}disabled{% endif %}
+          hx-confirm="Turn the unlock off and remove gpu-unlock from the server? Reboot afterwards to put the cards back to normal.">Remove…</button>
+  {% endif %}
+  <button hx-get="/ui/unlock/log" hx-target="#modal-body">Log</button>
+</div>
+{% endif %}

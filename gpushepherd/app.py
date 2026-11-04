@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
 from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -276,8 +276,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 cpu_rows.append({"name": inst.name, "id": inst.id, "value": card["usage"].cpu_pct})
                 mem_rows.append({"name": inst.name, "id": inst.id, "value": card["usage"].mem_used})
             cards.append(card)
-        gpus = [{"gpu": g, "users": [(i, snap.instances[i].name) for i, a in snap.allocations.items()
-                                     if g.index in a and i in snap.instances]} for g in snap.gpus]
+        try:
+            unlock = gpu_unlock.badges(gpu_unlock.status(store.root), {g.index: g.bus_id for g in snap.gpus})
+        except Exception:  # noqa: BLE001 - the GPU tiles show without the badge
+            log.exception("could not read the gpu-unlock status")
+            unlock = {}
+        gpus = [{"gpu": g, "unlock": unlock.get(g.index),
+                 "users": [(i, snap.instances[i].name) for i, a in snap.allocations.items()
+                           if g.index in a and i in snap.instances]} for g in snap.gpus]
         mem_rows.sort(key=lambda r: -r["value"])
         cpu_rows.sort(key=lambda r: -(r["value"] or 0))
         return {"cards": cards, "gpus": gpus, "gpu_error": snap.gpu_error, "problems": problems,
@@ -977,13 +983,38 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         resp.headers["HX-Trigger"] = json.dumps({"refresh": True})
         return resp
 
+    # ------------------------------------------------------------------ tensor unlock (gpu-unlock.sh on the host)
+    def unlock_card_page(request: Request) -> Response:
+        return page(request, "partials/unlock_card.html", x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
+
+    @app.get("/ui/unlock/card", response_class=HTMLResponse)
+    def unlock_card(request: Request):
+        return unlock_card_page(request)
+
+    @app.get("/ui/unlock/log", response_class=HTMLResponse)
+    def unlock_log(request: Request):
+        x = svc.unlock_status()
+        return page(request, "partials/logs.html", title="Tensor unlock log", refresh="/ui/unlock/log" if x.busy else "",
+                    text=gpu_unlock.log_text(store.root) or "Nothing yet: the server writes here once a change starts.")
+
+    @app.post("/ui/unlock/{action}")
+    async def unlock_request(request: Request, action: str):
+        if action not in gpu_unlock.ACTIONS:
+            return PlainTextResponse("unknown action", status_code=400)
+        raw = await request.form()
+        try:
+            msg = svc.request_unlock(action, [str(c) for c in raw.getlist("cards")])
+        except Problem as err:
+            return problem(err)
+        return toast(unlock_card_page(request), msg)
+
     # ------------------------------------------------------------------ settings
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
                     error="", u=updates.status(store.root), api_token=auth.api_token(store),
-                    image_checked=svc.image_checked())
+                    image_checked=svc.image_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
 
     @app.post("/settings/password")
     async def change_password(request: Request):

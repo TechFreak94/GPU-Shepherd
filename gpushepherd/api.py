@@ -546,6 +546,27 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def update_log():
         return {"log": updates.log_text(store.root), "busy": updates.status(store.root).busy, "time": time.time()}
 
+    @r.get("/api/v1/gpu-unlock")
+    def get_gpu_unlock():
+        """Experimental tensor unlock (gpu-unlock on the host): the cards, now and after the next reboot."""
+        x = svc.unlock_status()
+        return {"installed": x.installed, "installed_version": x.installed_version, "version": x.version,
+                "state": x.state, "note": x.note, "run": x.run, "message": x.message, "busy": x.busy,
+                "service": x.service, "blocker": x.blocker, "reboot_needed": x.reboot_needed,
+                "checked_at": x.checked_at, "command": x.command,
+                "cards": [{"pci": c.pci, "name": c.name, "family": c.family, "tier": c.tier, "supported": c.supported,
+                           "unlocked": c.unlocked, "next_boot": c.configured, "note": c.note} for c in x.cards]}
+
+    @r.post("/api/v1/gpu-unlock/{action}")
+    @handle
+    async def gpu_unlock_request(request: Request, action: str):
+        """check, install, uninstall, or set {"cards": ["0000:01:00.0"]} ([] unlocks none). Applies at the next reboot."""
+        data = await body(request) if action == "set" else {}
+        cards = data.get("cards") or []
+        if not isinstance(cards, list):
+            return JSONResponse({"error": "cards must be a list of PCI addresses"}, status_code=400)
+        return JSONResponse({"message": svc.request_unlock(action, [str(c) for c in cards])}, status_code=202)
+
     @r.get("/api/v1/changelog")
     def get_changelog():
         ours = changelog.read(changelog.find())
