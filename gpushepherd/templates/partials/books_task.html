@@ -1,0 +1,20 @@
+{# what is being done with the books: polls while it runs, then the page reloads with the result #}
+<div id="books-task"{% if t and t.running %} hx-get="/books/task?was=1" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if t %}
+  <div class="card">
+    <div class="row"><strong>{{ t.title }}</strong>
+      {% if t.running %}<button type="button" class="small" hx-post="/books/stop">Stop</button>
+      {% elif t.error %}<span class="tag warn">Failed</span>{% elif t.stopped %}<span class="tag">Stopped</span>
+      {% else %}<span class="tag">Done</span>{% endif %}</div>
+    {% if t.running %}
+    <p class="small" style="margin:6px 0">{{ t.text }}</p>
+    {% if t.pct is not none %}<div class="meter" role="img" aria-label="{{ t.pct }}% done"><i style="width: {{ t.pct }}%"></i></div>
+    <p class="small muted" style="margin:4px 0 0">{{ t.done }} of {{ t.total }}. You can leave this page; it carries on.</p>{% endif %}
+    {% else %}
+    <p class="small" style="margin:6px 0 0">{{ t.error or t.result }}</p>
+    {% endif %}
+    {% if t.errors %}<details class="small"><summary>{{ t.errors|length }} book{{ "s" if t.errors|length != 1 }} failed</summary>
+      <ul>{% for e in t.errors %}<li>{{ e }}</li>{% endfor %}</ul></details>{% endif %}
+  </div>
+  {% endif %}
+</div>

@@ -31,6 +31,7 @@ BUILT_ON: tuple[Credit, ...] = (
     Credit("HTTPX", "https://www.python-httpx.org", "BSD-3-Clause", "Talks to model servers and checks for updates"),
     Credit("itsdangerous", "https://itsdangerous.palletsprojects.com", "BSD-3-Clause", "Signs login sessions"),
     Credit("python-multipart", "https://github.com/Kludex/python-multipart", "Apache-2.0", "Reads form posts"),
+    Credit("pypdf", "https://github.com/py-pdf/pypdf", "BSD-3-Clause", "Reads the text of PDF books"),
     Credit("pytest", "https://pytest.org", "MIT", "Tests (development only)"),
 )
 

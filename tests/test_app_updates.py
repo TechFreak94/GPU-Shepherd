@@ -73,3 +73,16 @@ def test_apply_and_skip_from_the_api_and_cli(run, stack):  # noqa: F811
     assert client.post("/api/v1/app-updates/webui/nope/apply").status_code == 404
     code, text = run("app-updates", "apply", "--all")
     assert code == 0 and client.get("/api/v1/app-updates").json() == []
+
+
+def test_open_webui_book_settings_and_query_prefix():
+    m = machine()
+    m.servers["llm"]["embed_query_prefix"] = tpl.query_prefix("/models/Qwen3-Embedding-0.6B-Q8_0.gguf")
+    assert m.servers["llm"]["embed_query_prefix"].startswith("Instruct: ") and tpl.query_prefix("nomic.gguf") == ""
+    t = tpl.get("open-webui")
+    env = tpl.build(t, tpl.defaults(t, m, "/m", "/a"), m)[0].env
+    assert env["CHUNK_SIZE"] == "1500" and env["RAG_TOP_K"] == "8" and env["RAG_EMBEDDING_QUERY_PREFIX"].endswith("Query: ")
+    # an existing install isn't offered them: Open WebUI only reads them at its first start
+    webui = Instance(id="webui", name="Open WebUI", image="ghcr.io/open-webui/open-webui:main", app="open-webui",
+                     env={k: v for k, v in env.items() if k not in tpl.OPENWEBUI_DOCS})
+    assert au.for_instance(webui, m) == []

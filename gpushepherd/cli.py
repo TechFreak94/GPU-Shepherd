@@ -712,6 +712,62 @@ def cmd_changelog(args, c: Client) -> int:
     return 0
 
 
+def cmd_books(args, c: Client) -> int:
+    a, items = args.action or "list", args.items
+
+    def need(n: int, example: str) -> None:
+        if len(items) < n:
+            raise Failed(f"e.g. gpu-shepherd books {example}")
+
+    def task_text(t) -> None:
+        if not t:
+            print("Nothing running.")
+            return
+        state = "running" if t["running"] else "failed" if t["error"] else "done"
+        print(f"{t['title']} ({state}): " + (t["text"] if t["running"] else t["error"] or t["result"]))
+        if t["pct"] is not None and t["running"]:
+            print(f"  {t['done']} of {t['total']} ({t['pct']}%)")
+        for e in t["errors"]:
+            print("  failed: " + e)
+
+    if a == "list":
+        def text(s):
+            print(f"Books folder: {s['folder']}" + ("" if s["folder_ok"] else " (not there)"))
+            table([[b["key"], b["status"], b["words"] or "", b["name"][:60], b["reason"][:50]] for b in s["books"]],
+                  ["KEY", "STATUS", "WORDS", "BOOK", "WHY"])
+            if s["skills"]:
+                print()
+                table([[k["slug"], k["name"][:50], ", ".join(k.get("installed") or {}) or "-"] for k in s["skills"]],
+                      ["SKILL", "FROM BOOK", "INSTALLED IN"])
+            if s["task"]:
+                print()
+                task_text(s["task"])
+        out(args, c.get("/api/v1/books"), text)
+    elif a == "status":
+        out(args, c.get("/api/v1/books")["task"], task_text)
+    elif a == "folder":
+        out(args, c.call("PUT", "/api/v1/books/folder", {"path": items[0] if items else ""}))
+    elif a in ("scan", "stop"):
+        out(args, c.post(f"/api/v1/books/{a}"))
+    elif a == "send":
+        need(1, "send open-webui [--name Books] [--split] [--embeddings server|keep]")
+        out(args, c.post("/api/v1/books/send", {"instance": items[0], "name": args.name, "split": args.split,
+                                                "embeddings": args.embeddings}))
+    elif a == "skill":
+        need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd books)")
+        out(args, c.post(f"/api/v1/books/{quote(items[0])}/skill", {"server": args.server}))
+    elif a == "skill-show":
+        need(1, "skill-show SKILL")
+        out(args, c.get(f"/api/v1/skills/{quote(items[0])}"), lambda r: print(r["text"]))
+    elif a == "skill-install":
+        need(2, "skill-install SKILL hermes")
+        out(args, c.post(f"/api/v1/skills/{quote(items[0])}/install", {"instance": items[1]}))
+    elif a == "skill-delete":
+        need(1, "skill-delete SKILL")
+        out(args, c.call("DELETE", f"/api/v1/skills/{quote(items[0])}"))
+    return 0
+
+
 def cmd_token(args, c: Client | None) -> int:
     from . import auth
     from .config import Store
@@ -726,7 +782,7 @@ def cmd_token(args, c: Client | None) -> int:
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
-            "settings": cmd_settings, "storage": cmd_storage, "trash": cmd_trash,
+            "settings": cmd_settings, "storage": cmd_storage, "books": cmd_books, "trash": cmd_trash,
             "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
 
 
@@ -846,6 +902,17 @@ def add_commands(sub) -> None:
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
+    p = sub.add_parser("books", help="ebooks for chat apps and agents: list, status, folder PATH, scan, "
+                                     "send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
+                                     "skill-delete SKILL")
+    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "send", "stop", "skill",
+                                                 "skill-show", "skill-install", "skill-delete"))
+    p.add_argument("items", nargs="*")
+    p.add_argument("--name", default="Books", help="send: the knowledge base's name (default Books)")
+    p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the books folder")
+    p.add_argument("--embeddings", choices=("server", "keep"),
+                   help="send: use the model server's embeddings model in Open WebUI, or keep the one it has")
+    p.add_argument("--server", default="", help="skill: the model server that writes it (default: the first)")
     p = sub.add_parser("trash", help="deleted instances and files: list, restore ID, delete ID, empty")
     p.add_argument("action", nargs="?", choices=("list", "restore", "delete", "empty"))
     p.add_argument("id", nargs="?")
