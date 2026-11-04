@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.19 - 2026-11-04
+
+- Bump actions/checkout from 4 to 7 (#50)
+
 ## 0.13.18 - 2026-11-04
 
 - Storage: move a moved folder back to the install drive any time, even after its old copy is deleted (Settings > Storage, API, `storage move-home`). (#49)
