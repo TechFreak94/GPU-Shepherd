@@ -84,13 +84,15 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Books**: put your ebooks (EPUB, PDF, TXT, Markdown) in a books folder and a scan reads each one
   into text, using the best format of each book and skipping duplicates. Books it can't read
   (DRM, scanned PDFs) are listed with the reason. Send them to an Open WebUI knowledge base to chat
-  with them, or have the model server draft an agent skill from a book for Hermes Agent.
+  with them, or have the model server draft an agent skill from a book for Hermes Agent. Load books
+  from the browser: drop books, a whole folder or zips on the page (no SSH needed).
 - **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
   Separately, GPU Shepherd checks the registries for newer **releases of each app's image** and
   updates the app on a button, or by itself if you choose.
 - **Other disks**: attached drives (mounted for you if you allow it, never formatted) and a folder
   picker for models and app data. **Move to another disk** copies a folder, checks the copy, points
-  the apps at it and keeps the old one until you delete it.
+  the apps at it and keeps the old one until you delete it. A moved folder can go back to the
+  install drive any time, even after the old copy is deleted.
 - **Plain files**: everything is saved as readable YAML - easy to back up, diff, or keep in git.
 - **Updates in place**: `update.sh` or a dashboard button, with automatic rollback if an update fails.
 - **Small**: one Python process, server-rendered pages with htmx, no JavaScript build step.

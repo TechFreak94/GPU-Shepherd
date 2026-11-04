@@ -121,6 +121,8 @@ For instances of kind `llama-swap`.
 | `GET /api/v1/books` | The books folder, its books (status, words, why one was skipped), the work running now, the Open WebUI apps books can go to, and the drafted skills. |
 | `PUT /api/v1/books/folder` | `{"path": "..."}` picks the books folder. |
 | `POST /api/v1/books/upload` | Add books: a multipart form with one or more `file` fields; a scan follows (`202`). |
+| `GET /api/v1/books/files` | The book files already in the folder, `{path: size}`. |
+| `PUT /api/v1/books/files?path=Folder/Book.epub` | Upload one book (raw body, streamed to disk; folders in `path` are kept; a `.zip` is unpacked into a folder named after it). No scan; call `scan` when done. |
 | `POST /api/v1/books/scan`, `POST /api/v1/books/stop` | Scan the folder for new books (`202`), or stop the work running. |
 | `POST /api/v1/books/send` | Put the ready books in an Open WebUI knowledge base: `{"instance": "webui", "name": "Books", "split": false, "embeddings": "server" \| "keep"}` (`202`). |
 | `POST /api/v1/books/{key}/skill` | Draft an agent skill from a book with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
@@ -153,7 +155,7 @@ Deleting an instance or cleaning up a file moves it to the trash first, so it ca
 | `POST /api/v1/storage/drives/mount` | `{"device": "/dev/sdb1"}`: mount a drive that holds data (never formatted or written to). |
 | `PUT /api/v1/storage/drives/auto` | `{"enabled": true}`: mount newly attached drives by itself, or only when asked. |
 | `GET /api/v1/storage/browse?path=/srv` | The folders in `path` and the room on its disk, for a folder picker. |
-| `POST /api/v1/storage/move` | `{"source": "...", "dest": "...", "confirm": true}`: move a folder the storage report lists as movable to another place (a background job, `202`). Without `confirm` it only checks and answers `409` with what the move would do. The old copy is kept until deleted. |
+| `POST /api/v1/storage/move` | `{"source": "...", "dest": "...", "confirm": true}`: move a folder the storage report lists as movable to another place (a background job, `202`). Without `confirm` it only checks and answers `409` with what the move would do. The old copy is kept until deleted. `{"source": "...", "home": true}` (no `dest`) moves a moved folder back to where it first was, even after the old copy is deleted. |
 | `GET /api/v1/moves` | Moves so far: `id`, `source`, `dest`, `status` (including `interrupted`) and `age_days`. |
 | `POST /api/v1/moves/{id}/back` | Point the apps at the old copy again. `DELETE /api/v1/moves/{id}/leftover` deletes the old copy (to the trash). |
 | `GET /api/v1/trash` | What is in it: `id`, `title`, `size`, `age_days`. |
