@@ -809,7 +809,7 @@ def cmd_books(args, c: Client) -> int:
 def upload_books(c: Client, paths: list[Path]) -> None:
     """Send books, folders of books (folders kept) or zips of books to the books folder, skipping the
     ones already there, then scan."""
-    from .books import RANK
+    from .books import RANK, zip_has_books
     todo = []
     for p in paths:
         if p.is_dir():
@@ -821,12 +821,15 @@ def upload_books(c: Client, paths: list[Path]) -> None:
         else:
             raise Failed(f"{p}: no such file or folder")
     have = c.get("/api/v1/books/files")["files"]
-    added = skipped = 0
+    added = skipped = no_books = 0
     failed = []
     for i, (f, rel) in enumerate(todo, 1):
         if have.get(rel) == f.stat().st_size or (rel.lower().endswith(".zip") and
                                                   any(k.startswith(rel[:-4] + "/") for k in have)):
             skipped += 1
+            continue
+        if rel.lower().endswith(".zip") and zip_has_books(f) is False:
+            no_books += 1                     # music, videos, games: not sent
             continue
         print(f"[{i}/{len(todo)}] {rel}", flush=True)
         try:
@@ -835,6 +838,7 @@ def upload_books(c: Client, paths: list[Path]) -> None:
             print(f"  not added: {err}", file=sys.stderr)
             failed.append(rel)
     print(f"Added {added} book{'s' if added != 1 else ''}, skipped {skipped} already there"
+          + (f", left out {no_books} zip{'s' if no_books != 1 else ''} with no books" if no_books else "")
           + (f", {len(failed)} not added" if failed else "") + ".")
     if added:
         print(c.post("/api/v1/books/scan")["message"])

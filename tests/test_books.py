@@ -91,6 +91,43 @@ def test_pdf_text(tmp_path):
         books.read(blank)
 
 
+def test_pdf_with_empty_password_aes_and_a_broken_page(tmp_path, monkeypatch):
+    from pypdf import PdfReader, PdfWriter
+    w = PdfWriter(clone_from=str(pdf(tmp_path / "p.pdf", WORDS)))
+    w.add_blank_page(612, 792)
+    w.encrypt(user_password="", owner_password="shop", algorithm="AES-128")   # how many shops sell PDFs
+    w.write(str(tmp_path / "aes.pdf"))
+    assert "word299" in books.read(tmp_path / "aes.pdf")[2]
+    real = PdfReader.pages.fget
+
+    class Pages(list):
+        def __getitem__(self, i):
+            page = list.__getitem__(self, i)
+            if i == 1:
+                page.extract_text = lambda: 1 / 0               # pypdf fails on an odd page
+            return page
+    monkeypatch.setattr(PdfReader, "pages", property(lambda r: Pages(real(r))))
+    assert "word299" in books.read(tmp_path / "aes.pdf")[2]
+
+
+def test_pdf_page_text_joins_hyphens_keeps_lines():
+    assert books.pdf_page_text("An exam-\nple  of   text  \n\n\n\ndef x():\n    return 1\x00") == \
+        "An example of text\n\ndef x():\n    return 1"
+
+
+def test_zip_has_books(tmp_path):
+    def mk(name, files):
+        with zipfile.ZipFile(tmp_path / name, "w") as z:
+            for n, data in files.items():
+                z.writestr(n, data)
+        return tmp_path / name
+    assert books.zip_has_books(mk("music.zip", {"a/01.mp3": "x", "a/readme.txt": "short", "__MACOSX/a/._b.pdf": "x"})) is False
+    assert books.zip_has_books(mk("book.zip", {"a/b.pdf": "x", "c.jpg": "x"})) is True
+    assert books.zip_has_books(mk("long.zip", {"notes.md": "word " * 5000})) is True
+    (tmp_path / "bad.zip").write_bytes(b"nope")
+    assert books.zip_has_books(tmp_path / "bad.zip") is None
+
+
 def test_find_groups_copies_of_one_book(tmp_path):
     (tmp_path / "bundle" / "deep").mkdir(parents=True)
     for f in ("deep-learning.epub", "deep-learning.pdf", "deep-learning.mobi"):
@@ -305,10 +342,11 @@ def test_bulk_upload_keeps_folders_unpacks_zips_and_skips(stack, monkeypatch):
     with zipfile.ZipFile(zpath, "w") as z:
         z.writestr("Python/b.epub", epub(data / "x" / "b.epub", title="Python").read_bytes())
         z.writestr("readme.html", "<p>hi</p>")
+        z.writestr("Python/readme.txt", "a short readme, not a book")
         z.writestr("../evil.epub", "x")
         z.writestr("__MACOSX/Python/._b.epub", "x")
     r = client.put("/api/v1/books/files", params={"path": "Bundle Two.zip"}, content=zpath.read_bytes())
-    assert r.json() == {"added": ["Bundle Two/Python/b.epub"], "left_out": 2}
+    assert r.json() == {"added": ["Bundle Two/Python/b.epub"], "left_out": 3}
     folder = data / "books"
     assert (folder / "Bundle Two" / "Python" / "b.epub").exists() and not (folder / "Bundle Two.zip").exists()
     assert not (data / "evil.epub").exists() and not list(folder.rglob("*.part"))
@@ -325,7 +363,8 @@ def test_bulk_upload_keeps_folders_unpacks_zips_and_skips(stack, monkeypatch):
     with zipfile.ZipFile(empty, "w") as z:
         z.writestr("notes.html", "x")
     assert "no books" in client.put("/api/v1/books/files", params={"path": "none.zip"}, content=empty.read_bytes()).json()["error"]
-    assert "can't open" in client.put("/api/v1/books/files", params={"path": "bad.zip"}, content=b"nope").json()["error"]
+    err = client.put("/api/v1/books/files", params={"path": "Sub/bad.zip"}, content=b"nope").json()["error"]
+    assert err.startswith("bad.zip: can't open") and ".part" not in err
     # the dashboard's route: signed in and from the page only
     b = browser(app)
     assert b.put("/books/files", params={"path": "c.txt"}, content=WORDS.encode()).status_code == 403

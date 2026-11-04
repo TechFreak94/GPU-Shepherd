@@ -1855,14 +1855,14 @@ class Shepherd:
             return {"added": [rel], "left_out": 0}
         into = dest.with_name(dest.name[:-4])
         try:
-            saved, other = books_mod.unpack(tmp, into)
+            saved, other = books_mod.unpack(tmp, into, Path(rel).name)
         except books_mod.BookError as err:
             raise Problem(str(err)) from err
         finally:
             tmp.unlink(missing_ok=True)
         base = rel[:-4]
         if not saved:
-            raise Problem(f"{rel} has no books in it (EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC).")
+            raise Problem(f"{Path(rel).name} has no books in it (EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC).")
         return {"added": [f"{base}/{r}" for r in saved], "left_out": other}
 
     def save_book(self, path: str, f, size: int | None = None) -> dict:
