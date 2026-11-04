@@ -275,6 +275,22 @@ def test_update_sh_check_update_and_rollback(tmp_path):
     assert head(clone) == first and not (clone / "NEW").exists()
     assert run("--check").returncode == 10
 
+    # trying a branch before its release: switch to it, list it, go back with --rollback
+    git("checkout", "-q", "-b", "feature-x", cwd=seed)
+    (seed / "FEATURE").write_text("x")
+    git("add", "-A", cwd=seed)
+    git("commit", "-qm", "Feature work", cwd=seed)
+    git("push", "-q", str(remote), "feature-x", cwd=seed)
+    assert run("--check").returncode == 10
+    assert "feature-x" in status()["branches"] and status()["branch"] == "main"
+    assert run("--yes", "--branch", "nope").returncode == 1
+    r = run("--yes", "--branch", "feature-x")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (clone / "FEATURE").exists() and status()["branch"] == "feature-x" and status()["state"] == "done"
+    r = run("--yes", "--rollback")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert status()["branch"] == "main" and not (clone / "FEATURE").exists()
+
 
 @pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_update_sh_recovers_from_a_broken_update(tmp_path):
@@ -530,3 +546,31 @@ def test_update_sh_saves_and_clears_a_token(tmp_path):
     r = subprocess.run([str(clone / "update.sh"), "--clear-token"], env=env, capture_output=True, text=True)
     assert r.returncode == 0 and not creds.exists()
     assert json.loads((data / "update" / "status.json").read_text())["credentials"] == ""
+
+
+def test_branch_switch_request(ui):
+    client, root = ui
+    write_status(root, branch="main", branches=["main", "feature-x"])
+    r = client.post("/ui/update/branch", data={"branch": "nope"}, headers=HX)
+    assert r.status_code == 204 and "no branch" in r.headers["HX-Trigger"]
+    r = client.post("/ui/update/branch", data={"branch": "main"}, headers=HX)
+    assert "Already following" in r.headers["HX-Trigger"]
+    assert not (root / "update" / "request").exists()
+    r = client.post("/ui/update/branch", data={"branch": "feature-x"}, headers=HX)
+    assert r.status_code == 200
+    assert (root / "update" / "request").read_text() == "branch\nfeature-x\n"
+
+
+def test_branch_name_is_checked(tmp_path):
+    for bad in ("", "-x", "a..b", "a b", "a;rm", "x.lock"):
+        with pytest.raises(ValueError):
+            updates.request_branch(tmp_path, bad)
+    updates.request_branch(tmp_path, "claude/project-thread-abc")
+    assert (tmp_path / "update" / "request").read_text() == "branch\nclaude/project-thread-abc\n"
+
+
+def test_settings_lists_branches(ui):
+    client, root = ui
+    write_status(root, branch="main", branches=["main", "feature-x"])
+    html = client.get("/settings").text
+    assert 'name="branch"' in html and "feature-x" in html

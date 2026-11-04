@@ -517,6 +517,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                 "checked_at": u.checked_at, "state": u.state, "step": u.step, "message": u.message,
                 "busy": u.busy, "pending": u.pending, "progress": [{"step": s, "state": m} for s, m in u.progress],
                 "commits": u.commits, "local_changes": u.local_changes,
+                "branch": u.branch, "branches": u.branches,
                 "dashboard_updates": u.dashboard_updates, "credentials_user": u.credentials, "command": u.command}
 
     @r.post("/api/v1/updates/credentials")
@@ -525,6 +526,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         data = await body(request)
         return JSONResponse({"message": svc.update_credentials(str(data.get("user", "")), str(data.get("token", "")),
                                                                clear=bool(data.get("clear")))}, status_code=202)
+
+    @r.post("/api/v1/updates/branch")
+    @handle
+    async def update_branch(request: Request):
+        """Follow another branch of the repository: {"branch": "main"}. Rebuilds GPU Shepherd from it."""
+        return JSONResponse({"message": svc.switch_branch(str((await body(request)).get("branch", "")))},
+                            status_code=202)
 
     @r.post("/api/v1/updates/{action}")
     @handle

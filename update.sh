@@ -26,6 +26,7 @@ CHECK=0
 ASSUME_YES=0
 STASH=0
 REBUILD=0
+SWITCH_TO=""            # --branch: the branch to follow from now on
 ROLLBACK=0
 RESTORE=0
 RESTORE_FILE=""
@@ -51,6 +52,8 @@ rebuild GPU Shepherd.
   -y, --yes                    don't ask before updating
   --stash                      set your own changes to files in this folder aside during the update
                                and put them back afterwards (otherwise the update stops)
+  --branch NAME                follow another branch of the repository (for trying changes before they are
+                               released): switches this clone to it and rebuilds; --branch main goes back
   --rebuild                    rebuild and restart GPU Shepherd even if nothing new was downloaded
   --rollback                   go back to the version that ran before the last update (uses the
                                image kept from before it, so no rebuild or network is needed)
@@ -88,6 +91,7 @@ while [ $# -gt 0 ]; do
         -y|--yes)       ASSUME_YES=1; shift ;;
         --stash)        STASH=1; shift ;;
         --rebuild)      REBUILD=1; shift ;;
+        --branch)       SWITCH_TO="${2:?--branch needs a branch name}"; REBUILD=1; shift 2 ;;
         --rollback)     ROLLBACK=1; shift ;;
         --restore-settings) RESTORE=1; shift
                         if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then RESTORE_FILE=$1; shift; fi ;;
@@ -120,6 +124,7 @@ PREVIOUS="$STATE_DIR/previous-commit"
 BACKUPS="$STATE_DIR/backups"
 SAVED_IMAGE=gpu-shepherd:previous   # the image that ran before the last update
 SAVED_IMAGE_FILE="$STATE_DIR/previous-image"
+PREV_BRANCH_FILE="$STATE_DIR/previous-branch"   # "branch commit" the clone was on before --branch switched it
 
 # Docker is root-equivalent, so this needs root unless you can already use docker.
 if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1; }; then
@@ -213,10 +218,23 @@ write_status() {
             "$(json_str "$(g rev-parse HEAD 2>/dev/null || true)")" "$(json_str "${LATEST:-}")" \
             "$(json_str "$(cat "$PREVIOUS" 2>/dev/null || true)")" "${BEHIND:-0}" "${AHEAD:-0}"
         printf '"credentials":%s,' "$(json_str "$(token_user)")"
+        printf '"branches":[%s],' "$(branch_list)"
         printf '"local_changes":[%s],"commits":[%s],"dashboard_updates":%s}\n' "$changes" "$commits" \
             "$(service_enabled && echo true || echo false)"
     } >"$tmp"
     mv -f "$tmp" "$STATUS"
+}
+
+branch_list() {   # the remote's branches as a JSON list, newest first (from the last fetch)
+    local remote=${UPSTREAM%%/*} out="" b first=1
+    [ -n "$remote" ] || return 0
+    while IFS= read -r b; do
+        b=${b#"$remote"/}
+        case "$b" in HEAD|"$remote"|"") continue ;; esac
+        [ "$first" -eq 1 ] || out+=","
+        first=0; out+=$(json_str "$b")
+    done < <(g for-each-ref --sort=-committerdate --count=40 --format='%(refname:short)' "refs/remotes/$remote/" 2>/dev/null)
+    printf '%s' "$out"
 }
 
 fail() {   # fail "message": report it here and on the dashboard, then stop
@@ -352,13 +370,15 @@ fi
 # A request from the dashboard: "check" or "update". Taken (deleted) first, so systemd doesn't
 # start us again for the same request; the output goes to a log the dashboard shows.
 if [ "$FROM_DASHBOARD" -eq 1 ]; then
-    action=$(head -c 16 "$REQUEST" 2>/dev/null | tr -dc "[:lower:]" || true)
+    action=$(head -n 1 "$REQUEST" 2>/dev/null | head -c 16 | tr -dc "[:lower:]" || true)
+    request_arg=$(sed -n 2p "$REQUEST" 2>/dev/null | head -c 100 | tr -dc 'A-Za-z0-9._/-' || true)
     rm -f "$REQUEST"
     exec >"$STATE_DIR/log.txt" 2>&1
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) requested from the dashboard: ${action:-nothing}"
     case "$action" in
         check)  CHECK=1 ;;
         update) REBUILD=1 ;;
+        branch) [ -n "$request_arg" ] || fail "no branch name was given"; SWITCH_TO=$request_arg; REBUILD=1 ;;
         credentials)
             # the dashboard leaves "user" and "token" lines (or "clear") in a 0600 file; take them
             # out of the data folder at once, keep them in the clone, then check that they work
@@ -411,6 +431,8 @@ healthy() {   # wait up to 90 s for the web UI, then make sure it stays up; true
 # (tagged gpu-shepherd:previous, so going back needs no rebuild and no network) and a copy of the
 # settings, instances and model lists (small YAML files; model files and app data are not copied).
 save_recovery() {
+    [ "${RECOVERY_SAVED:-0}" -eq 0 ] || return 0
+    RECOVERY_SAVED=1
     local img name stamp
     write_status updating "Keeping the running version and backing up the settings" backup
     mkdir -p "$BACKUPS"
@@ -469,6 +491,12 @@ recover() {
     err "$reason"
     say "Going back to the version that was running before"
     write_status updating "The update failed; going back to the version that worked" recover
+    if [ -s "$PREV_BRANCH_FILE" ]; then      # a branch switch: back to the branch (and commit) it left
+        local pb pc
+        read -r pb pc <"$PREV_BRANCH_FILE" || true
+        if [ -n "$pb" ] && g checkout --quiet "$pb"; then old=${pc:-$old}; rm -f "$PREV_BRANCH_FILE"
+            BRANCH=$pb; UPSTREAM=$(g rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true); fi
+    fi
     if [ -n "$old" ] && [ "$old" != "$(g rev-parse HEAD)" ]; then
         g reset --keep "$old" || code_back=0
     fi
@@ -541,12 +569,21 @@ if [ "$ROLLBACK" -eq 1 ]; then
     [ -n "$prev" ] || { err "there is no earlier version to go back to (no update has run here yet)"; exit 1; }
     g cat-file -e "$prev^{commit}" 2>/dev/null || { err "the previous version ($prev) is no longer in this clone"; exit 1; }
     cur=$(g rev-parse HEAD)
-    [ "$cur" != "$prev" ] || { say "Already on the previous version ${prev:0:12}"; exit 0; }
-    say "Going back from $(g log -1 --format='%h (%cs)' "$cur") to $(g log -1 --format='%h (%cs)' "$prev")"
-    ask_yes "Go back and rebuild?" || { echo "Nothing was changed."; exit 2; }
-    # --keep refuses (and changes nothing) if it would overwrite a file you edited.
-    g reset --keep "$prev" || { err "could not go back: you changed files the older version also changes"; exit 1; }
-    echo "$cur" >"$PREVIOUS"           # rolling back again returns to where we were
+    if [ -s "$PREV_BRANCH_FILE" ]; then      # the last change was --branch: go back to the branch it left
+        read -r pb _ <"$PREV_BRANCH_FILE" || true
+        say "Going back from branch $(g symbolic-ref --short -q HEAD) to branch $pb"
+        ask_yes "Go back and rebuild?" || { echo "Nothing was changed."; exit 2; }
+        g checkout --quiet "$pb" || { err "could not switch back to $pb: you changed files the other branch also changes"; exit 1; }
+        rm -f "$PREV_BRANCH_FILE"
+        prev=$(g rev-parse HEAD)
+    else
+        [ "$cur" != "$prev" ] || { say "Already on the previous version ${prev:0:12}"; exit 0; }
+        say "Going back from $(g log -1 --format='%h (%cs)' "$cur") to $(g log -1 --format='%h (%cs)' "$prev")"
+        ask_yes "Go back and rebuild?" || { echo "Nothing was changed."; exit 2; }
+        # --keep refuses (and changes nothing) if it would overwrite a file you edited.
+        g reset --keep "$prev" || { err "could not go back: you changed files the older version also changes"; exit 1; }
+        echo "$cur" >"$PREVIOUS"           # rolling back again returns to where we were
+    fi
     BRANCH=$(g symbolic-ref --short -q HEAD || true)
     UPSTREAM=$(g rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
     BEHIND=$(g rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0); AHEAD=0
@@ -611,6 +648,32 @@ LATEST=$(g rev-parse "$UPSTREAM")
 BEHIND=$(g rev-list --count "HEAD..$UPSTREAM")
 AHEAD=$(g rev-list --count "$UPSTREAM..HEAD")
 LOCAL_CHANGES=$(g status --porcelain --untracked-files=no | cut -c4-)
+
+# Follow another branch (--branch, or the dashboard's branch picker): switch the clone to it. The
+# rest of the run is the normal update, which rebuilds the image from the new code.
+if [ -n "$SWITCH_TO" ] && [ "$SWITCH_TO" != "$BRANCH" ]; then
+    case "$SWITCH_TO" in -*|*..*|*//*|*.lock|*@\{*) fail "'$SWITCH_TO' is not a usable branch name" ;; esac
+    g show-ref --verify --quiet "refs/remotes/$REMOTE/$SWITCH_TO" || fail "there is no branch '$SWITCH_TO' on '$REMOTE'"
+    [ -z "$LOCAL_CHANGES" ] || fail "you changed files in $HERE, so the branch was not switched. Run  sudo ./update.sh --stash  first, or undo them."
+    say "Switching from $BRANCH to $SWITCH_TO"
+    save_recovery
+    write_status updating "Switching to branch $SWITCH_TO" download
+    mkdir -p "$STATE_DIR" 2>/dev/null || true
+    echo "$BRANCH $(g rev-parse HEAD)" >"$PREV_BRANCH_FILE"
+    g rev-parse HEAD >"$PREVIOUS"
+    if g show-ref --verify --quiet "refs/heads/$SWITCH_TO"; then
+        g checkout --quiet "$SWITCH_TO" && g branch --quiet --set-upstream-to="$REMOTE/$SWITCH_TO" "$SWITCH_TO"
+    else
+        g checkout --quiet -b "$SWITCH_TO" --track "$REMOTE/$SWITCH_TO"
+    fi || { g checkout --quiet "$BRANCH" 2>/dev/null; rm -f "$PREV_BRANCH_FILE"; fail "could not switch to branch $SWITCH_TO. Nothing was changed."; }
+    BRANCH=$SWITCH_TO
+    UPSTREAM="$REMOTE/$SWITCH_TO"
+    LATEST=$(g rev-parse "$UPSTREAM")
+    BEHIND=$(g rev-list --count "HEAD..$UPSTREAM")
+    AHEAD=$(g rev-list --count "$UPSTREAM..HEAD")
+elif [ "$ROLLBACK" -eq 0 ] && [ "$CHECK" -eq 0 ]; then
+    rm -f "$PREV_BRANCH_FILE"        # an ordinary update: going back means this version, not a branch
+fi
 
 if [ "$BEHIND" -eq 0 ]; then
     if [ "$CHECK" -eq 1 ] || [ "$REBUILD" -eq 0 ]; then

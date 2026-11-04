@@ -1711,6 +1711,30 @@ class Shepherd:
         log.info("update: %s requested", action)
         return "Checking for updates…" if action == "check" else "Updating…"
 
+    def switch_branch(self, name: str) -> str:
+        """Follow another branch of the repository (to try changes before they are released)."""
+        name = name.strip()
+        u = updates.status(self.store.root)
+        if not u.dashboard_updates:
+            raise Problem(f"Switching branches from the dashboard needs the update service. On the server run: {u.command} --branch {name or 'NAME'}",
+                          "warn", 409)
+        if u.busy:
+            raise Problem("An update or check is already running.", "warn", 409)
+        if self.jobs.busy:
+            raise Problem("Wait for the current change to finish, then switch.", "warn", 409)
+        if u.local_changes:
+            raise Problem(f"Files in the clone were changed by hand. Run {u.command} --stash on the server.", status=409)
+        if name == u.branch:
+            raise Problem(f"Already following {name}.", "info", 409)
+        if name not in u.branches:
+            raise Problem(f"There is no branch '{name}' on the remote (check for updates to refresh the list).", status=404)
+        try:
+            updates.request_branch(self.store.root, name)
+        except ValueError as err:
+            raise Problem(str(err)) from err
+        log.info("update: switch to branch %s requested", name)
+        return f"Switching to {name} and rebuilding…"
+
     def update_credentials(self, user: str = "", token: str = "", clear: bool = False) -> str:
         u = updates.status(self.store.root)
         if not u.dashboard_updates:

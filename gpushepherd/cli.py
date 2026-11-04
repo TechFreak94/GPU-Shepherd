@@ -686,6 +686,16 @@ def cmd_update(args, c: Client) -> int:
             print("Nothing changed. Add -y to update without asking.")
             return 1
         out(args, c.post(f"/api/v1/updates/{'update' if a == 'install' else a}"))
+    elif a == "branch":
+        if not args.user:
+            u = c.get("/api/v1/updates")
+            out(args, {"branch": u["branch"], "branches": u["branches"]},
+                lambda r: print(f"Following {r['branch'] or '?'}. Others: " + (", ".join(r["branches"]) or "none known (run update check)")))
+            return 0
+        if not (args.yes or ask(f"Switch to branch {args.user} and rebuild GPU Shepherd? Instances keep running.")):
+            print("Nothing changed. Add -y to switch without asking.")
+            return 1
+        out(args, c.post("/api/v1/updates/branch", {"branch": args.user}))
     elif a == "log":
         r = c.get("/api/v1/updates/log")
         out(args, r, r["log"] or "Nothing yet: the updater writes here once it starts.")
@@ -918,8 +928,8 @@ def add_commands(sub) -> None:
     p.add_argument("id", nargs="?")
     p.add_argument("-y", "--yes", action="store_true", help="empty without asking")
     sub.add_parser("password", help="change the admin password (asks for it)")
-    p = sub.add_parser("update", help="status, check, install, log, set-token USER, clear-token")
-    p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "set-token", "clear-token"))
+    p = sub.add_parser("update", help="status, check, install, log, branch [NAME], set-token USER, clear-token")
+    p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "branch", "set-token", "clear-token"))
     p.add_argument("user", nargs="?")
     p.add_argument("-y", "--yes", action="store_true", help="install without asking")
     p = sub.add_parser("changelog", help="what changed in each version")

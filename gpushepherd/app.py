@@ -937,6 +937,17 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def update_card(request: Request):
         return page(request, "partials/update_card.html", u=updates.status(store.root))
 
+    @app.post("/ui/update/branch")
+    async def update_branch(request: Request):
+        raw = await request.form()
+        try:
+            msg = svc.switch_branch(str(raw.get("branch", "")))
+        except Problem as err:
+            return problem(err)
+        resp = update_page(request)          # the dialog, now showing the progress
+        resp.headers["HX-Trigger"] = json.dumps({"refresh": True, "toast": {"msg": msg, "kind": "info"}})
+        return resp
+
     @app.get("/ui/update/log", response_class=HTMLResponse)
     def update_log(request: Request):
         u = updates.status(store.root)

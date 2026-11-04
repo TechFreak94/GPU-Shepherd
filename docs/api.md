@@ -190,6 +190,7 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 | `GET /api/v1/updates` | `running_version`, `available`, `new_version`, `commits`, `checked_at`, `state`, `step`, `progress`, `busy`, `dashboard_updates`, `credentials_user`. |
 | `POST /api/v1/updates/check` | Check now (`202`). |
 | `POST /api/v1/updates/update` | Update now (`202`). GPU Shepherd restarts; instances keep running. |
+| `POST /api/v1/updates/branch` | `{"branch": "feature-x"}`: follow that branch (one listed in `branches` of `GET /api/v1/updates`) and rebuild (`202`). |
 | `GET /api/v1/updates/log` | The log of the last check or update. |
 | `POST /api/v1/updates/credentials` | `{"user": "...", "token": "github_pat_..."}` to save a GitHub token for a private repository, or `{"clear": true}`. |
 | `GET /api/v1/changelog` | Releases, newest first: `version`, `date`, `items`, `running`, `new`. |
