@@ -559,6 +559,10 @@ def cmd_storage(args, c: Client) -> int:
             if rows:
                 print("\nCan be moved to another place (gpu-shepherd storage move PATH NEW-PLACE):")
                 table(rows, ["FOLDER", "PATH", "SIZE"])
+            rows = [[m["label"], m["path"], m["home"]] for m in s.get("movable", []) if m.get("home")]
+            if rows:
+                print("\nMoved, and can go back (gpu-shepherd storage move-home PATH):")
+                table(rows, ["FOLDER", "NOW IN", "FIRST IN"])
             rows = [[f["why"], gb(f["size"]), f["path"]] for f in s["files"]]
             rows += [["leftover", gb(f["size"]), f["path"]] for f in s["leftover_folders"]]
             rows += [["container", "-", n] for n in s["orphans"]]
@@ -576,10 +580,12 @@ def cmd_storage(args, c: Client) -> int:
         if len(args.items) != 1:
             raise Failed("which app data folder? e.g. gpu-shepherd storage trash-folder old-app")
         out(args, c.call("POST", "/api/v1/storage/leftovers", {"name": args.items[0]}))
-    elif a == "move":
-        if len(args.items) != 2:
+    elif a in ("move", "move-home"):
+        if a == "move" and len(args.items) != 2:
             raise Failed("which folder, and where to? e.g. gpu-shepherd storage move /opt/gpu-shepherd/models /mnt/disk2/models")
-        body = {"source": args.items[0], "dest": args.items[1]}
+        if a == "move-home" and len(args.items) != 1:
+            raise Failed("which folder? e.g. gpu-shepherd storage move-home /mnt/disk2/models (see gpu-shepherd storage)")
+        body = {"source": args.items[0], "dest": args.items[1]} if a == "move" else {"source": args.items[0], "home": True}
         r = c.post("/api/v1/storage/move", body, ok=(409,))
         if not r.get("needs_confirm"):
             raise Failed(r.get("error", "can't move it"))
@@ -905,10 +911,10 @@ def add_commands(sub) -> None:
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
                                        "trash-folder NAME, drives, mount DEVICE, browse [PATH], move PATH NEW-PLACE, "
-                                       "moves, move-back ID, delete-old ID")
+                                       "move-home PATH, moves, move-back ID, delete-old ID")
     p.add_argument("action", nargs="?", choices=("show", "remove-images", "remove-orphans", "trash-files",
-                                                 "trash-folder", "drives", "mount", "browse", "move", "moves", "move-back",
-                                                 "delete-old"))
+                                                 "trash-folder", "drives", "mount", "browse", "move", "move-home", "moves",
+                                                 "move-back", "delete-old"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")

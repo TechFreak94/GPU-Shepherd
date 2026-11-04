@@ -1129,17 +1129,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
 
     def move_form(raw) -> tuple[str, str]:
-        return str(raw.get("source", "")), str(raw.get("dest", ""))
+        """(source, dest); with home=1 the dest is where the folder was before it was moved."""
+        source = str(raw.get("source", ""))
+        return source, svc.home_of(source) if raw.get("home") else str(raw.get("dest", ""))
 
     def picker_context(source: str) -> dict:
         m = svc._movable(source)
         return {"source": m.path, "label": m.label, "name": Path(m.path).name}
 
     def picker_roots(found: list[drives.Drive]) -> list[dict]:
-        """Where the tree starts: each mounted drive (not the system's), then the whole machine."""
+        """Where the tree starts: each mounted drive (not the system's), GPU Shepherd's own folder
+        (on the drive it was installed on), then the whole machine."""
         roots = [{"path": d.mountpoint, "title": d.name, "meta": f"{d.fstype} · {gb(d.size)}"}
                  for d in found if d.state == "mounted" and not d.system and d.mountpoint.startswith("/")]
-        return roots + [{"path": "/", "title": "This machine", "meta": "all folders"}]
+        home = str(svc.engine.host_data_dir)
+        return roots + [{"path": home, "title": "GPU Shepherd's folder", "meta": "the install drive"},
+                        {"path": "/", "title": "This machine", "meta": "all folders"}]
 
     @app.get("/storage/pick", response_class=HTMLResponse)
     def storage_pick(request: Request, source: str = "", path: str = ""):

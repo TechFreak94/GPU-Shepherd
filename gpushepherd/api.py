@@ -434,10 +434,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @r.post("/api/v1/storage/move")
     @handle
     async def storage_move(request: Request):
-        """Move a folder the Storage report lists under "movable" to `dest`. Without confirm it
-        only checks, and answers what the move would do."""
+        """Move a folder the Storage report lists under "movable" to `dest`, or with "home": true
+        back to where it was before it was moved (its "home"). Without confirm it only checks, and
+        answers what the move would do."""
         data = await body(request)
         source, dest = str(data.get("source", "")), str(data.get("dest", ""))
+        if data.get("home"):
+            dest = svc.home_of(source)
         if not data.get("confirm"):
             info = svc.check_move(source, dest)
             return JSONResponse({"error": 'Send {"confirm": true} to move it.', "needs_confirm": True, **info},

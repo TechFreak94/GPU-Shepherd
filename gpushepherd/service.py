@@ -525,7 +525,7 @@ class Shepherd:
     def movable(self, instances: dict[str, Instance] | None = None) -> list[moves.Movable]:
         instances = instances if instances is not None else self.store.instances()[0]
         return moves.movable(instances, self.appdata_root(),
-                             storage.model_folders(instances, tpl.MODELS_IN_CONTAINER))
+                             storage.model_folders(instances, tpl.MODELS_IN_CONTAINER), moves.homes(self.move_log.all()))
 
     def move_history(self) -> list[dict]:
         current = self.jobs.current
@@ -543,6 +543,20 @@ class Shepherd:
         if not m:
             raise Problem(f"{source} is not a folder that can be moved: pick one the Storage page lists.", status=404)
         return m
+
+    def home_of(self, source: str) -> str:
+        """Where a folder GPU Shepherd moved was first (usually on the drive it was installed on),
+        for moving it back there."""
+        m = self._movable(source)
+        if not m.home:
+            raise Problem(f"{m.path} is where it started: GPU Shepherd hasn't moved it.", status=409)
+        old = next((r for r in self.move_log.all() if r.status == "done" and r.dest == m.path
+                    and r.source == m.home and r.leftover == m.home), None)
+        if old:
+            raise Problem(f"The old copy is still in {m.home}. Use Move back on that move to point the apps at it "
+                          f"again (anything they saved since stays only in {m.path}), or delete the old copy first "
+                          "to copy the folder back as it is now.", status=409)
+        return m.home
 
     def check_move(self, source: str, dest: str) -> dict:
         """What moving `source` to `dest` would do, and whether it can: nothing is changed."""
