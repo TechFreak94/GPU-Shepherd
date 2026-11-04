@@ -45,6 +45,18 @@
       <button type="submit">Check and move…</button></div>
   </form>
   {% else %}<p class="muted small" style="margin:0">No app uses a models or app data folder yet.</p>{% endif %}
+  {% set moved = st.movable|selectattr("home")|list %}
+  {% if moved %}
+  <table class="table" style="margin-top:12px">
+    <tr><th>Moved folder</th><th>Now in</th><th>First in</th><th></th></tr>
+    {% for m in moved %}
+    <tr><td>{{ m.label }}</td><td class="mono">{{ m.path }}</td><td class="mono">{{ m.home }}</td>
+      <td><div class="actions" style="margin:0">
+        <button type="button" class="small" hx-post="/storage/move/check" hx-vals='{{ {"source": m.path, "home": "1"}|tojson }}'
+          title="Copy {{ m.path }} back to {{ m.home }} and point the apps at it">Move back to {{ m.home }}…</button></div></td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
   {% if st.moves %}
   {% set says = {"done": "Moved", "failed": "Failed", "cancelled": "Stopped", "interrupted": "Interrupted",
                  "moved-back": "Moved back", "copying": "Copying…"} %}

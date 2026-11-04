@@ -126,6 +126,52 @@ def test_old_copy_is_deleted_only_when_unused(stack):
     assert client.delete(f"/api/v1/moves/{rec['id']}/leftover").status_code == 409
 
 
+def test_moving_back_home_after_the_old_copy_is_deleted(stack):
+    """Once the old copy is deleted, "Move back" can't just switch over: the folder is copied home."""
+    app, client, backend, data, models, disk2 = stack
+    src = data / "appdata" / "comfyui"
+    (src / "output" / "img.png").write_bytes(b"i" * 10)
+    rows = {m["path"]: m for m in client.get("/api/v1/storage").json()["movable"]}
+    assert rows[str(src)]["home"] == ""
+    assert client.post("/api/v1/storage/move", json={"source": str(src), "home": True}).status_code == 409
+    there, further = disk2 / "comfyui", disk2 / "again"
+    client.post("/api/v1/storage/move", json={"source": str(src), "dest": str(there), "confirm": True})
+    assert wait(app).status == "done"
+    # the old copy is still at home: Move back is the way
+    r = client.post("/api/v1/storage/move", json={"source": str(there), "home": True})
+    assert r.status_code == 409 and "Move back" in r.json()["error"]
+    [rec] = client.get("/api/v1/moves").json()
+    client.delete(f"/api/v1/moves/{rec['id']}/leftover")
+    # moved again, then home: back to the first place, which is listed for the moved folder
+    client.post("/api/v1/storage/move", json={"source": str(there), "dest": str(further), "confirm": True})
+    assert wait(app).status == "done"
+    rows = {m["path"]: m for m in client.get("/api/v1/storage").json()["movable"]}
+    assert rows[str(further)]["home"] == str(src) and rows[str(further)]["label"] == "App data: ComfyUI"
+    r = client.post("/api/v1/storage/move", json={"source": str(further), "home": True})
+    assert r.status_code == 409 and r.json()["needs_confirm"] and r.json()["dest"] == str(src)
+    r = client.post("/api/v1/storage/move", json={"source": str(further), "home": True, "confirm": True})
+    assert r.status_code == 202 and wait(app).status == "done"
+    assert hosts(client, "comfyui")[1] == str(src / "output")
+    assert (src / "output" / "img.png").read_bytes() == b"i" * 10
+    rows = {m["path"]: m for m in client.get("/api/v1/storage").json()["movable"]}
+    assert rows[str(src)]["home"] == "" and str(further) not in rows
+
+
+def test_storage_page_moves_home(stack):
+    app, client, backend, data, models, disk2 = stack
+    page = TestClient(app)
+    page.post("/login", data={"user": "admin", "password": "correct-horse"})
+    client.post("/api/v1/storage/move", json={"source": str(models), "dest": str(disk2 / "m"), "confirm": True})
+    assert wait(app).status == "done"
+    [rec] = client.get("/api/v1/moves").json()
+    client.delete(f"/api/v1/moves/{rec['id']}/leftover")
+    html = page.get("/storage").text
+    assert f"Move back to {models}" in html
+    r = page.post("/storage/move/check", headers=HX, data={"source": str(disk2 / "m"), "home": "1"})
+    assert r.status_code == 200 and f'"dest": "{models}"' in r.text
+    assert "the install drive" in page.get("/storage/pick", params={"source": str(disk2 / "m")}).text
+
+
 def test_what_is_refused(stack):
     app, client, backend, data, models, disk2 = stack
     move = lambda src, dest: client.post("/api/v1/storage/move", json={"source": src, "dest": dest})   # noqa: E731

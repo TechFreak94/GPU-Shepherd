@@ -24,6 +24,7 @@ import html
 import os
 import posixpath
 import re
+import shutil
 import threading
 import time
 import zipfile
@@ -42,6 +43,7 @@ CONVERTS = {".epub", ".pdf", ".md", ".markdown", ".txt"}
 MIN_WORDS = 200              # less text than this: nothing to search (a scanned PDF, an empty file)
 SAMPLE_WORDS = 400           # words compared to find the same book under another name
 UPLOAD_MB = 200              # the biggest book the dashboard takes as an upload
+ZIP_MB = 8192                # the biggest zip of books it takes (unpacked into the books folder)
 
 
 class BookError(Exception):
@@ -109,6 +111,70 @@ def find(folder: Path) -> list[tuple[str, list[str]]]:
             best = posixpath.join(d, best) if d else best
             out.append((best, [p for p in paths if p != best]))
     return sorted(out)
+
+
+def safe_rel(path: str) -> str:
+    """An uploaded file's place in the books folder, from the path the browser gives (folders kept),
+    or BookError if it would land outside the folder or isn't a book or a zip of books."""
+    parts = [p.strip() for p in str(path).replace("\\", "/").split("/")]
+    parts = [p for p in parts if p and p != "."]
+    if not parts or ".." in parts or any(p.startswith(".") or ":" in p or any(ord(c) < 32 for c in p) for p in parts):
+        raise BookError(f"{path or '?'}: not a usable file name")
+    if len(parts) > 12 or len("/".join(parts)) > 400:
+        raise BookError(f"{path}: folders too deep or name too long")
+    if Path(parts[-1]).suffix.lower() not in RANK and Path(parts[-1]).suffix.lower() != ".zip":
+        raise BookError(f"{parts[-1]}: not a book (EPUB, PDF, TXT, Markdown, AZW3, MOBI, PRC) or a zip of books")
+    return "/".join(parts)
+
+
+def files(folder: Path) -> dict[str, int]:
+    """The book files in a folder and their sizes, by path relative to it (to skip uploading them again)."""
+    out = {}
+    for root, dirs, names in os.walk(folder):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        rel = os.path.relpath(root, folder)
+        for f in names:
+            if Path(f).suffix.lower() in RANK and not f.startswith("."):
+                try:
+                    out[posixpath.join(rel, f) if rel != "." else f] = (Path(root) / f).stat().st_size
+                except OSError:
+                    pass
+    return out
+
+
+def unpack(zip_path: Path, into: Path) -> tuple[list[str], int]:
+    """Take the books out of a zip into a folder, keeping the zip's folders. Other files are left
+    out. Returns the books' paths relative to `into` and how many other files were left out."""
+    saved, other = [], 0
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            members = [m for m in z.infolist() if not m.is_dir()]
+            if sum(m.file_size for m in members) > ZIP_MB << 20:
+                raise BookError(f"{zip_path.name} unpacks to more than {ZIP_MB // 1024} GB")
+            free = shutil.disk_usage(into if into.exists() else into.parent).free
+            if sum(m.file_size for m in members) > free:
+                raise BookError(f"{zip_path.name}: not enough free space to unpack it")
+            for m in members:
+                if m.filename.startswith(("__MACOSX/", "/")):
+                    continue
+                try:
+                    rel = safe_rel(m.filename)
+                except BookError:
+                    other += 1
+                    continue
+                if rel.lower().endswith(".zip"):
+                    other += 1            # a zip in a zip: not opened
+                    continue
+                dest = into / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_name(dest.name + ".part")
+                with z.open(m) as src, open(tmp, "wb") as out:
+                    shutil.copyfileobj(src, out, 1 << 20)
+                os.replace(tmp, dest)
+                saved.append(rel)
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError, RuntimeError) as err:
+        raise BookError(f"{zip_path.name}: can't open the zip ({err})") from err
+    return saved, other
 
 
 def book_key(rel: str) -> str:

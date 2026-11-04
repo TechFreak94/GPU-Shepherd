@@ -295,6 +295,82 @@ def test_upload_folder_and_cli(stack, capsys):
     assert client.get("/api/v1/books").json()["folder"] == str(data / "x")
 
 
+def test_bulk_upload_keeps_folders_unpacks_zips_and_skips(stack, monkeypatch):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    book = epub(data / "x" / "a.epub").read_bytes()
+    r = client.put("/api/v1/books/files", params={"path": "Bundle One/Cooking/a.epub"}, content=book)
+    assert r.status_code == 200 and r.json()["added"] == ["Bundle One/Cooking/a.epub"]
+    zpath = data / "x" / "Bundle Two.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.writestr("Python/b.epub", epub(data / "x" / "b.epub", title="Python").read_bytes())
+        z.writestr("readme.html", "<p>hi</p>")
+        z.writestr("../evil.epub", "x")
+        z.writestr("__MACOSX/Python/._b.epub", "x")
+    r = client.put("/api/v1/books/files", params={"path": "Bundle Two.zip"}, content=zpath.read_bytes())
+    assert r.json() == {"added": ["Bundle Two/Python/b.epub"], "left_out": 2}
+    folder = data / "books"
+    assert (folder / "Bundle Two" / "Python" / "b.epub").exists() and not (folder / "Bundle Two.zip").exists()
+    assert not (data / "evil.epub").exists() and not list(folder.rglob("*.part"))
+    assert client.get("/api/v1/books/files").json()["files"] == {
+        "Bundle One/Cooking/a.epub": len(book), "Bundle Two/Python/b.epub": (data / "x" / "b.epub").stat().st_size}
+    # refused: outside the folder, not a book, too big, a zip with no books
+    for path in ("../up.epub", "/etc/x/../../up.epub", "a/.hidden/b.epub", "run.exe", ""):
+        assert client.put("/api/v1/books/files", params={"path": path}, content=b"x").status_code == 400, path
+    monkeypatch.setattr(books, "UPLOAD_MB", 0)
+    r = client.put("/api/v1/books/files", params={"path": "big.epub"}, content=b"x" * 10)
+    assert r.status_code == 413 and not (folder / "big.epub").exists() and not (folder / "big.epub.part").exists()
+    monkeypatch.setattr(books, "UPLOAD_MB", 200)
+    empty = data / "x" / "none.zip"
+    with zipfile.ZipFile(empty, "w") as z:
+        z.writestr("notes.html", "x")
+    assert "no books" in client.put("/api/v1/books/files", params={"path": "none.zip"}, content=empty.read_bytes()).json()["error"]
+    assert "can't open" in client.put("/api/v1/books/files", params={"path": "bad.zip"}, content=b"nope").json()["error"]
+    # the dashboard's route: signed in and from the page only
+    b = browser(app)
+    assert b.put("/books/files", params={"path": "c.txt"}, content=WORDS.encode()).status_code == 403
+    r = b.put("/books/files", params={"path": "Notes/c.txt"}, content=WORDS.encode(), headers={"HX-Request": "true"})
+    assert r.json()["added"] == ["Notes/c.txt"]
+    assert "Notes/c.txt" in b.get("/books/files").json()["files"]
+    assert 'id="book-drop"' in b.get("/books").text
+    assert client.post("/api/v1/books/scan").status_code == 202
+    assert not finish(svc).error
+    assert {x.path for x in svc.library.books()} >= {"Bundle One/Cooking/a.epub", "Bundle Two/Python/b.epub"}
+
+
+def test_cli_upload_sends_a_folder_and_skips_what_is_there(stack, tmp_path, capsys):
+    from gpushepherd import cli
+    app, client, backend, data = stack
+
+    class Via(cli.Client):           # the CLI's client, over the test app instead of the network
+        def __init__(self):
+            self.url = ""
+
+        def call(self, method, path, body=None, ok=(200, 201, 202)):
+            r = client.request(method, path, json=body)
+            assert r.status_code in ok, r.text
+            return r.json()
+
+        def send_file(self, path, file):
+            r = client.put(path, content=file.read_bytes())
+            if r.status_code >= 300:
+                raise cli.Failed(r.json()["error"])
+            return r.json()
+
+    lib = tmp_path / "out" / "Library"
+    epub(lib / "Bread" / "bread.epub", title="Bread")
+    (lib / "Bread" / "cover.jpg").write_bytes(b"x")
+    (lib / ".cache").mkdir()
+    (lib / ".cache" / "x.epub").write_bytes(b"x")
+    cli.upload_books(Via(), [lib])
+    assert (data / "books" / "Library" / "Bread" / "bread.epub").exists()
+    assert not (data / "books" / "Library" / ".cache").exists()
+    assert "Added 1 book," in capsys.readouterr().out
+    finish(app.state.svc)
+    cli.upload_books(Via(), [lib])
+    assert "Added 0 books, skipped 1 already there." in capsys.readouterr().out
+
+
 def test_skill_made_checked_and_installed(stack, monkeypatch):
     app, client, backend, data = stack
     svc = app.state.svc

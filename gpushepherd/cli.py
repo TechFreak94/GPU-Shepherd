@@ -57,6 +57,25 @@ class Client:
     def get(self, path):
         return self.call("GET", path)
 
+    def send_file(self, path: str, file: Path) -> dict:
+        """PUT a file as the raw body, streamed."""
+        try:
+            with open(file, "rb") as f:
+                r = httpx.put(self.url + path, content=f, timeout=httpx.Timeout(60, write=None, read=600),
+                              headers={"Authorization": f"Bearer {self.token}",
+                                       "Content-Length": str(file.stat().st_size)})
+        except httpx.HTTPError as err:
+            raise Failed(f"GPU Shepherd isn't answering at {self.url} ({err}).") from err
+        try:
+            data = r.json()
+        except ValueError:
+            data = {"error": r.text.strip() or f"HTTP {r.status_code}"}
+        if r.status_code == 401:
+            raise Failed("The API token was refused: pass the token from Settings with --token.")
+        if r.status_code >= 300:
+            raise Failed(data.get("error", f"HTTP {r.status_code}") if isinstance(data, dict) else str(data))
+        return data
+
     def post(self, path, body=None, ok=(200, 201, 202)):
         return self.call("POST", path, body, ok)
 
@@ -559,6 +578,10 @@ def cmd_storage(args, c: Client) -> int:
             if rows:
                 print("\nCan be moved to another place (gpu-shepherd storage move PATH NEW-PLACE):")
                 table(rows, ["FOLDER", "PATH", "SIZE"])
+            rows = [[m["label"], m["path"], m["home"]] for m in s.get("movable", []) if m.get("home")]
+            if rows:
+                print("\nMoved, and can go back (gpu-shepherd storage move-home PATH):")
+                table(rows, ["FOLDER", "NOW IN", "FIRST IN"])
             rows = [[f["why"], gb(f["size"]), f["path"]] for f in s["files"]]
             rows += [["leftover", gb(f["size"]), f["path"]] for f in s["leftover_folders"]]
             rows += [["container", "-", n] for n in s["orphans"]]
@@ -576,10 +599,12 @@ def cmd_storage(args, c: Client) -> int:
         if len(args.items) != 1:
             raise Failed("which app data folder? e.g. gpu-shepherd storage trash-folder old-app")
         out(args, c.call("POST", "/api/v1/storage/leftovers", {"name": args.items[0]}))
-    elif a == "move":
-        if len(args.items) != 2:
+    elif a in ("move", "move-home"):
+        if a == "move" and len(args.items) != 2:
             raise Failed("which folder, and where to? e.g. gpu-shepherd storage move /opt/gpu-shepherd/models /mnt/disk2/models")
-        body = {"source": args.items[0], "dest": args.items[1]}
+        if a == "move-home" and len(args.items) != 1:
+            raise Failed("which folder? e.g. gpu-shepherd storage move-home /mnt/disk2/models (see gpu-shepherd storage)")
+        body = {"source": args.items[0], "dest": args.items[1]} if a == "move" else {"source": args.items[0], "home": True}
         r = c.post("/api/v1/storage/move", body, ok=(409,))
         if not r.get("needs_confirm"):
             raise Failed(r.get("error", "can't move it"))
@@ -759,6 +784,9 @@ def cmd_books(args, c: Client) -> int:
         out(args, c.call("PUT", "/api/v1/books/folder", {"path": items[0] if items else ""}))
     elif a in ("scan", "stop"):
         out(args, c.post(f"/api/v1/books/{a}"))
+    elif a == "upload":
+        need(1, "upload FOLDER-OR-FILE...  (from any computer: --url http://server:8080 --token TOKEN)")
+        upload_books(c, [Path(i) for i in items])
     elif a == "send":
         need(1, "send open-webui [--name Books] [--split] [--embeddings server|keep]")
         out(args, c.post("/api/v1/books/send", {"instance": items[0], "name": args.name, "split": args.split,
@@ -776,6 +804,40 @@ def cmd_books(args, c: Client) -> int:
         need(1, "skill-delete SKILL")
         out(args, c.call("DELETE", f"/api/v1/skills/{quote(items[0])}"))
     return 0
+
+
+def upload_books(c: Client, paths: list[Path]) -> None:
+    """Send books, folders of books (folders kept) or zips of books to the books folder, skipping the
+    ones already there, then scan."""
+    from .books import RANK
+    todo = []
+    for p in paths:
+        if p.is_dir():
+            todo += [(f, f.relative_to(p.parent).as_posix()) for f in sorted(p.rglob("*"))
+                     if f.is_file() and (f.suffix.lower() in RANK or f.suffix.lower() == ".zip")
+                     and not any(part.startswith(".") for part in f.relative_to(p.parent).parts)]
+        elif p.is_file():
+            todo.append((p, p.name))
+        else:
+            raise Failed(f"{p}: no such file or folder")
+    have = c.get("/api/v1/books/files")["files"]
+    added = skipped = 0
+    failed = []
+    for i, (f, rel) in enumerate(todo, 1):
+        if have.get(rel) == f.stat().st_size or (rel.lower().endswith(".zip") and
+                                                  any(k.startswith(rel[:-4] + "/") for k in have)):
+            skipped += 1
+            continue
+        print(f"[{i}/{len(todo)}] {rel}", flush=True)
+        try:
+            added += len(c.send_file("/api/v1/books/files?path=" + quote(rel), f).get("added", []))
+        except Failed as err:
+            print(f"  not added: {err}", file=sys.stderr)
+            failed.append(rel)
+    print(f"Added {added} book{'s' if added != 1 else ''}, skipped {skipped} already there"
+          + (f", {len(failed)} not added" if failed else "") + ".")
+    if added:
+        print(c.post("/api/v1/books/scan")["message"])
 
 
 def cmd_token(args, c: Client | None) -> int:
@@ -905,17 +967,17 @@ def add_commands(sub) -> None:
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
                                        "trash-folder NAME, drives, mount DEVICE, browse [PATH], move PATH NEW-PLACE, "
-                                       "moves, move-back ID, delete-old ID")
+                                       "move-home PATH, moves, move-back ID, delete-old ID")
     p.add_argument("action", nargs="?", choices=("show", "remove-images", "remove-orphans", "trash-files",
-                                                 "trash-folder", "drives", "mount", "browse", "move", "moves", "move-back",
-                                                 "delete-old"))
+                                                 "trash-folder", "drives", "mount", "browse", "move", "move-home", "moves",
+                                                 "move-back", "delete-old"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
     p = sub.add_parser("books", help="ebooks for chat apps and agents: list, status, folder PATH, scan, "
-                                     "send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
+                                     "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
                                      "skill-delete SKILL")
-    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "send", "stop", "skill",
+    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "stop", "skill",
                                                  "skill-show", "skill-install", "skill-delete"))
     p.add_argument("items", nargs="*")
     p.add_argument("--name", default="Books", help="send: the knowledge base's name (default Books)")

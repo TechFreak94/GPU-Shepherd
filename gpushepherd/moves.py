@@ -40,6 +40,7 @@ class Movable:
     label: str                         # "Models", "App data: Open WebUI"
     path: str                          # on this machine
     used_by: list[str]                 # instance ids
+    home: str = ""                     # where it was before GPU Shepherd moved it ("" = it is still there)
 
 
 @dataclass
@@ -124,8 +125,21 @@ class History:
 
 # --------------------------------------------------------------------------- what can move
 
-def movable(instances: dict[str, Instance], appdata: str, model_folders: list[str]) -> list[Movable]:
-    """Models folders, and each app data folder (appdata/<folder>), with the instances using them."""
+def homes(records: list[Record]) -> dict[str, tuple[str, str]]:
+    """Folders finished moves put somewhere else: {where it is now: (where it first was, label)}.
+    Moves one after another (disk 1 to disk 2 to disk 3) lead back to the first place."""
+    first: dict[str, tuple[str, str]] = {}
+    for r in sorted(records, key=lambda r: r.started):
+        if r.status == "done":                      # a move undone with "Move back" left things as they were
+            first[r.dest] = first.pop(r.source, (r.source, r.label))
+    return {now: was for now, was in first.items() if was[0] != now}
+
+
+def movable(instances: dict[str, Instance], appdata: str, model_folders: list[str],
+            moved: dict[str, tuple[str, str]] | None = None) -> list[Movable]:
+    """Models folders, each app data folder (appdata/<folder>), and folders moved out of those, with
+    the instances using them and, for moved ones, where they were first (`home`)."""
+    moved = moved or {}
     out = [Movable("Models", m, []) for m in model_folders]
     tops: dict[str, list[str]] = {}
     for inst in instances.values():
@@ -133,11 +147,16 @@ def movable(instances: dict[str, Instance], appdata: str, model_folders: list[st
             p = Path(v.host)
             if p.is_relative_to(appdata) and p != Path(appdata):
                 tops.setdefault(str(Path(appdata) / p.relative_to(appdata).parts[0]), [])
+    for now in moved:
+        if any(inside(v.host, now) for i in instances.values() for v in i.volumes):
+            tops.setdefault(now, [])
     for top in sorted(tops):
         if not any(Path(top).is_relative_to(m.path) for m in out):
-            out.append(Movable("App data", top, []))
+            label = moved[top][1].split(":")[0] if top in moved else "App data"
+            out.append(Movable(label, top, []))
     for m in out:
         m.used_by = sorted(i.id for i in instances.values() if any(inside(v.host, m.path) for v in i.volumes))
+        m.home = moved[m.path][0] if m.path in moved else ""
         names = [instances[i].name for i in m.used_by]
         if m.label == "App data" and names:
             m.label = f"App data: {', '.join(names)}"
