@@ -24,7 +24,7 @@ jobs:
     if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main        # the newest main, including releases made since this push
           fetch-depth: 0
