@@ -952,7 +952,7 @@ def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
             offload = [OffloadRule(min_gpus=1, gpu_layers=0)]
         out.append(CatalogModel(id=mid, name=Path(file).name.removesuffix(".gguf"), file=file, ctx_size=ctx_size,
                                 kv_cache=slot.kv_cache, sampling=slot.sampling, offload=offload,
-                                role=slot.role, keep_loaded=slot.role == "embed",
+                                role=slot.role, keep_loaded=slot.role == "embed", preload=slot.role == "embed",
                                 aliases=[slot.alias] if slot.alias != mid else []))
     for x in out:
         x.aliases = [al for al in x.aliases if al != x.id]

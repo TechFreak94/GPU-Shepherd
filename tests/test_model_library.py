@@ -97,7 +97,7 @@ def test_render_new_settings():
     assert one["groups"]["kept-loaded"] == {"swap": False, "exclusive": False, "persistent": True,
                                             "members": ["qwen3-embedding-0.6b"]}
     assert one["groups"]["models"]["members"] == ["gemma-4-e4b", "big"]
-    assert one["hooks"] == {"on_startup": {"preload": ["gemma-4-e4b"]}}
+    assert one["hooks"] == {"on_startup": {"preload": ["gemma-4-e4b", "qwen3-embedding-0.6b"]}}
     two = yaml.safe_load(render(cat, 2, 8))["models"]["big"]["cmd"]
     assert "--split-mode row --tensor-split 8,12" in two
     plain = yaml.safe_load(render(Catalog(instance_id="llm", models=[CatalogModel(id="a", file="/models/a.gguf")]), 1, 8))
@@ -210,9 +210,10 @@ def test_install_form_uses_a_suggestion_and_the_embed_slot():
     assert chat.id == "qwen3.8-27b" and chat.aliases == ["chat", "coder"] and chat.ctx_size == 65536
     assert chat.sampling == ml.QWEN_THINKING and chat.mmproj.endswith("mmproj-F16.gguf")
     assert embed.role == "embed" and embed.keep_loaded and embed.aliases == ["embed"]
+    assert embed.preload and not chat.preload       # ready for the chat apps' documents at start
     # any other file in the embed slot is still set up as an embeddings model on the CPU
     other = tpl.build(t, f | {"embed_file": "my-embedder.gguf"}, m)[1][1]
-    assert other.role == "embed" and other.keep_loaded and other.offload[0].gpu_layers == 0
+    assert other.role == "embed" and other.keep_loaded and other.preload and other.offload[0].gpu_layers == 0
     with pytest.raises(Exception, match="can't also chat"):
         tpl.build(t, f | {"embed_file": f["chat_file"]}, m)
 
@@ -231,3 +232,12 @@ def test_chat_apps_use_the_servers_embeddings_model():
     m.servers["llm"] = info | {"embed": ""}
     assert "RAG_EMBEDDING_ENGINE" not in tpl.build(tpl.get("open-webui"), tpl.defaults(tpl.get("open-webui"), m, "/m", "/a"), m)[0].env
     assert "EMBEDDING_ENGINE='native'" in tpl.seed_files(t, tpl.defaults(t, m, "/m", "/a"), m)["server.env"]
+
+
+def test_suggested_embeddings_model_loads_at_start_with_the_embeddings_flag():
+    s = ml.get("qwen3-embedding-0.6b")
+    m = ml.catalog_model(s, [8.0], aliases=["embed"])
+    assert m.preload and m.keep_loaded
+    cfg = yaml.safe_load(render(Catalog(instance_id="llm", models=[m]), 1, 4))
+    assert "--embeddings" in cfg["models"][m.id]["cmd"]
+    assert cfg["hooks"]["on_startup"]["preload"] == [m.id]
