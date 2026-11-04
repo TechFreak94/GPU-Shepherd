@@ -156,3 +156,135 @@
   document.addEventListener("DOMContentLoaded", sync);
   document.addEventListener("htmx:afterSettle", sync);
 })();
+
+// Books page: upload many books, whole folders or zips from the browser, one file at a time
+// (folders kept, books already there skipped, so adding the same folder again carries on)
+(function () {
+  "use strict";
+  const BOOK = /\.(epub|pdf|txt|md|markdown|mobi|azw3|prc|zip)$/i;
+  let busy = false, stopped = false, xhr = null;
+  const $ = (id) => document.getElementById(id);
+
+  // a dropped folder: walk it (readEntries hands back at most 100 entries a call)
+  function walk(entry, prefix, out) {
+    if (entry.isFile) return new Promise((ok) => entry.file((f) => { out.push({ file: f, path: prefix + f.name }); ok(); }, () => ok()));
+    if (!entry.isDirectory) return Promise.resolve();
+    const reader = entry.createReader();
+    return new Promise((ok) => {
+      const next = () => reader.readEntries(async (list) => {
+        if (!list.length) return ok();
+        for (const e of list) await walk(e, prefix + entry.name + "/", out);
+        next();
+      }, () => ok());
+      next();
+    });
+  }
+
+  function put(item) {
+    return new Promise((ok) => {
+      xhr = new XMLHttpRequest();
+      xhr.open("PUT", "/books/files?path=" + encodeURIComponent(item.path));
+      xhr.setRequestHeader("HX-Request", "true");
+      xhr.upload.onprogress = (e) => item.onprogress(e.loaded);
+      xhr.onload = () => {
+        let r = {};
+        try { r = JSON.parse(xhr.responseText); } catch (err) { r = { error: "HTTP " + xhr.status }; }
+        if (xhr.status === 401) r.error = "signed out: sign in again, then add the same books to carry on";
+        ok(xhr.status < 300 ? r : { error: r.error || "HTTP " + xhr.status, status: xhr.status });
+      };
+      xhr.onerror = () => ok({ error: "GPU Shepherd is not reachable", net: true });
+      xhr.onabort = () => ok({ error: "stopped", aborted: true });
+      xhr.send(item.file);
+    });
+  }
+
+  async function upload(items) {
+    const box = $("book-drop");
+    if (busy || !box) return;
+    const text = $("book-up-text"), bar = $("book-up-bar"), fails = $("book-up-fails");
+    const maxBook = Number(box.dataset.uploadMb) * 1048576, maxZip = Number(box.dataset.zipMb) * 1048576;
+    const failed = [];
+    const fail = (path, why) => {
+      failed.push(path + ": " + why);
+      const li = document.createElement("li"); li.textContent = path + ": " + why;
+      fails.querySelector("ul").appendChild(li);
+      fails.querySelector("summary").textContent = failed.length + " not added";
+      fails.hidden = false;
+    };
+    busy = true; stopped = false;
+    $("book-up").hidden = false; fails.hidden = true; fails.querySelector("ul").textContent = "";
+    text.textContent = "Checking what is there already…";
+    let have = {};
+    try { have = (await (await fetch("/books/files", { headers: { "HX-Request": "true" } })).json()).files || {}; } catch (err) { have = {}; }
+    const todo = [];
+    let skipped = 0, other = 0;
+    for (const it of items) {
+      it.path = it.path.replace(/^\/+/, "");
+      const name = it.path.split("/").pop();
+      if (name.startsWith(".") || !BOOK.test(name)) { other++; continue; }
+      const zip = /\.zip$/i.test(name);
+      if (!zip && have[it.path] === it.file.size) { skipped++; continue; }
+      if (zip && Object.keys(have).some((p) => p.startsWith(it.path.slice(0, -4) + "/"))) { skipped++; continue; }
+      if (it.file.size > (zip ? maxZip : maxBook)) { fail(it.path, "too big to upload here"); continue; }
+      todo.push(it);
+    }
+    const total = todo.reduce((n, it) => n + it.file.size, 0) || 1;
+    let sent = 0, added = 0;
+    window.addEventListener("beforeunload", warn);
+    for (let i = 0; i < todo.length && !stopped; i++) {
+      const it = todo[i];
+      it.onprogress = (n) => {
+        bar.style.width = Math.min(100, Math.round(100 * (sent + n) / total)) + "%";
+        text.textContent = "Uploading " + (i + 1) + " of " + todo.length + ": " + it.path +
+          " (" + (Math.round((sent + n) / 1048576)) + " of " + Math.round(total / 1048576) + " MB)";
+      };
+      it.onprogress(0);
+      let r = await put(it);
+      if (r.net && !stopped) { await new Promise((ok) => setTimeout(ok, 3000)); r = await put(it); }  // one more try
+      if (r.aborted) break;
+      if (r.error) fail(it.path, r.error); else added += (r.added || []).length;
+      if (r.status === 401) break;
+      sent += it.file.size;
+    }
+    window.removeEventListener("beforeunload", warn);
+    busy = false; xhr = null;
+    bar.style.width = "100%";
+    let msg = (stopped ? "Stopped. " : "") + "Added " + added + " book" + (added === 1 ? "" : "s");
+    if (skipped) msg += ", skipped " + skipped + " already there";
+    if (other) msg += ", left out " + other + " other file" + (other === 1 ? "" : "s");
+    text.textContent = msg + ".";
+    if (added && !stopped) {
+      text.textContent = msg + ". Scanning…";
+      try {
+        const r = await fetch("/books/scan", { method: "POST", headers: { "HX-Request": "true" } });
+        const go = r.headers.get("HX-Redirect");
+        if (go && !failed.length) window.location = go;
+        else if (go) text.textContent = msg + ". The scan has started: reload the page to follow it.";
+      } catch (err) { text.textContent = msg + ". Scan the folder to read them."; }
+    }
+  }
+  function warn(e) { e.preventDefault(); e.returnValue = ""; }
+
+  const fromInput = (input) => Array.from(input.files).map((f) => ({ file: f, path: f.webkitRelativePath || f.name }));
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "book-files" || e.target.id === "book-folder") { upload(fromInput(e.target)); e.target.value = ""; }
+  });
+  document.addEventListener("click", (e) => {
+    if (e.target.id === "book-up-stop") { stopped = true; if (xhr) xhr.abort(); }
+  });
+  ["dragenter", "dragover"].forEach((t) => document.addEventListener(t, (e) => {
+    const box = e.target.closest && e.target.closest("#book-drop");
+    if (box) { e.preventDefault(); box.classList.add("over"); }
+  }));
+  document.addEventListener("dragleave", (e) => { const box = e.target.closest && e.target.closest("#book-drop"); if (box && !box.contains(e.relatedTarget)) box.classList.remove("over"); });
+  document.addEventListener("drop", async (e) => {
+    const box = e.target.closest && e.target.closest("#book-drop");
+    if (!box) return;
+    e.preventDefault(); box.classList.remove("over");
+    const entries = Array.from(e.dataTransfer.items || []).map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    const out = [];
+    if (entries.length) { for (const en of entries) await walk(en, "", out); }
+    else Array.from(e.dataTransfer.files).forEach((f) => out.push({ file: f, path: f.name }));
+    upload(out);
+  });
+})();

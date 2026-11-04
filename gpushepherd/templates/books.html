@@ -12,17 +12,25 @@
 <h3>Books folder</h3>
 <div class="card">
   <p class="small muted" style="margin-top:0"><span class="mono">{{ b.folder }}</span>{% if not b.folder_ok %} <span class="tag warn">not there yet</span>{% endif %}.
-    Put books here in any folders: copy them in over the network, or add a few below. A book in several formats is read from
+    Put books here in any folders. A book in several formats is read from
     the best one (EPUB, then PDF); AZW3 and MOBI need an EPUB or PDF copy, and scanned PDFs need OCR first.</p>
-  <form hx-post="/books/upload" hx-encoding="multipart/form-data">
-    <div class="fields">
-      <div><label for="book-files">Add books</label>
-        <input id="book-files" type="file" name="file" multiple accept=".epub,.pdf,.txt,.md,.markdown,.mobi,.azw3,.prc">
-        <div class="hint">Up to {{ b.upload_mb }} MB each. For a big library, copy it into the folder instead.</div></div>
+  <div id="book-drop" class="drop" data-upload-mb="{{ b.upload_mb }}" data-zip-mb="{{ b.zip_mb }}">
+    <p style="margin:0 0 8px"><strong>Drop books, folders or zips of books here, or choose them</strong></p>
+    <div class="actions" style="margin:0;justify-content:flex-start">
+      <label class="btn">Choose books<input id="book-files" type="file" multiple hidden accept=".epub,.pdf,.txt,.md,.markdown,.mobi,.azw3,.prc,.zip"></label>
+      <label class="btn">Choose a folder<input id="book-folder" type="file" multiple hidden webkitdirectory></label>
+      <button type="button" hx-post="/books/scan">{{ "Scan again" if b.scanned else "Scan the folder" }}</button>
     </div>
-    <div class="actions"><button type="submit">Add</button>
-      <button type="button" hx-post="/books/scan">{{ "Scan again" if b.scanned else "Scan the folder" }}</button></div>
-  </form>
+    <div class="hint">From this browser, any number of books, folders kept: books already there are skipped, so if it stops,
+      add the same folder again to carry on. Zips are unpacked into a folder named after them. Up to {{ b.upload_mb }} MB a book,
+      {{ b.zip_mb // 1024 }} GB a zip. The folder is scanned when they are all in.</div>
+    <div id="book-up" hidden style="margin-top:10px">
+      <div class="row"><span class="small" id="book-up-text"></span>
+        <button type="button" class="small" id="book-up-stop">Stop</button></div>
+      <div class="meter" role="progressbar" aria-label="Upload"><i id="book-up-bar" style="width:0%"></i></div>
+      <details class="small" id="book-up-fails" hidden><summary></summary><ul></ul></details>
+    </div>
+  </div>
   <details class="small" style="margin-top:8px"><summary>Use another folder</summary>
     <form hx-post="/books/folder" style="margin-top:8px">
       <div class="fields"><div><label for="books-folder">Folder</label>

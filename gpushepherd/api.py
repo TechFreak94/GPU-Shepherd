@@ -584,6 +584,22 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         files = [(f.filename, f.file) for f in form.getlist("file") if hasattr(f, "filename")]
         return JSONResponse({"message": svc.add_books(files)}, status_code=202)
 
+    @r.get("/api/v1/books/files")
+    @handle
+    def books_files(request: Request):
+        """The book files already in the books folder: {"folder", "files": {path: size}}."""
+        return svc.book_files()
+
+    @r.put("/api/v1/books/files")
+    @handle
+    async def books_put_file(request: Request):
+        """Add one book, or a zip of books (unpacked into a folder named after it), sent as the raw body:
+        PUT /api/v1/books/files?path=Folder/Book.epub. Folders in the path are kept. Doesn't scan:
+        POST /api/v1/books/scan when all are in. Returns {"added": [paths], "left_out": n}."""
+        size = request.headers.get("content-length")
+        return await svc.receive_book(request.query_params.get("path", ""), request.stream(),
+                                      int(size) if size and size.isdigit() else None)
+
     @r.post("/api/v1/books/scan")
     @handle
     def books_scan(request: Request):

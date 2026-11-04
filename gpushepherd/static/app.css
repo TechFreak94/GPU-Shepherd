@@ -216,3 +216,7 @@ nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke
 .picker-tree{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:8px 0}
 .drive-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}
 .drive-row:first-child{border-top:0}.drive-row>div:first-child{min-width:0;overflow-wrap:anywhere}
+/* Books page: drop zone for uploads */
+.drop{border:2px dashed var(--btn-line);border-radius:10px;padding:14px;margin:4px 0 6px}
+.drop.over{border-color:var(--accent);background:var(--btn-hover)}
+.drop label.btn{cursor:pointer}

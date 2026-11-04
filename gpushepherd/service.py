@@ -7,6 +7,7 @@ command prints it.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import os
@@ -1799,7 +1800,8 @@ class Shepherd:
                 "hermes": [{"id": i.id, "name": i.name} for i in hermes],
                 "servers": [{"id": k, "name": v["name"], "model": v.get("default_model", ""), "embed": v.get("embed", "")}
                             for k, v in m.servers.items()],
-                "sends": data.get("sends") or [], "skills": skills, "upload_mb": books_mod.UPLOAD_MB}
+                "sends": data.get("sends") or [], "skills": skills, "upload_mb": books_mod.UPLOAD_MB,
+                "zip_mb": books_mod.ZIP_MB}
 
     def _books_busy(self) -> None:
         if self.book_task and self.book_task.running:
@@ -1817,38 +1819,107 @@ class Shepherd:
         self.library.update(lambda d: d.__setitem__("folder", path))
         return f"Books folder: {target}. Scan it to find the books."
 
-    def add_books(self, files: list[tuple[str, object]]) -> str:
-        """Save uploaded books (name, file-like) into the books folder."""
-        self._books_busy()
+    def book_files(self) -> dict:
+        """The book files already in the books folder, {path: size}, so an upload can skip them."""
         folder = self.library.folder()
-        folder.mkdir(parents=True, exist_ok=True)
-        saved, refused = [], []
-        for name, f in files:
-            name = Path(str(name).replace("\\", "/")).name
-            if not name or Path(name).suffix.lower() not in books_mod.RANK:
-                refused.append(name or "?")
-                continue
-            dest = folder / name
-            tmp = dest.with_name(dest.name + ".part")
-            size = 0
+        return {"folder": str(folder), "files": books_mod.files(folder) if folder.is_dir() else {}}
+
+    def _book_dest(self, path: str, size: int | None) -> tuple[str, Path, int]:
+        """Where an uploaded file goes, and the most bytes it may have."""
+        try:
+            rel = books_mod.safe_rel(path)
+        except books_mod.BookError as err:
+            raise Problem(str(err)) from err
+        limit = (books_mod.ZIP_MB if rel.lower().endswith(".zip") else books_mod.UPLOAD_MB) << 20
+        if size is not None and size > limit:
+            raise self._too_big(rel, limit)
+        folder = self.library.folder()
+        if not folder.is_dir():
+            if folder != self.store.root / "books":
+                raise Problem(f"GPU Shepherd can't see the books folder {folder}.", status=404)
+            folder.mkdir(parents=True, exist_ok=True)
+        if size and size > shutil.disk_usage(folder).free:
+            raise Problem(f"Not enough free space in {folder} for {rel}.", status=507)
+        dest = folder / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        return rel, dest, limit
+
+    @staticmethod
+    def _too_big(rel: str, limit: int) -> Problem:
+        return Problem(f"{rel} is over {limit >> 20} MB: copy it into the books folder another way.", status=413)
+
+    def _place_book(self, rel: str, dest: Path, tmp: Path) -> dict:
+        """Put a received file in place; a zip is unpacked into a folder named after it, then removed."""
+        if not rel.lower().endswith(".zip"):
+            os.replace(tmp, dest)
+            return {"added": [rel], "left_out": 0}
+        into = dest.with_name(dest.name[:-4])
+        try:
+            saved, other = books_mod.unpack(tmp, into)
+        except books_mod.BookError as err:
+            raise Problem(str(err)) from err
+        finally:
+            tmp.unlink(missing_ok=True)
+        base = rel[:-4]
+        if not saved:
+            raise Problem(f"{rel} has no books in it (EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC).")
+        return {"added": [f"{base}/{r}" for r in saved], "left_out": other}
+
+    def save_book(self, path: str, f, size: int | None = None) -> dict:
+        """Save one uploaded book or zip of books (a file-like) at `path` in the books folder,
+        folders kept. Returns {"added": [paths], "left_out": n}. Doesn't scan."""
+        rel, dest, limit = self._book_dest(path, size)
+        tmp = dest.with_name(dest.name + ".part")
+        try:
+            n = 0
             with open(tmp, "wb") as out:
                 while chunk := f.read(1 << 20):
-                    size += len(chunk)
-                    if size > books_mod.UPLOAD_MB << 20:
-                        break
+                    n += len(chunk)
+                    if n > limit:
+                        raise self._too_big(rel, limit)
                     out.write(chunk)
-            if size > books_mod.UPLOAD_MB << 20:
-                tmp.unlink(missing_ok=True)
-                refused.append(f"{name} (over {books_mod.UPLOAD_MB} MB)")
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        return self._place_book(rel, dest, tmp)
+
+    async def receive_book(self, path: str, stream, size: int | None = None) -> dict:
+        """save_book for a request body streamed in (async chunks), so big files never sit in memory."""
+        rel, dest, limit = self._book_dest(path, size)
+        tmp = dest.with_name(dest.name + ".part")
+        try:
+            n = 0
+            with open(tmp, "wb") as out:
+                async for chunk in stream:
+                    n += len(chunk)
+                    if n > limit:
+                        raise self._too_big(rel, limit)
+                    out.write(chunk)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        return await asyncio.to_thread(self._place_book, rel, dest, tmp)
+
+    def add_books(self, files: list[tuple[str, object]]) -> str:
+        """Save uploaded books or zips of books (name, file-like) into the books folder, then scan."""
+        saved, refused = [], []
+        for name, f in files:
+            try:
+                r = self.save_book(str(name), f)
+            except Problem as err:
+                refused.append(Path(str(name).replace("\\", "/")).name or "?")
+                log.info("book upload refused: %s", err.msg)
                 continue
-            os.replace(tmp, dest)
-            saved.append(name)
+            saved += r["added"]
         if not saved:
             raise Problem("No books added: " + (", ".join(refused) + " " if refused else "") +
-                          "(EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC files only).")
+                          "(EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC files, or zips of them).")
         msg = f"Added {len(saved)} book{'s' if len(saved) != 1 else ''}"
         msg += f"; left out {', '.join(refused)}." if refused else "."
-        return msg + " " + self.scan_books()
+        try:
+            return msg + " " + self.scan_books()
+        except Problem as err:
+            return msg + " " + err.msg + " Then scan the folder again."
 
     def _book_work(self, title: str, fn) -> str:
         self._books_busy()

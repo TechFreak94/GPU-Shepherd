@@ -1039,6 +1039,20 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         files = [(f.filename, f.file) for f in raw.getlist("file") if getattr(f, "filename", "")]
         return books_done(lambda: svc.add_books(files))
 
+    @app.get("/books/files")
+    def books_files():
+        return svc.book_files()
+
+    @app.put("/books/files")
+    async def books_put_file(request: Request, path: str = ""):
+        """One book or zip of books as the raw body (the Books page's upload sends them one by one)."""
+        size = request.headers.get("content-length")
+        try:
+            r = await svc.receive_book(path, request.stream(), int(size) if size and size.isdigit() else None)
+        except Problem as err:
+            return JSONResponse({"error": err.msg}, status_code=err.status)
+        return r
+
     @app.post("/books/scan")
     def books_scan():
         return books_done(svc.scan_books)
