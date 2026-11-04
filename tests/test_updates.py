@@ -283,6 +283,8 @@ def test_update_sh_check_update_and_rollback(tmp_path):
     git("push", "-q", str(remote), "feature-x", cwd=seed)
     assert run("--check").returncode == 10
     assert "feature-x" in status()["branches"] and status()["branch"] == "main"
+    info = {b["name"]: b for b in status()["branch_info"]}
+    assert info["feature-x"]["subject"] == "Feature work" and info["feature-x"]["date"].startswith("20") and info["feature-x"]["version"]
     assert run("--yes", "--branch", "nope").returncode == 1
     r = run("--yes", "--branch", "feature-x")
     assert r.returncode == 0, r.stdout + r.stderr
@@ -574,3 +576,35 @@ def test_settings_lists_branches(ui):
     write_status(root, branch="main", branches=["main", "feature-x"])
     html = client.get("/settings").text
     assert 'name="branch"' in html and "feature-x" in html
+
+
+def test_branch_options_are_labelled_and_sorted():
+    st = updates.UpdateStatus(
+        branches=["claude/old", "main", "claude/new"],
+        branch_info=[
+            {"name": "claude/old", "date": "2026-11-01T10:00:00+00:00", "subject": "Old work"},
+            {"name": "main", "date": "2026-10-01T10:00:00+00:00", "subject": "Release"},
+            {"name": "claude/new", "date": "2026-11-04T12:30:00+02:00", "subject": "New work", "version": "0.14.0"}])
+    prs = {"claude/new": {"number": 52, "title": "Clearer branches", "state": "open"}}
+    opts = updates.branch_options(st, prs)
+    assert [o["name"] for o in opts] == ["main", "claude/new", "claude/old"]     # main pinned, then newest first
+    assert "stable" in opts[0]["label"]
+    assert opts[1]["label"].startswith("v0.14.0 · #52 Clearer branches (open) · 2026-11-04 10:30 UTC")
+    assert "v0.14.0" not in opts[2]["label"]
+    assert "Old work (no pull request)" in opts[2]["label"]
+
+
+def test_branch_options_without_details():
+    st = updates.UpdateStatus(branches=["main", "feature-x"])
+    assert [o["name"] for o in updates.branch_options(st, {})] == ["main", "feature-x"]
+
+
+def test_pull_requests_fall_back_when_github_fails(monkeypatch):
+    monkeypatch.setattr(updates, "_prs", {})
+    monkeypatch.setattr(updates, "_fetch_prs", lambda repo: (_ for _ in ()).throw(OSError("offline")))
+    updates._refresh_prs("o/r")
+    assert updates.pull_requests("o/r") == {}
+    monkeypatch.setattr(updates, "_fetch_prs", lambda repo: {"b": {"number": 1, "title": "t", "state": "merged"}})
+    updates._prs["o/r"] = (0.0, {})
+    updates._refresh_prs("o/r")
+    assert updates.pull_requests("o/r")["b"]["number"] == 1

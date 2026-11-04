@@ -42,8 +42,8 @@ RANK = {".epub": 0, ".azw3": 1, ".mobi": 2, ".prc": 3, ".pdf": 4, ".md": 5, ".ma
 CONVERTS = {".epub", ".pdf", ".md", ".markdown", ".txt"}
 MIN_WORDS = 200              # less text than this: nothing to search (a scanned PDF, an empty file)
 SAMPLE_WORDS = 400           # words compared to find the same book under another name
-UPLOAD_MB = 200              # the biggest book the dashboard takes as an upload
-ZIP_MB = 8192                # the biggest zip of books it takes (unpacked into the books folder)
+UPLOAD_MB = 4096             # the biggest book the dashboard takes as an upload (streamed to disk, so only free space matters)
+ZIP_MB = 65536               # the biggest zip of books it takes (unpacked into the books folder)
 
 
 class BookError(Exception):
