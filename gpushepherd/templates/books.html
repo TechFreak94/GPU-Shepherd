@@ -75,8 +75,8 @@
     <select id="skill-server" name="server">{% for s in b.servers %}<option value="{{ s.id }}">{{ s.name }}{% if s.model %} ({{ s.model }}){% endif %}</option>{% endfor %}</select></div></div>
   {% else %}<p class="small muted">Making a skill needs a model server: install the LLM server from the <a href="/apps">App Center</a>.</p>{% endif %}
   {% if b.skills %}
-  <table class="table books-table" style="margin-top:8px">
-    <tr><th>Skill</th><th>From</th><th>Installed in</th><th></th></tr>
+  <table class="table books-table skills-list" style="margin-top:8px">
+    <thead><tr><th>Skill</th><th>From</th><th>Installed in</th><th></th></tr></thead>
     {% for k in b.skills %}
     <tr><td class="mono">{{ k.slug }}</td><td>{{ k.name }}</td>
       <td>{{ (k.installed or {}).keys()|join(", ") or "-" }}</td>
@@ -92,20 +92,22 @@
 </div>
 
 <h3>Books{% if b.books %} <span class="muted small">{{ b.counts.get("ready", 0) }} ready, {{ "{:,}".format(b.words) }} words{% for s, n in b.counts.items() if s != "ready" %}, {{ n }} {{ s }}{% endfor %}</span>{% endif %}</h3>
-<div class="card scroll">
+<div class="card">
   {% if b.books %}
   {% set says = {"ready": "Ready", "failed": "Can't read", "skipped": "Skipped", "duplicate": "Duplicate"} %}
-  <table class="table books-table">
-    <tr><th>Book</th><th>Folder</th><th>Words</th><th>Status</th><th></th></tr>
+  <div class="books-scroll">
+  <table class="table books-table books-main">
+    <thead><tr><th>Book</th><th>Folder</th><th>Words</th><th>Status</th><th></th></tr></thead>
     {% for x in b.books %}
-    <tr><td>{{ x.name }}<div class="small muted mono">{{ x.path }}</div></td><td class="grp">{{ x.group or "-" }}</td>
-      <td class="num">{{ "{:,}".format(x.words) if x.words else "" }}</td>
+    <tr><td>{{ x.name }}<div class="small muted mono">{{ x.path }}</div></td><td class="grp" data-label="Folder">{{ x.group or "-" }}</td>
+      <td class="num" data-label="Words">{{ "{:,}".format(x.words) if x.words else "" }}</td>
       <td><span class="tag{{ ' warn' if x.status == 'failed' else '' }}">{{ says.get(x.status, x.status) }}</span>
         {% if x.reason %}<div class="small muted">{{ x.reason }}</div>{% endif %}
         {% if x.sent %}<div class="small muted">In {{ x.sent.keys()|map("replace", "/", ": ")|join(", ") }}</div>{% endif %}</td>
       <td class="act">{% if x.status == "ready" and b.servers %}<button type="button" class="small" hx-post="/books/{{ x.key }}/skill" hx-include="#skill-server">Make a skill</button>{% endif %}</td></tr>
     {% endfor %}
   </table>
+  </div>
   {% else %}<p class="muted small" style="margin:0">{{ "No books found in the folder yet." if b.scanned else "Add books, then scan the folder." }}</p>{% endif %}
 </div>
 {% endblock %}
