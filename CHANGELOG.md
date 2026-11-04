@@ -4,6 +4,12 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.17 - 2026-11-04
+
+- Books: put ebooks in a folder, send them to an Open WebUI knowledge base to chat with them, or have your model server draft an agent skill from a book for Hermes Agent. (#48)
+- Embeddings models now load when the LLM server starts, and "Used for: Embeddings" adds the right flag by itself. (#48)
+- Settings › Updates can follow another branch, to try changes before they are released. (#48)
+
 ## 0.13.16 - 2026-11-04
 
 - Bump docker/setup-buildx-action from 3 to 4 (#43)
