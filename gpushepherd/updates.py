@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -55,6 +56,8 @@ class UpdateStatus:
     upstream: str = ""
     branch: str = ""                                # the branch the clone follows
     branches: list[str] = field(default_factory=list)   # branches on the remote, newest first
+    branch_info: list[dict] = field(default_factory=list)   # name, date, subject of each branch (newest first)
+    github: str = ""                                # owner/name when the remote is on github.com
     behind: int = 0
     commits: list[dict] = field(default_factory=list)
     local_changes: list[str] = field(default_factory=list)
@@ -132,6 +135,10 @@ class UpdateStatus:
         return out
 
     @property
+    def branch_options(self) -> list[dict]:
+        return branch_options(self)
+
+    @property
     def command(self) -> str:
         if self.image:
             return "sudo docker compose pull && sudo docker compose up -d"
@@ -181,6 +188,8 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
             setattr(st, key, str(raw.get(key) or ""))
         st.behind = int(raw.get("behind") or 0)
         st.branches = [str(b) for b in raw.get("branches") or []]
+        st.branch_info = [b for b in raw.get("branch_info") or [] if isinstance(b, dict) and b.get("name")]
+        st.github = str(raw.get("github") or "")
         st.commits = [c for c in raw.get("commits") or [] if isinstance(c, dict)]
         st.local_changes = [str(f) for f in raw.get("local_changes") or []]
         st.dashboard_updates = raw.get("dashboard_updates") is True
@@ -207,6 +216,94 @@ def request(root: Path, action: str, arg: str = "") -> None:
     tmp = d / "request.tmp"
     tmp.write_text(action + "\n" + (arg + "\n" if arg else ""))
     tmp.replace(d / "request")
+
+
+# ---------------------------------------------------------------- the branch picker's labels
+PR_TTL = 600            # seconds a pull request lookup is kept
+PR_RETRY = 120          # after a failed lookup (offline, private repo, rate limit) wait this long
+_prs: dict[str, tuple[float, dict]] = {}
+_prs_lock = threading.Lock()
+
+
+def _fetch_prs(repo: str) -> dict:
+    """Branch name -> {number, title, state} for the repository's recent pull requests (public repos only)."""
+    import httpx
+    r = httpx.get(f"https://api.github.com/repos/{repo}/pulls", timeout=4,
+                  params={"state": "all", "sort": "updated", "direction": "desc", "per_page": 100},
+                  headers={"Accept": "application/vnd.github+json", "User-Agent": "gpu-shepherd"})
+    r.raise_for_status()
+    out: dict = {}
+    for pr in r.json():
+        head = pr.get("head") or {}
+        if (head.get("repo") or {}).get("full_name", "").lower() != repo.lower():
+            continue                                    # from a fork: the branch is not on this remote
+        state = "merged" if pr.get("merged_at") else str(pr.get("state") or "")
+        out.setdefault(str(head.get("ref")), {"number": pr.get("number"), "title": str(pr.get("title") or ""), "state": state})
+    return out
+
+
+def _refresh_prs(repo: str) -> None:
+    try:
+        found, ttl = _fetch_prs(repo), PR_TTL
+    except Exception:                                   # offline, private repo, rate limited: keep what we had
+        found, ttl = _prs.get(repo, (0, {}))[1], PR_RETRY
+    with _prs_lock:
+        _prs[repo] = (time.time() + ttl, found)
+
+
+def pull_requests(repo: str) -> dict:
+    """Cached lookup. Never waits for GitHub: a stale or missing entry is refreshed in the background."""
+    if not repo:
+        return {}
+    with _prs_lock:
+        until, found = _prs.get(repo, (0.0, {}))
+        if until > time.time():
+            return found
+        _prs[repo] = (time.time() + PR_RETRY, found)    # one refresh at a time
+    threading.Thread(target=_refresh_prs, args=(repo,), daemon=True).start()
+    return found
+
+
+def _parse(iso: str) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _when(iso: str) -> str:
+    d = _parse(iso)
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if d else ""
+
+
+def branch_options(st: UpdateStatus, prs: dict | None = None) -> list[dict]:
+    """The branch picker's entries: main pinned first (the stable one), then newest commit first.
+    Each has name, label and detail; pull request number and title are added when GitHub knows them."""
+    prs = pull_requests(st.github) if prs is None else prs
+    info = {b["name"]: b for b in st.branch_info}
+    names = list(st.branches)
+    for n in info:
+        if n not in names:
+            names.append(n)
+    out = []
+    for n in names:
+        b, pr = info.get(n, {}), prs.get(n)
+        when = _when(str(b.get("date") or ""))
+        subject = str(b.get("subject") or "")
+        if n in ("main", "master"):
+            title = "stable, the released version"
+        elif pr:
+            title = f"#{pr['number']} {pr['title']} ({pr['state']})"
+        else:
+            title = f"{subject} (no pull request)" if subject else ""
+        title = title if len(title) <= 70 else title[:69] + "…"
+        out.append({"name": n, "title": title, "when": when, "date": str(b.get("date") or ""),
+                    "label": " · ".join(x for x in (n if n in ("main", "master") else "", title, when,
+                                                    "" if n in ("main", "master") else n) if x)})
+    stable = [o for o in out if o["name"] in ("main", "master")][:1]
+    rest = sorted((o for o in out if o not in stable), key=lambda o: _parse(o["date"]) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return stable + rest
 
 
 def request_branch(root: Path, name: str) -> None:

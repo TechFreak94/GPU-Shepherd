@@ -12,7 +12,7 @@
       hx-confirm="Switch to the chosen branch and rebuild GPU Shepherd? Instances keep running; to go back, pick the branch you came from.">
   <label class="small">Follow branch
     <select name="branch" {% if u.busy %}disabled{% endif %}>
-      {% for b in u.branches %}<option value="{{ b }}" {% if b == u.branch %}selected{% endif %}>{{ b }}{% if b == u.branch %} (current){% endif %}</option>{% endfor %}
+      {% for b in u.branch_options %}<option value="{{ b.name }}" {% if b.name == u.branch %}selected{% endif %}>{{ b.label }}{% if b.name == u.branch %} (current){% endif %}</option>{% endfor %}
     </select></label>
   <button {% if u.busy %}disabled{% endif %} title="Switch this server to that branch: for trying changes before they are released">Switch</button>
 </form>

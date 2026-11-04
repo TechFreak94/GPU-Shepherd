@@ -218,7 +218,7 @@ write_status() {
             "$(json_str "$(g rev-parse HEAD 2>/dev/null || true)")" "$(json_str "${LATEST:-}")" \
             "$(json_str "$(cat "$PREVIOUS" 2>/dev/null || true)")" "${BEHIND:-0}" "${AHEAD:-0}"
         printf '"credentials":%s,' "$(json_str "$(token_user)")"
-        printf '"branches":[%s],' "$(branch_list)"
+        printf '"branches":[%s],"branch_info":[%s],"github":%s,' "$(branch_list)" "$(branch_info)" "$(json_str "$(github_repo)")"
         printf '"local_changes":[%s],"commits":[%s],"dashboard_updates":%s}\n' "$changes" "$commits" \
             "$(service_enabled && echo true || echo false)"
     } >"$tmp"
@@ -235,6 +235,28 @@ branch_list() {   # the remote's branches as a JSON list, newest first (from the
         first=0; out+=$(json_str "$b")
     done < <(g for-each-ref --sort=-committerdate --count=40 --format='%(refname:short)' "refs/remotes/$remote/" 2>/dev/null)
     printf '%s' "$out"
+}
+
+branch_info() {   # the same branches as JSON objects (name, date, subject), newest first, for the dashboard's picker
+    local remote=${UPSTREAM%%/*} out="" b d s first=1
+    [ -n "$remote" ] || return 0
+    while IFS=$'\t' read -r b d s; do
+        b=${b#"$remote"/}
+        case "$b" in HEAD|"$remote"|"") continue ;; esac
+        [ "$first" -eq 1 ] || out+=","
+        first=0; out+="{\"name\":$(json_str "$b"),\"date\":$(json_str "$d"),\"subject\":$(json_str "$s")}"
+    done < <(g for-each-ref --sort=-committerdate --count=40 --format='%(refname:short)%09%(committerdate:iso-strict)%09%(contents:subject)' "refs/remotes/$remote/" 2>/dev/null)
+    printf '%s' "$out"
+}
+
+github_repo() {   # owner/name when the remote is on github.com (for looking up pull requests), else nothing
+    local url
+    url=$(g config --get "remote.${UPSTREAM%%/*}.url" 2>/dev/null || true)
+    case "$url" in
+        https://github.com/*|https://*@github.com/*|git@github.com:*|ssh://git@github.com/*)
+            url=${url#*github.com[:/]}; url=${url%.git}; url=${url%/}
+            case "$url" in */*/*|*[!A-Za-z0-9._/-]*|"") ;; *) printf '%s' "$url" ;; esac ;;
+    esac
 }
 
 fail() {   # fail "message": report it here and on the dashboard, then stop
