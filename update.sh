@@ -244,7 +244,7 @@ branch_info() {   # the same branches as JSON objects (name, date, subject), new
         b=${b#"$remote"/}
         case "$b" in HEAD|"$remote"|"") continue ;; esac
         [ "$first" -eq 1 ] || out+=","
-        first=0; out+="{\"name\":$(json_str "$b"),\"date\":$(json_str "$d"),\"subject\":$(json_str "$s")}"
+        first=0; out+="{\"name\":$(json_str "$b"),\"date\":$(json_str "$d"),\"subject\":$(json_str "$s"),\"version\":$(json_str "$(version_at "refs/remotes/$remote/$b")")}"
     done < <(g for-each-ref --sort=-committerdate --count=40 --format='%(refname:short)%09%(committerdate:iso-strict)%09%(contents:subject)' "refs/remotes/$remote/" 2>/dev/null)
     printf '%s' "$out"
 }

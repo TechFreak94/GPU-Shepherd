@@ -298,8 +298,9 @@ def branch_options(st: UpdateStatus, prs: dict | None = None) -> list[dict]:
         else:
             title = f"{subject} (no pull request)" if subject else ""
         title = title if len(title) <= 70 else title[:69] + "…"
-        out.append({"name": n, "title": title, "when": when, "date": str(b.get("date") or ""),
-                    "label": " · ".join(x for x in (n if n in ("main", "master") else "", title, when,
+        ver = str(b.get("version") or "")
+        out.append({"name": n, "title": title, "when": when, "version": ver, "date": str(b.get("date") or ""),
+                    "label": " · ".join(x for x in (n if n in ("main", "master") else "", f"v{ver}" if ver else "", title, when,
                                                     "" if n in ("main", "master") else n) if x)})
     stable = [o for o in out if o["name"] in ("main", "master")][:1]
     rest = sorted((o for o in out if o not in stable), key=lambda o: _parse(o["date"]) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
