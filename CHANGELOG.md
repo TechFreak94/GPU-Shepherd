@@ -4,6 +4,14 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.21 - 2026-11-04
+
+- Books upload explains files the browser can't read (on Windows, paths over 260 characters) instead of saying GPU Shepherd is not reachable (#52)
+- Zips with no books (music, videos, games) are left out before uploading, in one summary line (#52)
+- PDFs: AES-encrypted ones can be read, and one broken page no longer loses the whole book (#52)
+- Zip errors name the zip instead of a temporary .part file (#52)
+- Books page table: long names and paths wrap, so every column stays visible (#52)
+
 ## 0.13.20 - 2026-11-04
 
 - The "Follow branch" list in Settings now shows each branch's version, pull request number and title, and last update date and time, newest first with main at the top. (#51)
