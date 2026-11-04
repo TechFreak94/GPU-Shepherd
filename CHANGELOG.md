@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.20 - 2026-11-04
+
+- The "Follow branch" list in Settings now shows each branch's version, pull request number and title, and last update date and time, newest first with main at the top. (#51)
+- Books can be uploaded from the browser up to 4 GB each, and zips up to 64 GB. (#51)
+
 ## 0.13.19 - 2026-11-04
 
 - Bump actions/checkout from 4 to 7 (#50)
