@@ -517,6 +517,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                 "checked_at": u.checked_at, "state": u.state, "step": u.step, "message": u.message,
                 "busy": u.busy, "pending": u.pending, "progress": [{"step": s, "state": m} for s, m in u.progress],
                 "commits": u.commits, "local_changes": u.local_changes,
+                "branch": u.branch, "branches": u.branches,
                 "dashboard_updates": u.dashboard_updates, "credentials_user": u.credentials, "command": u.command}
 
     @r.post("/api/v1/updates/credentials")
@@ -525,6 +526,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         data = await body(request)
         return JSONResponse({"message": svc.update_credentials(str(data.get("user", "")), str(data.get("token", "")),
                                                                clear=bool(data.get("clear")))}, status_code=202)
+
+    @r.post("/api/v1/updates/branch")
+    @handle
+    async def update_branch(request: Request):
+        """Follow another branch of the repository: {"branch": "main"}. Rebuilds GPU Shepherd from it."""
+        return JSONResponse({"message": svc.switch_branch(str((await body(request)).get("branch", "")))},
+                            status_code=202)
 
     @r.post("/api/v1/updates/{action}")
     @handle
@@ -543,5 +551,81 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return [{"version": x.version, "date": x.date, "items": x.items,
                  "running": x.version == __version__,
                  "new": changelog.key(x.version) > changelog.key(__version__)} for x in shown]
+
+    # ------------------------------------------------------------------ books and skills
+    def embeddings_choice(v) -> bool | None:
+        if v in (None, "", "ask"):
+            return None
+        if v in ("server", True):
+            return True
+        if v in ("keep", False):
+            return False
+        raise Problem("embeddings: server (use the model server's embeddings model), keep, or leave it out")
+
+    @r.get("/api/v1/books")
+    @handle
+    def get_books(request: Request):
+        """The books folder, its books, the book work running now, and the apps books can go to."""
+        return svc.books()
+
+    @r.put("/api/v1/books/folder")
+    @handle
+    async def books_folder(request: Request):
+        return {"message": svc.set_books_folder(str((await body(request)).get("path", "")))}
+
+    @r.post("/api/v1/books/upload")
+    @handle
+    async def books_upload(request: Request):
+        """Add books: a multipart form with one or more `file` fields. A scan starts afterwards."""
+        form = await request.form()
+        files = [(f.filename, f.file) for f in form.getlist("file") if hasattr(f, "filename")]
+        return JSONResponse({"message": svc.add_books(files)}, status_code=202)
+
+    @r.post("/api/v1/books/scan")
+    @handle
+    def books_scan(request: Request):
+        return JSONResponse({"message": svc.scan_books()}, status_code=202)
+
+    @r.post("/api/v1/books/stop")
+    @handle
+    def books_stop(request: Request):
+        return {"message": svc.stop_books()}
+
+    @r.post("/api/v1/books/send")
+    @handle
+    async def books_send(request: Request):
+        """Put the ready books into an Open WebUI knowledge base: {"instance", "name", "split",
+        "embeddings": "server" | "keep"}."""
+        d = await body(request)
+        return JSONResponse({"message": svc.send_books(str(d.get("instance", "")), str(d.get("name", "") or "Books"),
+                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")))},
+                            status_code=202)
+
+    @r.post("/api/v1/books/{key}/skill")
+    @handle
+    async def books_skill(request: Request, key: str):
+        """Draft an agent skill from a book with a model server's chat model: {"server"} (optional)."""
+        d = await body(request) if (await request.body()) else {}
+        return JSONResponse({"message": svc.make_skill(key, str(d.get("server", "")))}, status_code=202)
+
+    @r.get("/api/v1/skills/{slug}")
+    @handle
+    def get_skill(request: Request, slug: str):
+        return {"slug": slug, "text": svc.skill_text(slug)}
+
+    @r.put("/api/v1/skills/{slug}")
+    @handle
+    async def put_skill(request: Request, slug: str):
+        return {"message": svc.save_skill(slug, str((await body(request)).get("text", "")))}
+
+    @r.post("/api/v1/skills/{slug}/install")
+    @handle
+    async def install_skill(request: Request, slug: str):
+        return {"message": svc.install_skill(slug, str((await body(request)).get("instance", "")))}
+
+    @r.delete("/api/v1/skills/{slug}")
+    @handle
+    def delete_skill(request: Request, slug: str):
+        return {"message": svc.delete_skill(slug)}
 
     return r

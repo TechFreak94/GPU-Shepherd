@@ -861,6 +861,21 @@ def _langflow_server(server: str, m: Machine) -> dict[str, str]:
             "LANGFLOW_SSRF_ALLOWED_HOSTS": server, "LANGFLOW_PROVIDER_CREDENTIAL_ALLOWED_HOSTS": f"http://{server}"}
 
 
+# How Open WebUI splits and searches documents when it uses a model server's embeddings model:
+# bigger pieces than its default suit books, and more of them go to the chat model with a question.
+# Open WebUI only reads these at its first start (then they are in its Admin Panel, Documents), so
+# they aren't offered as app updates; the Books page sets the embeddings ones through its API.
+OPENWEBUI_DOCS = {"CHUNK_SIZE": "1500", "CHUNK_OVERLAP": "200", "RAG_TOP_K": "8", "RAG_EMBEDDING_BATCH_SIZE": "16",
+                  "RAG_EMBEDDING_QUERY_PREFIX": ""}
+# What a question starts with for embeddings models that are trained with an instruction
+QUERY_PREFIX = {"qwen3-embedding": "Instruct: Given a question, retrieve passages that answer it\nQuery: "}
+
+
+def query_prefix(model_file: str) -> str:
+    name = model_file.lower().rsplit("/", 1)[-1]
+    return next((p for k, p in QUERY_PREFIX.items() if k in name), "")
+
+
 def _openwebui(a: dict, m: Machine) -> dict[str, str]:
     env: dict[str, str] = {}
     server = _server(a, m)
@@ -871,7 +886,10 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
             env["DEFAULT_MODELS"] = info["default_model"]
         if info.get("embed"):                  # documents are embedded by the model server, not on Open WebUI's CPU
             env |= {"RAG_EMBEDDING_ENGINE": "openai", "RAG_OPENAI_API_BASE_URL": _server_url(server, m),
-                    "RAG_OPENAI_API_KEY": info["api_key"], "RAG_EMBEDDING_MODEL": info["embed"]}
+                    "RAG_OPENAI_API_KEY": info["api_key"], "RAG_EMBEDDING_MODEL": info["embed"]} \
+                | {k: v for k, v in OPENWEBUI_DOCS.items() if v}
+            if info.get("embed_query_prefix"):
+                env["RAG_EMBEDDING_QUERY_PREFIX"] = info["embed_query_prefix"]
     speech = str(a.get("speech", "")).strip()
     if speech:
         if speech not in speech_servers(m):
@@ -952,7 +970,7 @@ def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
             offload = [OffloadRule(min_gpus=1, gpu_layers=0)]
         out.append(CatalogModel(id=mid, name=Path(file).name.removesuffix(".gguf"), file=file, ctx_size=ctx_size,
                                 kv_cache=slot.kv_cache, sampling=slot.sampling, offload=offload,
-                                role=slot.role, keep_loaded=slot.role == "embed",
+                                role=slot.role, keep_loaded=slot.role == "embed", preload=slot.role == "embed",
                                 aliases=[slot.alias] if slot.alias != mid else []))
     for x in out:
         x.aliases = [al for al in x.aliases if al != x.id]

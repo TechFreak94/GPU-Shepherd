@@ -28,6 +28,7 @@ from pathlib import Path
 from . import __version__, buildinfo, changelog
 
 ACTIONS = ("check", "update")             # what the dashboard's buttons can ask for
+BRANCH_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 GITHUB_USER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 GITHUB_TOKEN = re.compile(r"^[A-Za-z0-9_]{20,255}$")     # ghp_..., github_pat_..., same check as update.sh
 STALE_REQUEST = 120         # seconds: a request nobody picked up means the service isn't running
@@ -52,6 +53,8 @@ class UpdateStatus:
     message: str = ""
     repo: str = ""                                  # the clone on the host
     upstream: str = ""
+    branch: str = ""                                # the branch the clone follows
+    branches: list[str] = field(default_factory=list)   # branches on the remote, newest first
     behind: int = 0
     commits: list[dict] = field(default_factory=list)
     local_changes: list[str] = field(default_factory=list)
@@ -173,10 +176,11 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
         raw = None
     if isinstance(raw, dict):
         st.checked = True
-        for key in ("checked_at", "state", "step", "message", "repo", "upstream", "current", "previous",
+        for key in ("checked_at", "state", "step", "message", "repo", "upstream", "branch", "current", "previous",
                     "version", "latest_version", "credentials"):
             setattr(st, key, str(raw.get(key) or ""))
         st.behind = int(raw.get("behind") or 0)
+        st.branches = [str(b) for b in raw.get("branches") or []]
         st.commits = [c for c in raw.get("commits") or [] if isinstance(c, dict)]
         st.local_changes = [str(f) for f in raw.get("local_changes") or []]
         st.dashboard_updates = raw.get("dashboard_updates") is True
@@ -193,15 +197,23 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
     return st
 
 
-def request(root: Path, action: str) -> None:
-    """Ask the host to check or update; update.sh deletes the file when it starts."""
-    if action not in ACTIONS + ("credentials",):
+def request(root: Path, action: str, arg: str = "") -> None:
+    """Ask the host to check or update; update.sh deletes the file when it starts. `arg` is the
+    second line (the branch for "branch")."""
+    if action not in ACTIONS + ("credentials", "branch"):
         raise ValueError(f"unknown update action {action!r}")
     d = folder(root)
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "request.tmp"
-    tmp.write_text(action + "\n")
+    tmp.write_text(action + "\n" + (arg + "\n" if arg else ""))
     tmp.replace(d / "request")
+
+
+def request_branch(root: Path, name: str) -> None:
+    """Ask the host to follow another branch of the repository (update.sh switches the clone)."""
+    if not BRANCH_NAME.match(name) or ".." in name or "//" in name or name.endswith(".lock"):
+        raise ValueError("That isn't a usable branch name.")
+    request(root, "branch", name)
 
 
 def request_credentials(root: Path, user: str = "", token: str = "", clear: bool = False) -> None:

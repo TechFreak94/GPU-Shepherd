@@ -937,6 +937,17 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def update_card(request: Request):
         return page(request, "partials/update_card.html", u=updates.status(store.root))
 
+    @app.post("/ui/update/branch")
+    async def update_branch(request: Request):
+        raw = await request.form()
+        try:
+            msg = svc.switch_branch(str(raw.get("branch", "")))
+        except Problem as err:
+            return problem(err)
+        resp = update_page(request)          # the dialog, now showing the progress
+        resp.headers["HX-Trigger"] = json.dumps({"refresh": True, "toast": {"msg": msg, "kind": "info"}})
+        return resp
+
     @app.get("/ui/update/log", response_class=HTMLResponse)
     def update_log(request: Request):
         u = updates.status(store.root)
@@ -997,6 +1008,84 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         auth.new_api_token(store)
         log.info("API token replaced from the dashboard")
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", "New API token made. The old one no longer works.")})
+
+    # ------------------------------------------------------------------ books
+    @app.get("/books", response_class=HTMLResponse)
+    def books_page(request: Request):
+        return page(request, "books.html", b=svc.books())
+
+    @app.get("/books/task", response_class=HTMLResponse)
+    def books_task(request: Request, was: int = 0):
+        t = svc.book_task.as_dict() if svc.book_task else None
+        if was and not (t and t["running"]):              # it just finished: show the page with the result
+            return Response(status_code=204, headers={"HX-Refresh": "true"})
+        return templates.TemplateResponse(request, "partials/books_task.html", {"t": t})
+
+    def books_done(action):
+        try:
+            msg = action()
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/books", msg)})
+
+    @app.post("/books/folder")
+    async def books_folder(request: Request):
+        raw = await request.form()
+        return books_done(lambda: svc.set_books_folder(str(raw.get("path", ""))))
+
+    @app.post("/books/upload")
+    async def books_upload(request: Request):
+        raw = await request.form()
+        files = [(f.filename, f.file) for f in raw.getlist("file") if getattr(f, "filename", "")]
+        return books_done(lambda: svc.add_books(files))
+
+    @app.post("/books/scan")
+    def books_scan():
+        return books_done(svc.scan_books)
+
+    @app.post("/books/stop")
+    def books_stop():
+        return books_done(svc.stop_books)
+
+    @app.post("/books/send")
+    async def books_send(request: Request):
+        raw = await request.form()
+        emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
+        return books_done(lambda: svc.send_books(str(raw.get("instance", "")), str(raw.get("name", "")),
+                                                 bool(raw.get("split")), emb))
+
+    @app.post("/books/{key}/skill")
+    async def books_skill(request: Request, key: str):
+        raw = await request.form()
+        return books_done(lambda: svc.make_skill(key, str(raw.get("server", ""))))
+
+    def skill_dialog(request: Request, slug: str, **ctx):
+        try:
+            text = ctx.pop("text", None) or svc.skill_text(slug)
+        except Problem as err:
+            return problem(err)
+        return templates.TemplateResponse(request, "partials/skill_edit.html", {"slug": slug, "text": text} | ctx)
+
+    @app.get("/books/skills/{slug}", response_class=HTMLResponse)
+    def books_skill_show(request: Request, slug: str):
+        return skill_dialog(request, slug)
+
+    @app.post("/books/skills/{slug}", response_class=HTMLResponse)
+    async def books_skill_save(request: Request, slug: str):
+        text = str((await request.form()).get("text", ""))
+        try:
+            return skill_dialog(request, slug, saved=svc.save_skill(slug, text))
+        except Problem as err:
+            return skill_dialog(request, slug, text=text, error=err.msg)
+
+    @app.post("/books/skills/{slug}/install")
+    async def books_skill_install(request: Request, slug: str):
+        raw = await request.form()
+        return books_done(lambda: svc.install_skill(slug, str(raw.get("instance", ""))))
+
+    @app.post("/books/skills/{slug}/delete")
+    def books_skill_delete(slug: str):
+        return books_done(lambda: svc.delete_skill(slug))
 
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)

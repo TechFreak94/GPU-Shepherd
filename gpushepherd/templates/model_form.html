@@ -59,7 +59,7 @@
       <div><label for="role">Used for</label><select id="role" name="role">
         {% for k, label in [("chat", "Chat and coding"), ("embed", "Embeddings (documents for RAG)"), ("rerank", "Reranking (sorting search results)")] %}
         <option value="{{ k }}" {{ "selected" if f.role == k }}>{{ label }}</option>{% endfor %}</select>
-        <div class="hint">Embedding and reranking models answer /v1/embeddings and /v1/rerank instead of chat.</div></div>
+        <div class="hint">Embedding and reranking models answer /v1/embeddings and /v1/rerank instead of chat. GPU Shepherd adds llama-server's --embeddings or --reranking flag for you, so leave it out of the flags above.</div></div>
       <div><label for="thinking">Thinking</label><select id="thinking" name="thinking">
         {% for k, label in [("auto", "The model's default"), ("on", "On - reasons before answering"), ("off", "Off - answers straight away")] %}
         <option value="{{ k }}" {{ "selected" if f.thinking == k }}>{{ label }}</option>{% endfor %}</select>
@@ -74,7 +74,7 @@
     <label class="check" style="margin-top:10px"><input type="checkbox" name="keep_loaded" {{ "checked" if f.keep_loaded }}> Keep loaded beside other models</label>
     <div class="hint">Normally loading one model unloads the last. A small embeddings model can stay loaded next to the chat model instead (give it 0 layers on the GPU below so it runs on the CPU).</div>
     <label class="check" style="margin-top:8px"><input type="checkbox" name="preload" {{ "checked" if f.preload }}> Load as soon as the server starts</label>
-    <div class="hint">The first request doesn't wait for it to load. Only the models ticked here (and kept-loaded ones) are ready when the server starts; any other model loads when a tag or ID asks for it. Pick one model to swap with, plus any kept-loaded ones.</div>
+    <div class="hint">The first request doesn't wait for it to load. Only the models ticked here are ready when the server starts; any other model, kept-loaded ones too, loads when a tag or ID first asks for it. Pick one model to swap with, plus any kept-loaded ones.</div>
   </div>
   <div class="section">
     <h3 style="margin-top:0">GPU and system RAM</h3>

@@ -22,11 +22,11 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
+from . import (app_updates, auth, book_skills, books as books_mod, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
-from .connectors import llamaswap
+from .connectors import instance_url, llamaswap, openwebui
 from .backend import BackendError
 from .downloads import IMAGE as HELPER_IMAGE, KIND as DOWNLOAD_KIND, Downloads
 from .engine import Engine
@@ -116,6 +116,9 @@ class Shepherd:
     drive_error: str = ""               # why the machine's drives can't be looked at, if they can't
     image_log: image_updates.Records | None = None
     _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
+    book_task: books_mod.Task | None = None     # what is being done with the books now (or last)
+    openwebui_client: object = openwebui.OpenWebUI   # (address, token) -> client; a stand-in in tests
+    _library: books_mod.Library | None = None
 
     def __post_init__(self):
         if self.downloads is None:
@@ -816,7 +819,8 @@ class Shepherd:
             servers[inst.id] = {"api_key": cat.api_key, "name": inst.name,
                                 "default_model": alias or (model.id if model else ""),
                                 "ctx": model.ctx_size if model else 0,
-                                "embed": ("embed" if "embed" in embed.aliases else embed.id) if embed else ""}
+                                "embed": ("embed" if "embed" in embed.aliases else embed.id) if embed else "",
+                                "embed_query_prefix": tpl.query_prefix(embed.file) if embed else ""}
         for inst in instances.values():           # vLLM servers: one model each, under the name chat
             info = tpl.vllm_server(inst)
             if info:
@@ -1707,6 +1711,30 @@ class Shepherd:
         log.info("update: %s requested", action)
         return "Checking for updates…" if action == "check" else "Updating…"
 
+    def switch_branch(self, name: str) -> str:
+        """Follow another branch of the repository (to try changes before they are released)."""
+        name = name.strip()
+        u = updates.status(self.store.root)
+        if not u.dashboard_updates:
+            raise Problem(f"Switching branches from the dashboard needs the update service. On the server run: {u.command} --branch {name or 'NAME'}",
+                          "warn", 409)
+        if u.busy:
+            raise Problem("An update or check is already running.", "warn", 409)
+        if self.jobs.busy:
+            raise Problem("Wait for the current change to finish, then switch.", "warn", 409)
+        if u.local_changes:
+            raise Problem(f"Files in the clone were changed by hand. Run {u.command} --stash on the server.", status=409)
+        if name == u.branch:
+            raise Problem(f"Already following {name}.", "info", 409)
+        if name not in u.branches:
+            raise Problem(f"There is no branch '{name}' on the remote (check for updates to refresh the list).", status=404)
+        try:
+            updates.request_branch(self.store.root, name)
+        except ValueError as err:
+            raise Problem(str(err)) from err
+        log.info("update: switch to branch %s requested", name)
+        return f"Switching to {name} and rebuilding…"
+
     def update_credentials(self, user: str = "", token: str = "", clear: bool = False) -> str:
         u = updates.status(self.store.root)
         if not u.dashboard_updates:
@@ -1720,6 +1748,331 @@ class Shepherd:
             raise Problem(str(err)) from err
         log.info("update: GitHub token %s", "removal requested" if clear else "handed to the host")
         return "Token removed." if clear else "Token saved; checking for updates with it."
+
+    # ------------------------------------------------------------------ books
+    @property
+    def library(self) -> books_mod.Library:
+        if self._library is None:
+            self._library = books_mod.Library(self.store.root)
+        return self._library
+
+    def _book_apps(self, instances: dict[str, Instance]) -> tuple[list[Instance], list[Instance]]:
+        """Open WebUI instances (books go into their knowledge) and Hermes Agent instances (skills)."""
+        apps = {t: [i for i in instances.values() if tpl.matches(tpl.get(t), i)] for t in ("open-webui", "hermes")}
+        return apps["open-webui"], apps["hermes"]
+
+    def books(self) -> dict:
+        """The books folder, the books found in it, what is being done with them and where they can go."""
+        data = self.library.load()
+        folder = self.library.folder(data)
+        instances, _ = self.store.instances()
+        webuis, hermes = self._book_apps(instances)
+        m = self.machine()
+        counts: dict[str, int] = {}
+        rows = []
+        for b in sorted(data["books"].values(), key=lambda b: (b.group.lower(), b.name.lower())):
+            counts[b.status] = counts.get(b.status, 0) + 1
+            rows.append(asdict(b) | {"name": b.name})
+        skills = []
+        for slug, s in sorted((data.get("skills") or {}).items()):
+            skills.append(s | {"slug": slug, "path": str(self._skill_dir(slug)),
+                               "exists": (self._skill_dir(slug) / "SKILL.md").exists()})
+        return {"folder": str(folder), "folder_ok": folder.is_dir(), "default_folder": str(self.store.root / "books"),
+                "scanned": data.get("scanned"), "counts": counts, "books": rows,
+                "words": sum(b.words for b in data["books"].values() if b.status == "ready"),
+                "task": self.book_task.as_dict() if self.book_task else None,
+                "webuis": [{"id": i.id, "name": i.name, "running": self._running(i.id)} for i in webuis],
+                "hermes": [{"id": i.id, "name": i.name} for i in hermes],
+                "servers": [{"id": k, "name": v["name"], "model": v.get("default_model", ""), "embed": v.get("embed", "")}
+                            for k, v in m.servers.items()],
+                "sends": data.get("sends") or [], "skills": skills, "upload_mb": books_mod.UPLOAD_MB}
+
+    def _books_busy(self) -> None:
+        if self.book_task and self.book_task.running:
+            raise Problem(f"Wait for the current book work to finish ({self.book_task.title}), or stop it.", "warn", 409)
+
+    def set_books_folder(self, path: str) -> str:
+        self._books_busy()
+        path = path.strip()
+        if path and not path.startswith("/"):
+            raise Problem("Give the books folder as a full path, like /srv/books.")
+        target = Path(path) if path else self.store.root / "books"
+        if path and not target.is_dir():
+            raise Problem(f"GPU Shepherd can't see {path}. Mount it into GPU Shepherd's container at the same path "
+                          "(like a models folder), or put the books in its own books folder.", status=404)
+        self.library.update(lambda d: d.__setitem__("folder", path))
+        return f"Books folder: {target}. Scan it to find the books."
+
+    def add_books(self, files: list[tuple[str, object]]) -> str:
+        """Save uploaded books (name, file-like) into the books folder."""
+        self._books_busy()
+        folder = self.library.folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        saved, refused = [], []
+        for name, f in files:
+            name = Path(str(name).replace("\\", "/")).name
+            if not name or Path(name).suffix.lower() not in books_mod.RANK:
+                refused.append(name or "?")
+                continue
+            dest = folder / name
+            tmp = dest.with_name(dest.name + ".part")
+            size = 0
+            with open(tmp, "wb") as out:
+                while chunk := f.read(1 << 20):
+                    size += len(chunk)
+                    if size > books_mod.UPLOAD_MB << 20:
+                        break
+                    out.write(chunk)
+            if size > books_mod.UPLOAD_MB << 20:
+                tmp.unlink(missing_ok=True)
+                refused.append(f"{name} (over {books_mod.UPLOAD_MB} MB)")
+                continue
+            os.replace(tmp, dest)
+            saved.append(name)
+        if not saved:
+            raise Problem("No books added: " + (", ".join(refused) + " " if refused else "") +
+                          "(EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC files only).")
+        msg = f"Added {len(saved)} book{'s' if len(saved) != 1 else ''}"
+        msg += f"; left out {', '.join(refused)}." if refused else "."
+        return msg + " " + self.scan_books()
+
+    def _book_work(self, title: str, fn) -> str:
+        self._books_busy()
+        task = books_mod.Task(title)
+        self.book_task = task
+
+        def run():
+            try:
+                task.finish(fn(task) or "Done.")
+            except InterruptedError:
+                task.finish("Stopped. Start it again to carry on where it stopped.", stopped=True)
+            except (Problem, books_mod.BookError, openwebui.OpenWebUIError, BackendError, OSError, ValueError) as err:
+                task.fail(err.msg if isinstance(err, Problem) else str(err))
+            except Exception as err:  # noqa: BLE001 - shown on the Books page
+                log.exception("books: %s failed", title)
+                task.fail(f"{err.__class__.__name__}: {err}")
+        threading.Thread(target=run, name="books", daemon=True).start()
+        return title + "…"
+
+    def stop_books(self) -> str:
+        if not (self.book_task and self.book_task.running):
+            raise Problem("Nothing is running.", "warn", 409)
+        self.book_task.stop = True
+        return "Stopping after the current book…"
+
+    def scan_books(self) -> str:
+        folder = self.library.folder()
+        if not folder.is_dir():
+            if folder == self.store.root / "books":
+                folder.mkdir(parents=True, exist_ok=True)
+            else:
+                raise Problem(f"GPU Shepherd can't see the books folder {folder}.", status=404)
+
+        def work(task: books_mod.Task) -> str:
+            def progress(done, total, name):
+                task.progress(done, total, f"Reading {name}")
+            counts = self.library.scan(progress, lambda: task.stop)
+            if task.stop:
+                raise InterruptedError
+            parts = [f"{counts.get('ready', 0)} ready"] + [f"{n} {s}" for s, n in sorted(counts.items()) if s != "ready"]
+            return "Found the books: " + ", ".join(parts) + "."
+        return self._book_work("Finding and reading books", work)
+
+    # Open WebUI
+    def _openwebui(self, inst: Instance) -> openwebui.OpenWebUI:
+        try:
+            code, out = self.backend.exec(self.engine.container_name(inst.id), ["python3", "-c", openwebui.TOKEN_SCRIPT])
+        except BackendError as err:
+            raise Problem(f"couldn't reach {inst.name}: {err}", status=409) from err
+        data = logins._last_json(out) or {}
+        if code or not data.get("token"):
+            raise Problem(f"couldn't sign in to {inst.name}: {data.get('error') or logins.last_line(out)}", status=409)
+        port = inst.ports[0].container if inst.ports else openwebui.CONTAINER_PORT
+        return self.openwebui_client(instance_url(inst, port), data["token"])
+
+    def _embed_server(self, inst: Instance, m: tpl.Machine) -> str:
+        """The model server whose embeddings model Open WebUI should use: the one it is connected to."""
+        server = tpl.connected_server(inst, m)
+        if server and m.servers[server].get("embed"):
+            return server
+        return next((k for k, v in m.servers.items() if v.get("embed") and k in m.instances), "")
+
+    @checked
+    def send_books(self, iid: str, name: str = "Books", split: bool = False,
+                   use_server_embeddings: bool | None = None) -> str:
+        """Put the ready books into an Open WebUI knowledge base (one per first-level folder with
+        `split`), in the background. Books already sent there are skipped, so it carries on after a stop.
+        use_server_embeddings: True switches Open WebUI to the model server's embeddings model, False
+        keeps whatever it uses, None stops with a question when they differ."""
+        inst = self.instance(iid)
+        if not tpl.matches(tpl.get("open-webui"), inst):
+            raise Problem(f"{inst.name} isn't Open WebUI: books go into Open WebUI's knowledge bases.")
+        if not self._running(iid):
+            raise Problem(f"Start {inst.name} first.", status=409)
+        name = re.sub(r"\s+", " ", name or "").strip()[:80] or "Books"
+        if not any(b.status == "ready" for b in self.library.books()):
+            raise Problem("No books ready to send: add books and scan the books folder first.", status=409)
+        m = self.machine()
+        server = self._embed_server(inst, m)
+
+        def work(task: books_mod.Task) -> str:
+            task.text = f"Signing in to {inst.name}"
+            ow = self._openwebui(inst)
+            if server:
+                info = m.servers[server]
+                emb = ow.embedding()
+                uses = emb["engine"] == "openai" and emb["model"] == info["embed"] and server in emb["url"]
+                if not uses and use_server_embeddings:
+                    ow.use_embedding(tpl._server_url(server, m), info["api_key"], info["embed"],
+                                     info.get("embed_query_prefix", ""))
+                elif not uses and use_server_embeddings is None:
+                    raise Problem(f"{inst.name} embeds documents with {emb['model'] or 'its own model'}"
+                                  f"{' on its CPU' if not emb['engine'] else ''}, not {info['name']}'s embeddings "
+                                  "model. Choose which to use, then send again.", status=409)
+            todo = [b for b in self.library.books() if b.status == "ready"]
+            kbs: dict[str, str] = {}
+            sent = skipped = failed = in_a_row = 0
+            for i, b in enumerate(todo):
+                if task.stop:
+                    raise InterruptedError
+                kb = f"{name} - {b.group}" if split and b.group else name
+                target = f"{iid}/{kb}"
+                if target in b.sent:
+                    skipped += 1
+                    continue
+                task.progress(i, len(todo), f"Sending {b.name}")
+                try:
+                    if kb not in kbs:
+                        kbs[kb] = ow.knowledge_id(kb, "Books added by GPU Shepherd")
+                    fid = ow.upload(b.file_name, self.library.text(b.key))
+                    ow.add(kbs[kb], fid)
+                except (openwebui.OpenWebUIError, OSError) as err:
+                    if "answered 401" in str(err):          # the sign-in ran out: sign in again, then retry it
+                        ow = self._openwebui(inst)
+                        kbs.clear()
+                        try:
+                            kbs[kb] = ow.knowledge_id(kb, "Books added by GPU Shepherd")
+                            fid = ow.upload(b.file_name, self.library.text(b.key))
+                            ow.add(kbs[kb], fid)
+                        except (openwebui.OpenWebUIError, OSError) as err2:
+                            err = err2
+                        else:
+                            err = None
+                    if err is not None:
+                        failed += 1
+                        in_a_row += 1
+                        task.errors.append(f"{b.name}: {err}")
+                        if in_a_row >= 5:
+                            raise openwebui.OpenWebUIError(f"stopped after 5 books in a row failed; the last: {err}")
+                        continue
+                in_a_row = 0
+                sent += 1
+
+                def mark(d, key=b.key, fid=fid):
+                    if key in d["books"]:
+                        d["books"][key].sent[target] = fid
+                self.library.update(mark)
+            self.library.update(lambda d: d.__setitem__("sends", [
+                s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
+                {"instance": iid, "name": name, "split": split, "when": time.time()}]))
+            msg = f"Sent {sent} book{'s' if sent != 1 else ''} to {inst.name}"
+            msg += f" ({skipped} were there already)" if skipped else ""
+            msg += f"; {failed} failed." if failed else "."
+            return msg + " In a chat, type # and pick the knowledge base."
+        return self._book_work(f"Sending books to {inst.name}", work)
+
+    # skills
+    def _skill_dir(self, slug: str) -> Path:
+        return self.store.root / "book-skills" / slug
+
+    def _skill(self, slug: str) -> dict:
+        s = (self.library.load().get("skills") or {}).get(slug)
+        if not s:
+            raise Problem(f"No skill '{slug}'.", status=404)
+        return s
+
+    def _chat(self, server: str, m: tpl.Machine):
+        """prompt -> answer from a model server's default chat model."""
+        inst, info = m.instances[server], m.servers[server]
+        port = inst.ports[0].container if inst.ports else 8080
+        url = instance_url(inst, port) + "/v1/chat/completions"
+
+        def chat(prompt: str) -> str:
+            body = {"model": info.get("default_model") or "chat", "max_tokens": 4096, "temperature": 0.3,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "chat_template_kwargs": {"enable_thinking": False}}
+            try:
+                r = httpx.post(url, json=body, headers={"Authorization": f"Bearer {info['api_key']}"}, timeout=1800)
+                r.raise_for_status()
+                return r.json()["choices"][0]["message"].get("content") or ""
+            except (httpx.HTTPError, ValueError, KeyError, IndexError) as err:
+                raise books_mod.BookError(f"{info['name']} didn't answer: {err.__class__.__name__}: {err}") from err
+        return chat
+
+    def make_skill(self, key: str, server: str = "") -> str:
+        """Draft an agent skill from a book with a model server, in the background."""
+        b = self.library.load()["books"].get(key)
+        if not b or b.status not in ("ready", "duplicate"):
+            raise Problem("That book isn't ready: scan the books folder first.", status=404)
+        m = self.machine()
+        server = server or next(iter(m.servers), "")
+        if server not in m.servers or server not in m.instances:
+            raise Problem("Making a skill needs a model server (install the LLM server from the App Center)."
+                          if not server else f"No model server '{server}'.", status=404)
+        if not self._running(server):
+            raise Problem(f"Start {m.servers[server]['name']} first: its chat model writes the skill.", status=409)
+        slug = book_skills.slug(b.name)
+
+        def work(task: books_mod.Task) -> str:
+            text = self.library.text(b.key)
+            md = book_skills.make(b.name, text, self._chat(server, m), m.servers[server].get("ctx") or 0,
+                                  lambda s: setattr(task, "text", f"{b.name}: {s}"), lambda: task.stop)
+            folder = self._skill_dir(slug)
+            book_skills.write(folder, md, text)
+            self.library.update(lambda d: d.setdefault("skills", {}).__setitem__(slug, {
+                "book": b.key, "name": b.name, "server": server, "made": time.time(),
+                "installed": ((d.get("skills") or {}).get(slug) or {}).get("installed", {})}))
+            return f"Drafted the skill {slug}. Check it, then install it in an agent."
+        return self._book_work(f"Making a skill from {b.name}", work)
+
+    def skill_text(self, slug: str) -> str:
+        self._skill(slug)
+        try:
+            return (self._skill_dir(slug) / "SKILL.md").read_text(encoding="utf-8")
+        except OSError as err:
+            raise Problem(f"The skill's SKILL.md is missing: {err}", status=404) from err
+
+    def save_skill(self, slug: str, text: str) -> str:
+        self._skill(slug)
+        if not re.match(r"^---\n.*?\bname:.*?\bdescription:.*?\n---", text.strip().replace("\r\n", "\n"), re.S):
+            raise Problem("Keep the --- lines at the top with name: and description: (agents need them).")
+        (self._skill_dir(slug) / "SKILL.md").write_text(text.strip().replace("\r\n", "\n") + "\n", encoding="utf-8")
+        return f"Saved {slug}. Install it again where it is installed, so agents get the change."
+
+    def install_skill(self, slug: str, iid: str) -> str:
+        """Copy a skill into a Hermes Agent's skills folder."""
+        self._skill(slug)
+        inst = self.instance(iid)
+        if not tpl.matches(tpl.get("hermes"), inst):
+            raise Problem(f"{inst.name} isn't Hermes Agent: skills from books go to Hermes Agent.")
+        inside = dict(tpl.get("hermes").appdata)["data"]
+        v = next((v for v in inst.volumes if v.container == inside), None)
+        if not v or not Path(v.host).is_relative_to(self.store.root):
+            raise Problem(f"GPU Shepherd can't see {inst.name}'s data folder, so it can't add skills there.", status=409)
+        owner = tpl.get("hermes").data_owner
+        dest = book_skills.install(self._skill_dir(slug), Path(v.host))
+        if owner and os.geteuid() == 0:
+            for p in [dest.parent, dest, *dest.rglob("*")]:
+                os.chown(p, *owner)
+        self.library.update(lambda d: d["skills"][slug].setdefault("installed", {}).__setitem__(iid, time.time()))
+        return f"Installed {slug} in {inst.name}. It sees the skill in a new conversation (or after a restart)."
+
+    def delete_skill(self, slug: str) -> str:
+        """Forget a draft (installed copies stay in the agents)."""
+        self._skill(slug)
+        shutil.rmtree(self._skill_dir(slug), ignore_errors=True)
+        self.library.update(lambda d: d["skills"].pop(slug, None))
+        return f"Deleted the draft {slug}. Copies installed in agents stay there."
 
 
 class HelperFileOps(FileOps):

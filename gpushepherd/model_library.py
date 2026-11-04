@@ -63,6 +63,7 @@ class Suggestion:
     kv_cache: str = "q8_0"
     role: str = "chat"
     keep_loaded: bool = False
+    preload: bool = False          # loaded as soon as the server starts
     gpu_layers: int | None = None  # set for models that should stay off the GPUs (embeddings: 0)
     extra_args: str = ""
 
@@ -155,7 +156,7 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
               "LibreChat. Runs on the CPU and stays loaded, so it never swaps the chat model out.",
         uses=("embed",), license="Apache-2.0", page=f"{HF}/Qwen/Qwen3-Embedding-0.6B-GGUF",
         model=_hf("Qwen/Qwen3-Embedding-0.6B-GGUF", "Qwen3-Embedding-0.6B-Q8_0.gguf", 0.64),
-        role="embed", keep_loaded=True, gpu_layers=0, ctx_size=8192, kv_cache="f16",
+        role="embed", keep_loaded=True, preload=True, gpu_layers=0, ctx_size=8192, kv_cache="f16",
         extra_args="--pooling last --ubatch-size 8192"),
 )
 
@@ -311,7 +312,7 @@ def catalog_model(s: Suggestion, gpu_mem_gb: list[float], models_root: str = "/m
         sampling=s.sampling, extra_args=s.extra_args, thinking=s.thinking, role=s.role,
         mmproj=f"{models_root}/{s.path(s.mmproj)}" if s.mmproj else "",
         mtp=s.mtp, mtp_draft=f"{models_root}/{s.path(s.draft)}" if s.draft else "",
-        keep_loaded=s.keep_loaded, aliases=list(aliases or []), offload=offload(s, gpu_mem_gb))
+        keep_loaded=s.keep_loaded, preload=s.preload, aliases=list(aliases or []), offload=offload(s, gpu_mem_gb))
 
 
 def for_slot(slot: str, gpu_mem_gb: list[float], ram_gb: float) -> list[tuple[Suggestion, Fit]]:

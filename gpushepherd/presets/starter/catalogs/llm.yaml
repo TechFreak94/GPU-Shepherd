@@ -29,6 +29,7 @@ models:
     ctx_size: 8192
     role: embed
     keep_loaded: true
+    preload: true
     extra_args: --pooling last --ubatch-size 8192
     aliases: [embed]
     offload:

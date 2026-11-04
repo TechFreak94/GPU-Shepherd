@@ -64,6 +64,7 @@ read from `compose.yaml`.
 | `--stash` | Set aside your own edits to files in the clone, and put them back afterwards. Without it, an update with local edits stops and lists them. |
 | `--rebuild` | Rebuild and restart even if nothing new was downloaded. |
 | `--rollback` | Go back to the version that ran before the last update. Uses the image saved then, so it needs no rebuild or network. |
+| `--branch NAME` | Follow another branch of the repository, to try changes before they are released: switches the clone to it and rebuilds. `--branch main` goes back; so does `--rollback` right after. Refuses if you changed files by hand (use `--stash`). |
 | `--restore-settings [FILE]` | Put back the settings, instances and model lists from just before the last update (or from a backup `FILE`). The current ones are kept as `*.before-restore`. |
 | `--set-token USER` | Save a GitHub user name and access token for updating from a private repository. Asks for the token without showing it (or reads it from standard input), then checks for updates. See [Private repository](updates.md#private-repository). |
 | `--clear-token` | Forget that token. |
@@ -171,6 +172,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `models settings SERVER [KEY=VALUE...]` | Show or change `threads`, `health_timeout`, `llama_server`, `fit_gpus` and `auto_tune`. `--new-api-key` gives the server a new API key. | Models › Server settings |
 | `app-updates` | Settings added to installed apps since you installed them. `app-updates apply INSTANCE KEY` (or `--all`) applies one, `app-updates skip INSTANCE KEY` stops it being offered. | App updates banner |
 | `app-versions` | New releases of the apps' images. `app-versions check` looks now, `app-versions update INSTANCE` installs one, `app-versions auto INSTANCE on\|off` sets automatic installs. | App cards › Update, Settings › App updates |
+| `books` | Ebooks: `books` lists the folder and books (with why some were skipped), `books status` the work running, `books folder PATH` picks the folder, `books scan` reads new books, `books send OPEN-WEBUI` puts them in a knowledge base (`--name`, `--split`, `--embeddings server\|keep`), `books stop` stops the work. `books skill KEY` drafts an agent skill from a book (`--server`), `skill-show SKILL`, `skill-install SKILL HERMES` and `skill-delete SKILL` follow it. | Books |
 | `storage` | Free space per disk, folder sizes, app images and what looks unused. `storage remove-images` and `remove-orphans` clean up; `storage trash-files PATH...` and `trash-folder NAME` move unused model files or an app data folder to the trash. | Storage |
 | `storage drives`, `storage mount DEVICE`, `storage browse [PATH]` | The machine's drives, mount one that holds data, list the folders in a place. | Storage › Other disks |
 | `storage move PATH NEW-PLACE`, `storage moves`, `storage move-back ID`, `storage delete-old ID` | [Move a folder to another disk](advanced.md#other-disks) (asks first; `-y` doesn't, `--no-wait` returns at once), list moves, point the apps back at the old copy, delete the old copy. | Storage › Move to another disk |
@@ -184,6 +186,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `update` | Running version, and whether an update is waiting. | Version number |
 | `update check`, `update install` | Ask the update service to check, or to update (asks first; `-y` doesn't). Needs [dashboard updates](#updating-from-the-dashboard); otherwise run `update.sh` on the host. | Check for updates / Update |
 | `update log` | The log of the last check or update. | Update log |
+| `update branch [NAME]` | Without a name: the branch being followed and the others on the remote. With one: switch to it and rebuild (asks first; `-y` doesn't). Needs dashboard updates. | Settings › Updates › Follow branch |
 | `update set-token USER`, `update clear-token` | Save or forget a GitHub token for a private repository (asks for it, or reads it from standard input). | Settings › Private repository |
 | `changelog` | What changed in each version (`--limit N`, default 5). | Changelog |
 

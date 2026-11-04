@@ -32,6 +32,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [HTTPX](https://www.python-httpx.org) | BSD-3-Clause | Talks to model servers and checks for updates |
 | [itsdangerous](https://itsdangerous.palletsprojects.com) | BSD-3-Clause | Signs login sessions |
 | [python-multipart](https://github.com/Kludex/python-multipart) | Apache-2.0 | Reads form posts |
+| [pypdf](https://github.com/py-pdf/pypdf) | BSD-3-Clause | Reads the text of PDF books |
 | [pytest](https://pytest.org) | MIT | Tests (development only) |
 
 ## Works with

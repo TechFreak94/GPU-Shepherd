@@ -52,11 +52,12 @@ def for_instance(inst: Instance, m: tpl.Machine, catalog: Catalog | None = None,
     out: list[Update] = []
     server = tpl.connected_server(inst, m, settings_file or "") if t.connects else ""
     want = tpl.app_env(t, server, m)
-    missing = {k: v for k, v in want.items() if v and k not in inst.env}     # empty ones change nothing
+    # empty ones change nothing; Open WebUI's document settings only count at its first start
+    missing = {k: v for k, v in want.items() if v and k not in inst.env and k not in tpl.OPENWEBUI_DOCS}
     if missing:
         u = Update(inst.id, _key("env", *sorted(missing)), "New settings for " + t.title,
                    [f"Adds {k}" + ("" if "KEY" in k else f"={v}") for k, v in sorted(missing.items())], env=missing)
-        if any(k.startswith("RAG_") for k in missing):
+        if "RAG_EMBEDDING_ENGINE" in missing:
             u.title = "Use the model server's embeddings model for documents"
             # Open WebUI keeps these in its database after the first start and ignores the variables then
             u.manual = ["Open WebUI saved its document settings when it first started, so also set them in Open WebUI: "
