@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.18 - 2026-11-04
+
+- Storage: move a moved folder back to the install drive any time, even after its old copy is deleted (Settings > Storage, API, `storage move-home`). (#49)
+- Books: load a whole library from the browser by dropping books, folders or zips, with progress, Stop and resume; `gpu-shepherd books upload` does the same from the command line. (#49)
+
 ## 0.13.17 - 2026-11-04
 
 - Books: put ebooks in a folder, send them to an Open WebUI knowledge base to chat with them, or have your model server draft an agent skill from a book for Hermes Agent. (#48)
