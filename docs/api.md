@@ -114,6 +114,19 @@ For instances of kind `llama-swap`.
 | `GET /api/v1/instances/{id}/tuning` | [Suggested adjustments](advanced.md#tuning): each with a `key`, what it changes, why, and its `status` (new, applied or dismissed). |
 | `POST /api/v1/instances/{id}/tuning` | Decide one: `{"key": "...", "action": "apply" \| "dismiss" \| "undo"}`. It stays listed either way. |
 
+## Books and skills
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/books` | The books folder, its books (status, words, why one was skipped), the work running now, the Open WebUI apps books can go to, and the drafted skills. |
+| `PUT /api/v1/books/folder` | `{"path": "..."}` picks the books folder. |
+| `POST /api/v1/books/upload` | Add books: a multipart form with one or more `file` fields; a scan follows (`202`). |
+| `POST /api/v1/books/scan`, `POST /api/v1/books/stop` | Scan the folder for new books (`202`), or stop the work running. |
+| `POST /api/v1/books/send` | Put the ready books in an Open WebUI knowledge base: `{"instance": "webui", "name": "Books", "split": false, "embeddings": "server" \| "keep"}` (`202`). |
+| `POST /api/v1/books/{key}/skill` | Draft an agent skill from a book with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
+| `GET`, `PUT`, `DELETE /api/v1/skills/{slug}` | Read a draft (`text`), save an edited one (`{"text": "..."}`), delete it. |
+| `POST /api/v1/skills/{slug}/install` | Install it in Hermes Agent: `{"instance": "hermes"}`. |
+
 ## Settings
 
 | Request | What it does |
