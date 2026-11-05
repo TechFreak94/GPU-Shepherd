@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.25 - 2026-11-05
+
+- Uploading documents from the browser now sends each file in pieces, so files with very long paths on Windows upload instead of failing with "GPU Shepherd is not reachable", and a dropped connection only resends one piece. (#56)
+
 ## 0.13.24 - 2026-11-05
 
 - Books is now **Knowledge**, and books are **Documents** (ebooks, manuals, notes). Everything is kept in one folder, `<data>/knowledge`, and existing books move there automatically. The old page, command and API names still work. (#55)
