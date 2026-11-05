@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.24 - 2026-11-05
+
+- Books is now **Knowledge**, and books are **Documents** (ebooks, manuals, notes). Everything is kept in one folder, `<data>/knowledge`, and existing books move there automatically. The old page, command and API names still work. (#55)
+- The Knowledge page shows where the documents, converted text and skill drafts are kept, how big they are, and the free space. (#55)
+- Fewer documents that can't be read: sturdier EPUB reading, readme and licence files left out, short notes allowed, and Word (DOCX) files read. Documents that couldn't be read are tried again at the next scan. The reasons are grouped with counts, and the list can show only one status. (#55)
+- Start over: delete the documents, converted text, skills and the copies sent to Open WebUI, chosen by checkbox. (#55)
+
 ## 0.13.23 - 2026-11-05
 
 - Fixed: updating no longer cuts running apps (and the dashboard) off their GPUs ("nvidia-smi failed ... exit status 255"). (#54)
