@@ -4,6 +4,7 @@ Everything GPU Shepherd does from the command line. Run the scripts from the fol
 
 - [`install.sh`](#installsh): install, or re-run to fill in what is missing
 - [`update.sh`](#updatesh): update, roll back, restore settings, dashboard updates
+- [`gpu-unlock.sh`](#gpu-unlocksh): the experimental tensor unlock
 - [`gpu-shepherd`](#gpu-shepherd): the app itself, and [commands](#commands) for everything the dashboard does
 - [`download-models.sh`](#download-modelssh): a preset's model files
 - [Environment variables](#environment-variables)
@@ -104,6 +105,36 @@ every page opens the Updates window, with *Check for updates*, each step of a ru
 the changelog (see [Versions, changelog and updates](updates.md)). The two sides only exchange files in `<data folder>/update/`, so the container never
 needs git, your credentials or more access to the host. Without the service, the dashboard shows
 the command to run instead.
+
+## gpu-unlock.sh
+
+Experimental. Installs [gpu-unlock](https://github.com/Zagitta/gpu-unlock), a kernel module that
+lifts the half-rate cap GeForce RTX cards have on FP16, BF16 and TF32 tensor math. The same thing is
+in the dashboard under Settings > Experimental (see [Tensor unlock](advanced.md#tensor-unlock));
+this is the script behind it. Every change takes effect at the next reboot.
+
+```bash
+sudo ./gpu-unlock.sh --check                                   # what this machine has; changes nothing
+sudo ./gpu-unlock.sh --install                                 # build and install the pinned version
+sudo ./gpu-unlock.sh --set 0000:01:00.0,0000:02:00.0           # unlock these cards from the next boot
+sudo ./gpu-unlock.sh --set none                                # unlock nothing from the next boot
+```
+
+| Option | What it does |
+|---|---|
+| `--check` | Shows the cards, what is installed and what the next boot does. Changes nothing. |
+| `--install` | Builds and installs gpu-unlock (a fixed, reviewed version). It unlocks no card until you `--set` some. |
+| `--set CARDS` | The cards to unlock from the next boot: PCI addresses as `lspci -D` prints them, comma separated; `all` (every supported card) or `none` (the rollback). |
+| `--uninstall` | Unlocks nothing from the next boot and removes gpu-unlock's packages. |
+| `--install-service` | Installs the small systemd service the dashboard uses to ask for these. `update.sh --enable-dashboard-updates` and every dashboard update also do this. |
+| `--remove-service` | Removes that service again. The boot safety checks stay while a card is set. |
+| `-q`, `--quiet` | Print less. |
+| `-h`, `--help` | Show the options. |
+
+It refuses Secure Boot, WSL and boot loaders or cards gpu-unlock doesn't support. The unlock goes only on the normal
+boot entries, so GRUB's recovery mode boots without it and turns it off. The first boot with a change
+has 10 minutes to show every chosen card unlocked and every GPU in `nvidia-smi`; if it doesn't, the
+unlock turns itself off for the next boots. Exit status: 0 done, 1 an error.
 
 ## gpu-shepherd
 

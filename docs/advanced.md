@@ -14,7 +14,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 - [Instances](#instances): basics, GPUs, network and storage, command, behaviour, before stopping
 - [Model servers](#model-servers): models, model behaviour, GPU and system RAM, suggested models,
   auto names, server settings
-- [Settings](#settings)
+- [Settings](#settings), including [Tensor unlock](#tensor-unlock) (experimental)
 - [Storage and trash](#storage-and-trash)
 - [What App Center apps fill in](#what-app-center-apps-fill-in)
 
@@ -304,6 +304,33 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | Empty the trash after | `trash_days` | Days before the [trash](#storage-and-trash) empties itself, 30 by default; `0` keeps things until you empty it. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
+
+### Tensor unlock
+
+Settings > Experimental. GeForce RTX 20, 30 and 40 cards run FP16, BF16 and TF32 tensor math at half
+speed. [gpu-unlock](https://github.com/Zagitta/gpu-unlock), a Linux kernel module, lifts that limit at
+boot. Image generation (ComfyUI) and unquantized models get about 30-55% faster; GGUF models gain little
+and token speed doesn't change.
+
+![Settings > Experimental > Tensor unlock](screenshots/tensor-unlock.png)
+
+- **Cards:** RTX 30 is the stable case. RTX 20 and 40 are experimental upstream and marked *untested
+  generation*. RTX 50 and cards gpu-unlock doesn't know are not supported.
+- **Risks:** gpu-unlock is a young community project, not made by NVIDIA or GPU Shepherd. It installs a
+  kernel module and adds an option to the boot line. Use it at your own risk. It refuses Secure Boot,
+  WSL and boot loaders it doesn't support. It flashes nothing: turn it off and reboot, and the cards
+  are as they were.
+- **Reboot:** every change (*Install*, *Save for the next boot*, *Turn off for every card*, *Remove*)
+  applies at the next reboot. The card table shows each card now and after the reboot, and the GPU
+  tiles on the dashboard get a badge (*Tensor unlock on*, *after reboot*, *on until reboot* or *failed*).
+- **Rolling back:** *Turn off for every card* and reboot, or *Remove* to take gpu-unlock off the
+  server. If a boot hangs, pick *recovery mode* under *Advanced options* in the boot menu: that boot
+  runs without the unlock and turns it off. A first boot with a change that doesn't stay up for 10
+  minutes, or loses a GPU, turns it off by itself too.
+- **Host service:** the page needs the small service on the host that comes with
+  [dashboard updates](updates.md); otherwise it shows the command to run. It can also be installed with
+  `sudo ./gpu-unlock.sh --install-service`. The same actions are in the [JSON API](api.md#tensor-unlock)
+  and [`gpu-unlock.sh`](cli.md#gpu-unlocksh).
 
 ## Storage and trash
 

@@ -8,7 +8,7 @@ give the same messages.
 - [Authentication](#authentication)
 - [Conventions](#conventions)
 - [State](#state), [Instances](#instances), [Changes (jobs)](#changes-jobs), [App Center](#app-center),
-  [Model servers](#model-servers), [Settings](#settings), [Updates](#updates)
+  [Model servers](#model-servers), [Settings](#settings), [Tensor unlock](#tensor-unlock), [Updates](#updates)
 - [Examples](#examples)
 
 ## Authentication
@@ -181,6 +181,18 @@ New releases of the apps' Docker images (checked every `image_check_hours`, 12 b
 | `POST /api/v1/image-updates/check` | Look in the registries now. |
 | `POST /api/v1/image-updates/{id}/update` | Download the new image and restart the app, waiting for running work (`202`, a job). |
 | `PUT /api/v1/instances/{id}/auto-update` | `{"on": true}`: let GPU Shepherd bring in new releases of this app's image by itself. |
+
+## Tensor unlock
+
+Experimental; see [Tensor unlock](advanced.md#tensor-unlock). It needs the host service that comes with
+dashboard updates (`service` below). Every change applies at the next reboot.
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/gpu-unlock` | `installed`, `installed_version`, `version` (the one that gets installed), `state` (`off`, `armed`, `trying`, `on`), `note`, `run` and `message` (the last action), `busy`, `service`, `blocker` (why it can't be installed here), `reboot_needed`, `checked_at`, `command` (to run on the host) and the `cards`: `pci`, `name`, `family`, `tier` (`stable` or `experimental`), `supported`, `unlocked` (now), `next_boot`, `note`. |
+| `POST /api/v1/gpu-unlock/check` | List this machine's cards and which ones are supported. Changes nothing (`202`). |
+| `POST /api/v1/gpu-unlock/install`, `.../uninstall` | Build and install gpu-unlock (no card is unlocked yet), or turn it off and remove it (`202`). |
+| `POST /api/v1/gpu-unlock/set` | `{"cards": ["0000:01:00.0"]}`: unlock these cards from the next boot; `[]` unlocks none (`202`). |
 
 ## Updates
 

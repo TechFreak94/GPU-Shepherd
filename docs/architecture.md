@@ -29,6 +29,7 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       ├─ credits.py    open-source projects and licenses for the Credits dialog
                       ├─ auth.py       scrypt password hashing, first-run password, API token
                       ├─ updates.py    update status, steps and requests, shared with update.sh on the host
+                      ├─ gpu_unlock.py experimental tensor unlock: status and requests, shared with gpu-unlock.sh on the host
                       └─ changelog.py  reads CHANGELOG.md, compares versions
 ```
 
@@ -103,6 +104,11 @@ polls while a check or update runs, so it shows each step and carries on across 
 `update.sh --enable-dashboard-updates` are a daily `--check` timer and a path unit that runs
 `update.sh --from-dashboard` when `request` appears. A request no one picks up within two minutes
 is reported on the dashboard as "the update service isn't running".
+
+The experimental tensor unlock works the same way with `gpu-unlock.sh` and `<data dir>/gpu-unlock/`
+(`status.json`, `request`, `log.txt`; `gpu_unlock.py` is the app's side). Its own path unit is installed
+with the update units, and `update.sh` refreshes it on every update. The script keeps its safety state
+(the 10-minute first-boot check and the automatic turn-off) on the host, outside the data folder.
 
 Recovery: before an update, `update.sh` tags the running image `gpu-shepherd:previous` and tars
 the settings YAML into `update/backups/`. If the build fails or `/healthz` doesn't answer within
