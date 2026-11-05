@@ -161,8 +161,8 @@
 // (folders kept, books already there skipped, so adding the same folder again carries on)
 (function () {
   "use strict";
-  const BOOK = /\.(epub|pdf|txt|md|markdown|mobi|azw3|prc|zip)$/i;
-  const EBOOK = /\.(epub|pdf|mobi|azw3|prc)$/i, TEXT = /\.(txt|md|markdown)$/i;
+  const BOOK = /\.(epub|pdf|docx|txt|md|markdown|mobi|azw3|prc|zip)$/i;
+  const EBOOK = /\.(epub|pdf|docx|mobi|azw3|prc)$/i, TEXT = /\.(txt|md|markdown)$/i;
   const TEXT_BOOK = 20480;         // a text file in a zip smaller than this is a readme or licence, not a book
   let busy = false, stopped = false, xhr = null;
   const $ = (id) => document.getElementById(id);
@@ -203,7 +203,7 @@
     try { await file.slice(0, 1).arrayBuffer(); return true; } catch (err) { return false; }
   }
   const unreadable = (path) => "this browser can't read the file" + (path.length > 200
-    ? " (its path is probably too long for Windows, over 260 characters: move the folder nearer the top of the drive, like C:\\Books, or shorten folder names, then add it again)"
+    ? " (its path is probably too long for Windows, over 260 characters: move the folder nearer the top of the drive, like C:\\Docs, or shorten folder names, then add it again)"
     : " (moved, renamed, or blocked by the computer?)");
 
   // a dropped folder: walk it (readEntries hands back at most 100 entries a call)
@@ -224,13 +224,13 @@
   function put(item) {
     return new Promise((ok) => {
       xhr = new XMLHttpRequest();
-      xhr.open("PUT", "/books/files?path=" + encodeURIComponent(item.path));
+      xhr.open("PUT", "/knowledge/files?path=" + encodeURIComponent(item.path));
       xhr.setRequestHeader("HX-Request", "true");
       xhr.upload.onprogress = (e) => item.onprogress(e.loaded);
       xhr.onload = () => {
         let r = {};
         try { r = JSON.parse(xhr.responseText); } catch (err) { r = { error: "HTTP " + xhr.status }; }
-        if (xhr.status === 401) r.error = "signed out: sign in again, then add the same books to carry on";
+        if (xhr.status === 401) r.error = "signed out: sign in again, then add the same documents to carry on";
         ok(xhr.status < 300 ? r : { error: r.error || "HTTP " + xhr.status, status: xhr.status });
       };
       xhr.onerror = () => ok({ error: "GPU Shepherd is not reachable", net: true });
@@ -256,7 +256,7 @@
     $("book-up").hidden = false; fails.hidden = true; fails.querySelector("ul").textContent = "";
     text.textContent = "Checking what is there already…";
     let have = {};
-    try { have = (await (await fetch("/books/files", { headers: { "HX-Request": "true" } })).json()).files || {}; } catch (err) { have = {}; }
+    try { have = (await (await fetch("/knowledge/files", { headers: { "HX-Request": "true" } })).json()).files || {}; } catch (err) { have = {}; }
     const todo = [];
     let skipped = 0, other = 0, noBooks = 0;
     const zips = items.filter((it) => /\.zip$/i.test(it.path)).length;
@@ -304,16 +304,16 @@
     window.removeEventListener("beforeunload", warn);
     busy = false; xhr = null;
     bar.style.width = "100%";
-    let msg = (stopped ? "Stopped. " : "") + "Added " + added + " book" + (added === 1 ? "" : "s");
+    let msg = (stopped ? "Stopped. " : "") + "Added " + added + " document" + (added === 1 ? "" : "s");
     if (skipped) msg += ", skipped " + skipped + " already there";
-    if (noBooks) msg += ", left out " + noBooks + " zip" + (noBooks === 1 ? "" : "s") + " with no books in " + (noBooks === 1 ? "it" : "them");
+    if (noBooks) msg += ", left out " + noBooks + " zip" + (noBooks === 1 ? "" : "s") + " with no documents in " + (noBooks === 1 ? "it" : "them");
     if (other) msg += ", left out " + other + " other file" + (other === 1 ? "" : "s");
     if (failed.length) msg += ", " + failed.length + " not added (listed below)";
     text.textContent = msg + ".";
     if (added && !stopped) {
       text.textContent = msg + ". Scanning…";
       try {
-        const r = await fetch("/books/scan", { method: "POST", headers: { "HX-Request": "true" } });
+        const r = await fetch("/knowledge/scan", { method: "POST", headers: { "HX-Request": "true" } });
         const go = r.headers.get("HX-Redirect");
         if (go && !failed.length) window.location = go;
         else if (go) text.textContent = msg + ". The scan has started: reload the page to follow it.";

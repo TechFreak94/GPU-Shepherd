@@ -576,7 +576,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                  "running": x.version == __version__,
                  "new": changelog.key(x.version) > changelog.key(__version__)} for x in shown]
 
-    # ------------------------------------------------------------------ books and skills
+    # ------------------------------------------------------------------ knowledge (documents) and skills
+    # (/api/v1/books/... is the same, for older clients)
     def embeddings_choice(v) -> bool | None:
         if v in (None, "", "ask"):
             return None
@@ -586,67 +587,79 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return False
         raise Problem("embeddings: server (use the model server's embeddings model), keep, or leave it out")
 
-    @r.get("/api/v1/books")
+    @r.get("/api/v1/knowledge")
     @handle
-    def get_books(request: Request):
-        """The books folder, its books, the book work running now, and the apps books can go to."""
-        return svc.books()
+    def get_knowledge(request: Request):
+        """The documents folder, its documents, the work running now, the apps documents can go to,
+        and where it is all kept."""
+        return svc.knowledge()
 
-    @r.put("/api/v1/books/folder")
+    @r.put("/api/v1/knowledge/folder")
     @handle
-    async def books_folder(request: Request):
-        return {"message": svc.set_books_folder(str((await body(request)).get("path", "")))}
+    async def knowledge_folder(request: Request):
+        return {"message": svc.set_documents_folder(str((await body(request)).get("path", "")))}
 
-    @r.post("/api/v1/books/upload")
+    @r.post("/api/v1/knowledge/upload")
     @handle
-    async def books_upload(request: Request):
-        """Add books: a multipart form with one or more `file` fields. A scan starts afterwards."""
+    async def knowledge_upload(request: Request):
+        """Add documents: a multipart form with one or more `file` fields. A scan starts afterwards."""
         form = await request.form()
         files = [(f.filename, f.file) for f in form.getlist("file") if hasattr(f, "filename")]
-        return JSONResponse({"message": svc.add_books(files)}, status_code=202)
+        return JSONResponse({"message": svc.add_documents(files)}, status_code=202)
 
-    @r.get("/api/v1/books/files")
+    @r.get("/api/v1/knowledge/files")
     @handle
-    def books_files(request: Request):
-        """The book files already in the books folder: {"folder", "files": {path: size}}."""
-        return svc.book_files()
+    def knowledge_files(request: Request):
+        """The document files already in the documents folder: {"folder", "files": {path: size}}."""
+        return svc.document_files()
 
-    @r.put("/api/v1/books/files")
+    @r.put("/api/v1/knowledge/files")
     @handle
-    async def books_put_file(request: Request):
-        """Add one book, or a zip of books (unpacked into a folder named after it), sent as the raw body:
-        PUT /api/v1/books/files?path=Folder/Book.epub. Folders in the path are kept. Doesn't scan:
-        POST /api/v1/books/scan when all are in. Returns {"added": [paths], "left_out": n}."""
+    async def knowledge_put_file(request: Request):
+        """Add one document, or a zip of them (unpacked into a folder named after it), sent as the raw body:
+        PUT /api/v1/knowledge/files?path=Folder/Book.epub. Folders in the path are kept. Doesn't scan:
+        POST /api/v1/knowledge/scan when all are in. Returns {"added": [paths], "left_out": n}."""
         size = request.headers.get("content-length")
-        return await svc.receive_book(request.query_params.get("path", ""), request.stream(),
+        return await svc.receive_document(request.query_params.get("path", ""), request.stream(),
                                       int(size) if size and size.isdigit() else None)
 
-    @r.post("/api/v1/books/scan")
+    @r.post("/api/v1/knowledge/scan")
     @handle
-    def books_scan(request: Request):
-        return JSONResponse({"message": svc.scan_books()}, status_code=202)
+    def knowledge_scan(request: Request):
+        return JSONResponse({"message": svc.scan_documents()}, status_code=202)
 
-    @r.post("/api/v1/books/stop")
+    @r.post("/api/v1/knowledge/stop")
     @handle
-    def books_stop(request: Request):
-        return {"message": svc.stop_books()}
+    def knowledge_stop(request: Request):
+        return {"message": svc.stop_knowledge()}
 
-    @r.post("/api/v1/books/send")
+    @r.post("/api/v1/knowledge/send")
     @handle
-    async def books_send(request: Request):
-        """Put the ready books into an Open WebUI knowledge base: {"instance", "name", "split",
+    async def knowledge_send(request: Request):
+        """Put the ready documents into an Open WebUI knowledge base: {"instance", "name", "split",
         "embeddings": "server" | "keep"}."""
         d = await body(request)
-        return JSONResponse({"message": svc.send_books(str(d.get("instance", "")), str(d.get("name", "") or "Books"),
+        return JSONResponse({"message": svc.send_documents(str(d.get("instance", "")), str(d.get("name", "") or "Documents"),
                                                         bool(d.get("split")), embeddings_choice(d.get("embeddings")))},
                             status_code=202)
 
-    @r.post("/api/v1/books/{key}/skill")
+    @r.post("/api/v1/knowledge/{key}/skill")
     @handle
-    async def books_skill(request: Request, key: str):
-        """Draft an agent skill from a book with a model server's chat model: {"server"} (optional)."""
+    async def knowledge_skill(request: Request, key: str):
+        """Draft an agent skill from a document with a model server's chat model: {"server"} (optional)."""
         d = await body(request) if (await request.body()) else {}
         return JSONResponse({"message": svc.make_skill(key, str(d.get("server", "")))}, status_code=202)
+
+    @r.post("/api/v1/knowledge/clear")
+    @handle
+    async def knowledge_clear(request: Request):
+        """Start over: {"what": ["documents", "converted", "skills", "apps"]} (all of them if left out).
+        See Service.clear_knowledge for what each one removes."""
+        d = await body(request) if (await request.body()) else {}
+        what = d.get("what") or list(svc.CLEAR)
+        if isinstance(what, str):
+            what = [w.strip() for w in what.split(",")]
+        return JSONResponse({"message": svc.clear_knowledge(tuple(what))}, status_code=202)
 
     @r.get("/api/v1/skills/{slug}")
     @handle
@@ -668,4 +681,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def delete_skill(request: Request, slug: str):
         return {"message": svc.delete_skill(slug)}
 
+    for route in list(r.routes):                     # the old names still work
+        if getattr(route, "path", "").startswith("/api/v1/knowledge"):
+            r.add_api_route("/api/v1/books" + route.path[len("/api/v1/knowledge"):], route.endpoint,
+                            methods=list(route.methods), include_in_schema=False)
     return r

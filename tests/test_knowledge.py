@@ -9,7 +9,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 import gpushepherd.gpu as gpu_mod
-from gpushepherd import auth, book_skills, books
+from gpushepherd import auth, knowledge, knowledge_skills
 from gpushepherd.app import create_app
 from gpushepherd.backend import FakeBackend
 from gpushepherd.config import Store
@@ -69,17 +69,17 @@ def pdf(path: Path, text: str) -> Path:
 # --------------------------------------------------------------------------- reading
 
 def test_epub_text_title_and_drm(tmp_path):
-    title, author, text = books.read(epub(tmp_path / "a.epub"))
+    title, author, text = knowledge.read(epub(tmp_path / "a.epub"))
     assert (title, author) == ("A Book", "Ann Author")
     assert text.index("# One") < text.index("# Two") and "- step a" in text and "p{}" not in text
-    with pytest.raises(books.BookError, match="DRM"):
-        books.read(epub(tmp_path / "b.epub", drm=True))
-    with pytest.raises(books.BookError, match="Calibre"):
-        books.read((tmp_path / "c.mobi"))
+    with pytest.raises(knowledge.BookError, match="DRM"):
+        knowledge.read(epub(tmp_path / "b.epub", drm=True))
+    with pytest.raises(knowledge.BookError, match="Calibre"):
+        knowledge.read((tmp_path / "c.mobi"))
 
 
 def test_pdf_text(tmp_path):
-    title, _, text = books.read(pdf(tmp_path / "p.pdf", WORDS))
+    title, _, text = knowledge.read(pdf(tmp_path / "p.pdf", WORDS))
     assert "word10" in text and "word299" in text
     blank = tmp_path / "blank.pdf"
     from pypdf import PdfWriter
@@ -87,8 +87,8 @@ def test_pdf_text(tmp_path):
     for _ in range(3):
         w.add_blank_page(612, 792)
     w.write(str(blank))
-    with pytest.raises(books.BookError, match="OCR"):
-        books.read(blank)
+    with pytest.raises(knowledge.BookError, match="OCR"):
+        knowledge.read(blank)
 
 
 def test_pdf_with_empty_password_aes_and_a_broken_page(tmp_path, monkeypatch):
@@ -97,7 +97,7 @@ def test_pdf_with_empty_password_aes_and_a_broken_page(tmp_path, monkeypatch):
     w.add_blank_page(612, 792)
     w.encrypt(user_password="", owner_password="shop", algorithm="AES-128")   # how many shops sell PDFs
     w.write(str(tmp_path / "aes.pdf"))
-    assert "word299" in books.read(tmp_path / "aes.pdf")[2]
+    assert "word299" in knowledge.read(tmp_path / "aes.pdf")[2]
     real = PdfReader.pages.fget
 
     class Pages(list):
@@ -107,11 +107,11 @@ def test_pdf_with_empty_password_aes_and_a_broken_page(tmp_path, monkeypatch):
                 page.extract_text = lambda: 1 / 0               # pypdf fails on an odd page
             return page
     monkeypatch.setattr(PdfReader, "pages", property(lambda r: Pages(real(r))))
-    assert "word299" in books.read(tmp_path / "aes.pdf")[2]
+    assert "word299" in knowledge.read(tmp_path / "aes.pdf")[2]
 
 
 def test_pdf_page_text_joins_hyphens_keeps_lines():
-    assert books.pdf_page_text("An exam-\nple  of   text  \n\n\n\ndef x():\n    return 1\x00") == \
+    assert knowledge.pdf_page_text("An exam-\nple  of   text  \n\n\n\ndef x():\n    return 1\x00") == \
         "An example of text\n\ndef x():\n    return 1"
 
 
@@ -121,11 +121,11 @@ def test_zip_has_books(tmp_path):
             for n, data in files.items():
                 z.writestr(n, data)
         return tmp_path / name
-    assert books.zip_has_books(mk("music.zip", {"a/01.mp3": "x", "a/readme.txt": "short", "__MACOSX/a/._b.pdf": "x"})) is False
-    assert books.zip_has_books(mk("book.zip", {"a/b.pdf": "x", "c.jpg": "x"})) is True
-    assert books.zip_has_books(mk("long.zip", {"notes.md": "word " * 5000})) is True
+    assert knowledge.zip_has_books(mk("music.zip", {"a/01.mp3": "x", "a/readme.txt": "short", "__MACOSX/a/._b.pdf": "x"})) is False
+    assert knowledge.zip_has_books(mk("book.zip", {"a/b.pdf": "x", "c.jpg": "x"})) is True
+    assert knowledge.zip_has_books(mk("long.zip", {"notes.md": "word " * 5000})) is True
     (tmp_path / "bad.zip").write_bytes(b"nope")
-    assert books.zip_has_books(tmp_path / "bad.zip") is None
+    assert knowledge.zip_has_books(tmp_path / "bad.zip") is None
 
 
 def test_find_groups_copies_of_one_book(tmp_path):
@@ -137,15 +137,15 @@ def test_find_groups_copies_of_one_book(tmp_path):
         (tmp_path / "calibre" / f).write_text("x")
     for f in ("one.pdf", "two.pdf", "notes.txt"):                 # different books side by side
         (tmp_path / f).write_text("x")
-    found = dict(books.find(tmp_path))
+    found = dict(knowledge.find(tmp_path))
     assert found["bundle/deep/deep-learning.epub"] == ["bundle/deep/deep-learning.mobi", "bundle/deep/deep-learning.pdf"]
     assert found["calibre/Title - Author retail.pdf"] == ["calibre/Title - Author.azw3"]   # read from a copy it can convert
     assert {"one.pdf", "two.pdf", "notes.txt"} <= set(found)
 
 
 def test_scan_converts_skips_and_finds_duplicates(tmp_path):
-    lib = books.Library(tmp_path)
-    folder = tmp_path / "books"
+    lib = knowledge.Library(tmp_path)
+    folder = tmp_path / "knowledge" / "documents"
     epub(folder / "Bundle A" / "book.epub")
     epub(folder / "Bundle B" / "same book renamed.epub", title="Another Title")    # the same text
     epub(folder / "locked.epub", drm=True)
@@ -173,11 +173,11 @@ def test_scan_converts_skips_and_finds_duplicates(tmp_path):
 
 def test_skill_parts_and_chapters():
     text = "# Title\n\n" + "\n\n".join(f"## Chapter {i}\n\n" + WORDS for i in range(5))
-    ps = book_skills.parts(text, 700)
+    ps = knowledge_skills.parts(text, 700)
     assert all(len(p.split()) <= 700 for p in ps) and sum(len(p.split()) for p in ps) == len(text.split())
-    assert [t for t, _ in book_skills.chapters(text)] == ["Front matter"] + [f"Chapter {i}" for i in range(5)]
-    assert book_skills.chapters("no headings") == [("Book", "no headings")]
-    assert book_skills.part_words(8192) == int((8192 - 3000) / 1.4) and book_skills.part_words(0) == 12000
+    assert [t for t, _ in knowledge_skills.chapters(text)] == ["Front matter"] + [f"Chapter {i}" for i in range(5)]
+    assert knowledge_skills.chapters("no headings") == [("Book", "no headings")]
+    assert knowledge_skills.part_words(8192) == int((8192 - 3000) / 1.4) and knowledge_skills.part_words(0) == 12000
 
 
 def test_make_skill_with_a_model():
@@ -189,11 +189,11 @@ def test_make_skill_with_a_model():
             return "<think>hmm</think>```markdown\n---\nname: x\ndescription: Use when \"baking\" bread.\n---\n\n# Bread\n\n## How to do it\n1. Knead\n```"
         return "NOTHING" if "PART 2 " in prompt else "- knead for 10 minutes"
     text = "\n\n".join(WORDS for _ in range(10))
-    md = book_skills.make("Bread Book - Ann", text, chat, ctx=4500)
+    md = knowledge_skills.make("Bread Book - Ann", text, chat, ctx=4500)
     assert md.startswith("---\nname: bread-book-ann\ndescription: \"Use when 'baking' bread.\"\n---\n\n# Bread")
     assert sum("--- PART" in p for p in asked) == len(asked) - 1
     with pytest.raises(ValueError):
-        book_skills.make("x", text, lambda p: "NOTHING", ctx=0)
+        knowledge_skills.make("x", text, lambda p: "NOTHING", ctx=0)
 
 
 # --------------------------------------------------------------------------- the service, API and pages
@@ -267,8 +267,8 @@ def start(app, client, iid):
 
 def finish(svc):
     for _ in range(500):
-        if svc.book_task and not svc.book_task.running:
-            return svc.book_task
+        if svc.knowledge_task and not svc.knowledge_task.running:
+            return svc.knowledge_task
         time.sleep(0.01)
     raise AssertionError("book work did not finish")
 
@@ -276,27 +276,27 @@ def finish(svc):
 def test_send_books_to_open_webui(stack):
     app, client, backend, data = stack
     svc = app.state.svc
-    epub(data / "books" / "Cooking" / "bread.epub", title="Bread")
-    epub(data / "books" / "Cooking" / "broken.epub", title="Broken", chapters=[("X", "other " + WORDS)])
-    epub(data / "books" / "Code" / "py.epub", title="Python", chapters=[("Y", "python " + WORDS)])
-    r = client.post("/api/v1/books/send", json={"instance": "webui"})
+    epub(data / "knowledge" / "documents" / "Cooking" / "bread.epub", title="Bread")
+    epub(data / "knowledge" / "documents" / "Cooking" / "broken.epub", title="Broken", chapters=[("X", "other " + WORDS)])
+    epub(data / "knowledge" / "documents" / "Code" / "py.epub", title="Python", chapters=[("Y", "python " + WORDS)])
+    r = client.post("/api/v1/knowledge/send", json={"instance": "webui"})
     assert r.status_code == 409 and "Start" in r.json()["error"]
     start(app, client, "webui")
-    assert "No books ready" in client.post("/api/v1/books/send", json={"instance": "webui"}).json()["error"]
-    assert client.post("/api/v1/books/scan").status_code == 202
-    assert finish(svc).result.startswith("Found the books: 3 ready")
-    assert client.post("/api/v1/books/send", json={"instance": "webui", "name": "Library", "split": True}).status_code == 202
+    assert "No documents ready" in client.post("/api/v1/knowledge/send", json={"instance": "webui"}).json()["error"]
+    assert client.post("/api/v1/knowledge/scan").status_code == 202
+    assert finish(svc).result.startswith("Found the documents: 3 ready")
+    assert client.post("/api/v1/knowledge/send", json={"instance": "webui", "name": "Library", "split": True}).status_code == 202
     t = finish(svc)
     assert not t.error, t.error
     assert sorted(FakeOpenWebUI.made) == ["Library - Code", "Library - Cooking"]
     assert sorted(FakeOpenWebUI.uploads) == ["Bread - Ann Author.md", "Python - Ann Author.md"]
     assert "1 failed" in t.result and "Broken" in t.errors[0]
     # again: only what isn't there yet
-    client.post("/api/v1/books/send", json={"instance": "webui", "name": "Library", "split": True})
-    assert finish(svc).result.startswith("Sent 0 books") and len(FakeOpenWebUI.uploads) == 2
-    listed = client.get("/api/v1/books").json()
+    client.post("/api/v1/knowledge/send", json={"instance": "webui", "name": "Library", "split": True})
+    assert finish(svc).result.startswith("Sent 0 documents") and len(FakeOpenWebUI.uploads) == 2
+    listed = client.get("/api/v1/knowledge").json()
     assert listed["sends"][0]["name"] == "Library" and listed["webuis"][0]["running"]
-    page = browser(app).get("/books").text
+    page = browser(app).get("/knowledge").text
     assert "Knowledge for Open WebUI" in page and "In webui: Library - Cooking" in page
 
 
@@ -304,16 +304,16 @@ def test_send_asks_before_changing_open_webuis_embeddings(stack, monkeypatch):
     app, client, backend, data = stack
     svc = app.state.svc
     start(app, client, "webui")
-    epub(data / "books" / "bread.epub")
-    svc.scan_books()
+    epub(data / "knowledge" / "documents" / "bread.epub")
+    svc.scan_documents()
     finish(svc)
     from gpushepherd import instance_templates as tpl
     m = svc.machine()
     m.servers["llm"]["embed"] = "embed"
     monkeypatch.setattr(svc, "machine", lambda: m)
-    client.post("/api/v1/books/send", json={"instance": "webui"})
+    client.post("/api/v1/knowledge/send", json={"instance": "webui"})
     assert "Choose which to use" in finish(svc).error and not FakeOpenWebUI.uploads
-    client.post("/api/v1/books/send", json={"instance": "webui", "embeddings": "server"})
+    client.post("/api/v1/knowledge/send", json={"instance": "webui", "embeddings": "server"})
     assert not finish(svc).error
     assert FakeOpenWebUI.switched == [(tpl._server_url("llm", m), "embed")]
 
@@ -323,20 +323,20 @@ def test_upload_folder_and_cli(stack, capsys):
     svc = app.state.svc
     path = epub(data / "x" / "up.epub")
     with open(path, "rb") as f:
-        r = client.post("/api/v1/books/upload", files=[("file", ("up.epub", f)), ("file", ("evil.exe", b"x"))])
+        r = client.post("/api/v1/knowledge/upload", files=[("file", ("up.epub", f)), ("file", ("evil.exe", b"x"))])
     assert r.status_code == 202 and "left out evil.exe" in r.json()["message"]
     finish(svc)
-    assert (data / "books" / "up.epub").exists() and not (data / "books" / "evil.exe").exists()
-    assert "can't see" in client.put("/api/v1/books/folder", json={"path": "/nope/books"}).json()["error"]
-    assert client.put("/api/v1/books/folder", json={"path": str(data / "x")}).status_code == 200
-    assert client.get("/api/v1/books").json()["folder"] == str(data / "x")
+    assert (data / "knowledge" / "documents" / "up.epub").exists() and not (data / "knowledge" / "documents" / "evil.exe").exists()
+    assert "can't see" in client.put("/api/v1/knowledge/folder", json={"path": "/nope/books"}).json()["error"]
+    assert client.put("/api/v1/knowledge/folder", json={"path": str(data / "x")}).status_code == 200
+    assert client.get("/api/v1/knowledge").json()["folder"] == str(data / "x")
 
 
 def test_bulk_upload_keeps_folders_unpacks_zips_and_skips(stack, monkeypatch):
     app, client, backend, data = stack
     svc = app.state.svc
     book = epub(data / "x" / "a.epub").read_bytes()
-    r = client.put("/api/v1/books/files", params={"path": "Bundle One/Cooking/a.epub"}, content=book)
+    r = client.put("/api/v1/knowledge/files", params={"path": "Bundle One/Cooking/a.epub"}, content=book)
     assert r.status_code == 200 and r.json()["added"] == ["Bundle One/Cooking/a.epub"]
     zpath = data / "x" / "Bundle Two.zip"
     with zipfile.ZipFile(zpath, "w") as z:
@@ -345,34 +345,34 @@ def test_bulk_upload_keeps_folders_unpacks_zips_and_skips(stack, monkeypatch):
         z.writestr("Python/readme.txt", "a short readme, not a book")
         z.writestr("../evil.epub", "x")
         z.writestr("__MACOSX/Python/._b.epub", "x")
-    r = client.put("/api/v1/books/files", params={"path": "Bundle Two.zip"}, content=zpath.read_bytes())
+    r = client.put("/api/v1/knowledge/files", params={"path": "Bundle Two.zip"}, content=zpath.read_bytes())
     assert r.json() == {"added": ["Bundle Two/Python/b.epub"], "left_out": 3}
-    folder = data / "books"
+    folder = data / "knowledge" / "documents"
     assert (folder / "Bundle Two" / "Python" / "b.epub").exists() and not (folder / "Bundle Two.zip").exists()
     assert not (data / "evil.epub").exists() and not list(folder.rglob("*.part"))
-    assert client.get("/api/v1/books/files").json()["files"] == {
+    assert client.get("/api/v1/knowledge/files").json()["files"] == {
         "Bundle One/Cooking/a.epub": len(book), "Bundle Two/Python/b.epub": (data / "x" / "b.epub").stat().st_size}
     # refused: outside the folder, not a book, too big, a zip with no books
     for path in ("../up.epub", "/etc/x/../../up.epub", "a/.hidden/b.epub", "run.exe", ""):
-        assert client.put("/api/v1/books/files", params={"path": path}, content=b"x").status_code == 400, path
-    monkeypatch.setattr(books, "UPLOAD_MB", 0)
-    r = client.put("/api/v1/books/files", params={"path": "big.epub"}, content=b"x" * 10)
+        assert client.put("/api/v1/knowledge/files", params={"path": path}, content=b"x").status_code == 400, path
+    monkeypatch.setattr(knowledge, "UPLOAD_MB", 0)
+    r = client.put("/api/v1/knowledge/files", params={"path": "big.epub"}, content=b"x" * 10)
     assert r.status_code == 413 and not (folder / "big.epub").exists() and not (folder / "big.epub.part").exists()
-    monkeypatch.setattr(books, "UPLOAD_MB", 200)
+    monkeypatch.setattr(knowledge, "UPLOAD_MB", 200)
     empty = data / "x" / "none.zip"
     with zipfile.ZipFile(empty, "w") as z:
         z.writestr("notes.html", "x")
-    assert "no books" in client.put("/api/v1/books/files", params={"path": "none.zip"}, content=empty.read_bytes()).json()["error"]
-    err = client.put("/api/v1/books/files", params={"path": "Sub/bad.zip"}, content=b"nope").json()["error"]
+    assert "no documents" in client.put("/api/v1/knowledge/files", params={"path": "none.zip"}, content=empty.read_bytes()).json()["error"]
+    err = client.put("/api/v1/knowledge/files", params={"path": "Sub/bad.zip"}, content=b"nope").json()["error"]
     assert err.startswith("bad.zip: can't open") and ".part" not in err
     # the dashboard's route: signed in and from the page only
     b = browser(app)
-    assert b.put("/books/files", params={"path": "c.txt"}, content=WORDS.encode()).status_code == 403
-    r = b.put("/books/files", params={"path": "Notes/c.txt"}, content=WORDS.encode(), headers={"HX-Request": "true"})
+    assert b.put("/knowledge/files", params={"path": "c.txt"}, content=WORDS.encode()).status_code == 403
+    r = b.put("/knowledge/files", params={"path": "Notes/c.txt"}, content=WORDS.encode(), headers={"HX-Request": "true"})
     assert r.json()["added"] == ["Notes/c.txt"]
-    assert "Notes/c.txt" in b.get("/books/files").json()["files"]
-    assert 'id="book-drop"' in b.get("/books").text
-    assert client.post("/api/v1/books/scan").status_code == 202
+    assert "Notes/c.txt" in b.get("/knowledge/files").json()["files"]
+    assert 'id="book-drop"' in b.get("/knowledge").text
+    assert client.post("/api/v1/knowledge/scan").status_code == 202
     assert not finish(svc).error
     assert {x.path for x in svc.library.books()} >= {"Bundle One/Cooking/a.epub", "Bundle Two/Python/b.epub"}
 
@@ -401,31 +401,31 @@ def test_cli_upload_sends_a_folder_and_skips_what_is_there(stack, tmp_path, caps
     (lib / "Bread" / "cover.jpg").write_bytes(b"x")
     (lib / ".cache").mkdir()
     (lib / ".cache" / "x.epub").write_bytes(b"x")
-    cli.upload_books(Via(), [lib])
-    assert (data / "books" / "Library" / "Bread" / "bread.epub").exists()
-    assert not (data / "books" / "Library" / ".cache").exists()
-    assert "Added 1 book," in capsys.readouterr().out
+    cli.upload_documents(Via(), [lib])
+    assert (data / "knowledge" / "documents" / "Library" / "Bread" / "bread.epub").exists()
+    assert not (data / "knowledge" / "documents" / "Library" / ".cache").exists()
+    assert "Added 1 document," in capsys.readouterr().out
     finish(app.state.svc)
-    cli.upload_books(Via(), [lib])
-    assert "Added 0 books, skipped 1 already there." in capsys.readouterr().out
+    cli.upload_documents(Via(), [lib])
+    assert "Added 0 documents, skipped 1 already there." in capsys.readouterr().out
 
 
 def test_skill_made_checked_and_installed(stack, monkeypatch):
     app, client, backend, data = stack
     svc = app.state.svc
-    epub(data / "books" / "bread.epub", title="Bread")
-    svc.scan_books()
+    epub(data / "knowledge" / "documents" / "bread.epub", title="Bread")
+    svc.scan_documents()
     finish(svc)
     key = svc.library.books()[0].key
-    assert "Start" in client.post(f"/api/v1/books/{key}/skill", json={"server": "llm"}).json()["error"]
+    assert "Start" in client.post(f"/api/v1/knowledge/{key}/skill", json={"server": "llm"}).json()["error"]
     start(app, client, "llm")
     monkeypatch.setattr(svc, "_chat", lambda server, m: lambda p: (
         "---\nname: x\ndescription: Use when baking.\n---\n\n# Bread\n1. Knead" if "SKILL.md" in p else "- knead"))
-    assert client.post(f"/api/v1/books/{key}/skill", json={"server": "llm"}).status_code == 202
+    assert client.post(f"/api/v1/knowledge/{key}/skill", json={"server": "llm"}).status_code == 202
     t = finish(svc)
     assert not t.error, t.error
     slug = "bread-ann-author"
-    draft = data / "book-skills" / slug
+    draft = data / "knowledge" / "skills" / slug
     assert (draft / "SKILL.md").read_text().startswith(f"---\nname: {slug}\n")
     assert sorted(p.name for p in (draft / "references").iterdir()) == ["01-front-matter.md", "02-one.md", "03-two.md"]
     assert "1. Knead" in client.get(f"/api/v1/skills/{slug}").json()["text"]
@@ -434,10 +434,10 @@ def test_skill_made_checked_and_installed(stack, monkeypatch):
     assert client.put(f"/api/v1/skills/{slug}", json={"text": f"---\nname: {slug}\ndescription: Use when.\n---\n# Edited"}).status_code == 200
     assert "isn't Hermes" in client.post(f"/api/v1/skills/{slug}/install", json={"instance": "webui"}).json()["error"]
     assert client.post(f"/api/v1/skills/{slug}/install", json={"instance": "hermes"}).status_code == 200
-    installed = data / "appdata" / "hermes" / "skills" / "books" / slug / "SKILL.md"
+    installed = data / "appdata" / "hermes" / "skills" / "knowledge" / slug / "SKILL.md"
     assert installed.read_text().endswith("# Edited\n")
-    assert client.get("/api/v1/books").json()["skills"][0]["installed"].keys() == {"hermes"}
-    page = browser(app).get("/books").text
+    assert client.get("/api/v1/knowledge").json()["skills"][0]["installed"].keys() == {"hermes"}
+    page = browser(app).get("/knowledge").text
     assert "Install in Hermes" in page and "Make a skill" in page
     assert client.delete(f"/api/v1/skills/{slug}").status_code == 200
     assert not draft.exists() and installed.exists()
@@ -475,3 +475,168 @@ def test_open_webui_client(monkeypatch):
     ow.use_embedding("http://llm:8080/v1", "sk", "embed", "Query: ")
     sent = calls[-1][2]["json"]
     assert sent["RAG_EMBEDDING_MODEL"] == sent["embedding_model"] == "embed" and sent["RAG_EMBEDDING_QUERY_PREFIX"] == "Query: "
+
+
+# --------------------------------------------------------------------------- reading what EPUBs in the wild get wrong
+
+def odd_epub(path: Path, opf: str | None, files: dict[str, str], container: bool = True) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        if container:
+            z.writestr("META-INF/container.xml", '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                       '<rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>')
+        if opf is not None:
+            z.writestr("OPS/package.opf", opf)
+        for name, body in files.items():
+            z.writestr(name, body)
+    return path
+
+
+def page_html(text):
+    return f'<?xml version="1.0" encoding="utf-8"?><html><body><p>{text}</p><table><tr><td>a</td><td>b</td></tr></table></body></html>'
+
+
+def test_epubs_with_escaped_names_broken_packages_and_no_reading_order(tmp_path):
+    # hrefs escaped (%20) and in another case, an &nbsp; in the package, no namespace, no spine
+    opf = ('<package><metadata><title>Odd&nbsp;Book</title><creator>Bo</creator></metadata><manifest>'
+           '<item id="a" href="Text/Chapter%201.xhtml" media-type="application/xhtml+xml"/>'
+           '<item id="b" href="text/chapter 2.XHTML" media-type="application/xhtml+xml"/></manifest></package>')
+    p = odd_epub(tmp_path / "odd.epub", opf, {"OPS/Text/Chapter 1.xhtml": page_html("one " + WORDS),
+                                              "OPS/Text/Chapter 2.xhtml": page_html("two " + WORDS)})
+    title, author, text = knowledge.read(p)
+    assert (title, author) == ("Odd\xa0Book", "Bo") and text.index("one") < text.index("two") and "a b" in text
+    # no container and a package that can't be parsed: every page, by name
+    p = odd_epub(tmp_path / "bare.epub", "<package><<<", {"OPS/x/1.html": page_html("first " + WORDS),
+                                                         "OPS/x/2.html": page_html("second " + WORDS)}, container=False)
+    assert knowledge.read(p)[2].index("first") < knowledge.read(p)[2].index("second")
+    # a rights.xml left behind by a shop, with readable text: not DRM
+    p = odd_epub(tmp_path / "rights.epub", None, {"META-INF/rights.xml": "<rights/>", "OPS/a.xhtml": page_html(WORDS)})
+    assert "word5" in knowledge.read(p)[2]
+    # pictures only
+    p = odd_epub(tmp_path / "pics.epub", None, {"OPS/a.xhtml": "<html><body><img src='a.jpg'/></body></html>"})
+    with pytest.raises(knowledge.BookError, match="pictures"):
+        knowledge.read(p)
+    # not an EPUB at all (a broken download)
+    (tmp_path / "broken.epub").write_bytes(b"\x00" * 100)
+    with pytest.raises(knowledge.BookError, match="damaged"):
+        knowledge.read(tmp_path / "broken.epub")
+
+
+def test_docx_and_short_notes(tmp_path):
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    doc = tmp_path / "manual.docx"
+    with zipfile.ZipFile(doc, "w") as z:
+        z.writestr("word/document.xml", f'<w:document xmlns:w="{w}"><w:body>'
+                   f'<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Setup</w:t></w:r></w:p>'
+                   f'<w:p><w:r><w:t>Plug it in and </w:t></w:r><w:r><w:t>turn it on. {WORDS[:200]}</w:t></w:r></w:p>'
+                   '</w:body></w:document>')
+        z.writestr("docProps/core.xml", '<cp:coreProperties xmlns:cp="x" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   '<dc:title>The Manual</dc:title><dc:creator>Acme</dc:creator></cp:coreProperties>')
+    title, author, text = knowledge.read(doc)
+    assert (title, author) == ("The Manual", "Acme") and text.startswith("# Setup\n\nPlug it in and turn it on.")
+    note = tmp_path / "note.md"
+    note.write_text("Thirty words " * 10)
+    assert knowledge.read(note)[2]
+    (tmp_path / "README.txt").write_text("short readme")
+    (tmp_path / "LICENSE.md").write_text("short licence")
+    assert {p for p, _ in knowledge.find(tmp_path)} == {"manual.docx", "note.md"}
+
+
+def test_unreadable_documents_are_tried_again_when_the_reader_gets_better(tmp_path, monkeypatch):
+    lib = knowledge.Library(tmp_path)
+    folder = lib.default_folder
+    folder.mkdir(parents=True)
+    epub(folder / "a.epub")
+    monkeypatch.setattr(knowledge, "read", lambda p: (_ for _ in ()).throw(knowledge.BookError("can't yet")))
+    assert lib.scan() == {"failed": 1}
+    monkeypatch.undo()
+    assert lib.scan() == {"failed": 1}                       # same reader: not read again
+    monkeypatch.setattr(knowledge, "READER", knowledge.READER + 1)
+    assert lib.scan() == {"ready": 1}
+
+
+def test_an_older_install_is_moved_into_the_knowledge_folder(tmp_path):
+    epub(tmp_path / "books" / "Bundle" / "a.epub")
+    (tmp_path / "book-text").mkdir()
+    (tmp_path / "book-text" / "k.md").write_text("x")
+    (tmp_path / "book-skills" / "s").mkdir(parents=True)
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "books.yaml").write_text(yaml.safe_dump({"folder": "", "books": {}, "skills": {"s": {"name": "S"}}}))
+    lib = knowledge.Library(tmp_path)
+    home = tmp_path / "knowledge"
+    assert (home / "documents" / "Bundle" / "a.epub").exists() and not (tmp_path / "books").exists()
+    assert (home / "text" / "k.md").exists() and (home / "skills" / "s").is_dir()
+    assert not (tmp_path / "state" / "books.yaml").exists() and lib.load()["skills"] == {"s": {"name": "S"}}
+    assert lib.folder() == home / "documents" and len(lib.moved) == 4
+    assert knowledge.Library(tmp_path).moved == []          # once
+    # a folder of the user's own is left where it is
+    other = tmp_path / "other"
+    (other / "books").mkdir(parents=True)
+    (other / "state").mkdir()
+    (other / "state" / "books.yaml").write_text(yaml.safe_dump({"folder": "/srv/mine", "books": {}}))
+    lib = knowledge.Library(other)
+    assert (other / "books").is_dir() and str(lib.folder()) == "/srv/mine"
+
+
+def test_storage_reasons_clear_and_old_names(stack):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    folder = data / "knowledge" / "documents"
+    epub(folder / "Cooking" / "bread.epub", title="Bread")
+    (folder / "Cooking" / "bad.epub").write_bytes(b"nope")
+    (folder / "Cooking" / "worse.epub").write_bytes(b"nope")
+    start(app, client, "webui")
+    client.post("/api/v1/knowledge/scan")
+    finish(svc)
+    k = client.get("/api/v1/books").json()                   # the old name still answers
+    assert k["counts"] == {"ready": 1, "failed": 2} and len(k["reasons"]["failed"]) == 1
+    assert k["reasons"]["failed"][0][1] == 2 and "damaged" in k["reasons"]["failed"][0][0]
+    docs = {x["what"]: x for x in k["storage"]}
+    assert docs["Documents"]["path"] == str(folder) and docs["Documents"]["files"] == 3
+    assert docs["Converted text"]["files"] == 1 and k["own_folder"]
+    client.post("/api/v1/knowledge/send", json={"instance": "webui"})
+    assert not finish(svc).error
+    key = next(x["key"] for x in k["documents"] if x["status"] == "ready")
+    # a skill, installed in Hermes
+    slug = "bread-ann-author"
+    (data / "knowledge" / "skills" / slug).mkdir(parents=True)
+    (data / "knowledge" / "skills" / slug / "SKILL.md").write_text("---\nname: x\ndescription: y\n---\n")
+    svc.library.update(lambda d: d.setdefault("skills", {}).__setitem__(slug, {"book": key, "name": "Bread"}))
+    assert client.post(f"/api/v1/skills/{slug}/install", json={"instance": "hermes"}).status_code == 200
+    installed = data / "appdata" / "hermes" / "skills" / "knowledge" / slug
+    old_copy = data / "appdata" / "hermes" / "skills" / "books" / slug
+    old_copy.mkdir(parents=True)
+    assert installed.is_dir()
+
+    removed, deleted, gone = [], [], []
+    FakeOpenWebUI.knowledge_bases = lambda self: dict(self.made)
+    FakeOpenWebUI.remove = lambda self, kid, fid: removed.append((kid, fid))
+    FakeOpenWebUI.delete_file = lambda self, fid: deleted.append(fid)
+    FakeOpenWebUI.knowledge_empty = lambda self, kid: True
+    FakeOpenWebUI.delete_knowledge = lambda self, kid: gone.append(kid)
+    page = browser(app).get("/knowledge?show=failed").text
+    assert page.count("bad.epub") + page.count("worse.epub") >= 2 and "bread.epub" not in page
+    assert browser(app).get("/books", follow_redirects=False).headers["location"] == "/knowledge"
+    assert client.post("/api/v1/knowledge/clear", json={"what": ["nothing"]}).status_code == 400
+    assert client.post("/api/v1/knowledge/clear").status_code == 202
+    t = finish(svc)
+    assert not t.error, t.error
+    assert removed == [("kb0", "f1")] and deleted == ["f1"] and gone == ["kb0"]
+    assert not installed.exists() and not old_copy.exists() and not (data / "knowledge" / "skills").exists()
+    assert folder.is_dir() and not any(folder.iterdir())
+    k = client.get("/api/v1/knowledge").json()
+    assert k["documents"] == [] and k["skills"] == [] and k["sends"] == []
+    assert not (data / "knowledge" / "text").exists()
+
+
+def test_clearing_a_folder_of_your_own_keeps_other_files(stack):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    mine = data / "mine"
+    epub(mine / "a.epub")
+    (mine / "photo.jpg").write_bytes(b"x")
+    client.put("/api/v1/knowledge/folder", json={"path": str(mine)})
+    assert client.post("/api/v1/knowledge/clear", json={"what": "documents,converted"}).status_code == 202
+    assert "deleted 1 file" in finish(svc).result
+    assert (mine / "photo.jpg").exists() and not (mine / "a.epub").exists()

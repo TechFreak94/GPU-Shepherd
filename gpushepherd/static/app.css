@@ -148,6 +148,8 @@ input:focus,select:focus,textarea:focus,button:focus-visible,.btn:focus-visible,
   .books-table td[data-label]::before{content:attr(data-label) ": ";color:var(--muted);font-size:12px}
   .books-table td.act:empty{display:none}
 }
+.kn-storage th:nth-child(1){width:20%}.kn-storage th:nth-child(2){width:56%}.kn-storage th:nth-child(3){width:24%}
+.kn-filter a{margin:0 2px}
 #book-up-fails{overflow-wrap:anywhere}
 .files{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:6px}
 .files button{text-align:left;display:flex;justify-content:space-between;gap:10px}

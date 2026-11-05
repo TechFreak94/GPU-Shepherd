@@ -1040,69 +1040,83 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         log.info("API token replaced from the dashboard")
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", "New API token made. The old one no longer works.")})
 
-    # ------------------------------------------------------------------ books
-    @app.get("/books", response_class=HTMLResponse)
-    def books_page(request: Request):
-        return page(request, "books.html", b=svc.books())
+    # ------------------------------------------------------------------ knowledge (documents and skills)
+    @app.get("/knowledge", response_class=HTMLResponse)
+    def knowledge_page(request: Request, show: str = ""):
+        b = svc.knowledge()
+        if show in ("ready", "failed", "skipped", "duplicate"):
+            b["shown"] = [x for x in b["documents"] if x["status"] == show]
+        else:
+            show, b["shown"] = "", b["documents"]
+        return page(request, "knowledge.html", b=b, show=show)
 
-    @app.get("/books/task", response_class=HTMLResponse)
-    def books_task(request: Request, was: int = 0):
-        t = svc.book_task.as_dict() if svc.book_task else None
+    @app.get("/books")
+    def books_moved():                                  # the page's old name
+        return RedirectResponse("/knowledge", status_code=301)
+
+    @app.get("/knowledge/task", response_class=HTMLResponse)
+    def knowledge_task(request: Request, was: int = 0):
+        t = svc.knowledge_task.as_dict() if svc.knowledge_task else None
         if was and not (t and t["running"]):              # it just finished: show the page with the result
             return Response(status_code=204, headers={"HX-Refresh": "true"})
-        return templates.TemplateResponse(request, "partials/books_task.html", {"t": t})
+        return templates.TemplateResponse(request, "partials/knowledge_task.html", {"t": t})
 
-    def books_done(action):
+    def knowledge_done(action):
         try:
             msg = action()
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": with_msg("/books", msg)})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/knowledge", msg)})
 
-    @app.post("/books/folder")
-    async def books_folder(request: Request):
+    @app.post("/knowledge/folder")
+    async def knowledge_folder(request: Request):
         raw = await request.form()
-        return books_done(lambda: svc.set_books_folder(str(raw.get("path", ""))))
+        return knowledge_done(lambda: svc.set_documents_folder(str(raw.get("path", ""))))
 
-    @app.post("/books/upload")
-    async def books_upload(request: Request):
+    @app.post("/knowledge/upload")
+    async def knowledge_upload(request: Request):
         raw = await request.form()
         files = [(f.filename, f.file) for f in raw.getlist("file") if getattr(f, "filename", "")]
-        return books_done(lambda: svc.add_books(files))
+        return knowledge_done(lambda: svc.add_documents(files))
 
-    @app.get("/books/files")
-    def books_files():
-        return svc.book_files()
+    @app.get("/knowledge/files")
+    def knowledge_files():
+        return svc.document_files()
 
-    @app.put("/books/files")
-    async def books_put_file(request: Request, path: str = ""):
-        """One book or zip of books as the raw body (the Books page's upload sends them one by one)."""
+    @app.put("/knowledge/files")
+    async def knowledge_put_file(request: Request, path: str = ""):
+        """One document or zip of them as the raw body (the Knowledge page's upload sends them one by one)."""
         size = request.headers.get("content-length")
         try:
-            r = await svc.receive_book(path, request.stream(), int(size) if size and size.isdigit() else None)
+            r = await svc.receive_document(path, request.stream(), int(size) if size and size.isdigit() else None)
         except Problem as err:
             return JSONResponse({"error": err.msg}, status_code=err.status)
         return r
 
-    @app.post("/books/scan")
-    def books_scan():
-        return books_done(svc.scan_books)
+    @app.post("/knowledge/scan")
+    def knowledge_scan():
+        return knowledge_done(svc.scan_documents)
 
-    @app.post("/books/stop")
-    def books_stop():
-        return books_done(svc.stop_books)
+    @app.post("/knowledge/stop")
+    def knowledge_stop():
+        return knowledge_done(svc.stop_knowledge)
 
-    @app.post("/books/send")
-    async def books_send(request: Request):
+    @app.post("/knowledge/send")
+    async def knowledge_send(request: Request):
         raw = await request.form()
         emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
-        return books_done(lambda: svc.send_books(str(raw.get("instance", "")), str(raw.get("name", "")),
+        return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
                                                  bool(raw.get("split")), emb))
 
-    @app.post("/books/{key}/skill")
-    async def books_skill(request: Request, key: str):
+    @app.post("/knowledge/clear")
+    async def knowledge_clear(request: Request):
         raw = await request.form()
-        return books_done(lambda: svc.make_skill(key, str(raw.get("server", ""))))
+        return knowledge_done(lambda: svc.clear_knowledge(tuple(raw.getlist("what"))))
+
+    @app.post("/knowledge/{key}/skill")
+    async def knowledge_skill(request: Request, key: str):
+        raw = await request.form()
+        return knowledge_done(lambda: svc.make_skill(key, str(raw.get("server", ""))))
 
     def skill_dialog(request: Request, slug: str, **ctx):
         try:
@@ -1111,26 +1125,26 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(err)
         return templates.TemplateResponse(request, "partials/skill_edit.html", {"slug": slug, "text": text} | ctx)
 
-    @app.get("/books/skills/{slug}", response_class=HTMLResponse)
-    def books_skill_show(request: Request, slug: str):
+    @app.get("/knowledge/skills/{slug}", response_class=HTMLResponse)
+    def knowledge_skill_show(request: Request, slug: str):
         return skill_dialog(request, slug)
 
-    @app.post("/books/skills/{slug}", response_class=HTMLResponse)
-    async def books_skill_save(request: Request, slug: str):
+    @app.post("/knowledge/skills/{slug}", response_class=HTMLResponse)
+    async def knowledge_skill_save(request: Request, slug: str):
         text = str((await request.form()).get("text", ""))
         try:
             return skill_dialog(request, slug, saved=svc.save_skill(slug, text))
         except Problem as err:
             return skill_dialog(request, slug, text=text, error=err.msg)
 
-    @app.post("/books/skills/{slug}/install")
-    async def books_skill_install(request: Request, slug: str):
+    @app.post("/knowledge/skills/{slug}/install")
+    async def knowledge_skill_install(request: Request, slug: str):
         raw = await request.form()
-        return books_done(lambda: svc.install_skill(slug, str(raw.get("instance", ""))))
+        return knowledge_done(lambda: svc.install_skill(slug, str(raw.get("instance", ""))))
 
-    @app.post("/books/skills/{slug}/delete")
-    def books_skill_delete(slug: str):
-        return books_done(lambda: svc.delete_skill(slug))
+    @app.post("/knowledge/skills/{slug}/delete")
+    def knowledge_skill_delete(slug: str):
+        return knowledge_done(lambda: svc.delete_skill(slug))
 
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)

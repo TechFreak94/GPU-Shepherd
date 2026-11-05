@@ -3,10 +3,10 @@
 <div class="dlg-body">
   {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
   {% if saved %}<div class="flash">{{ saved }}</div>{% endif %}
-  <p class="small muted">Written by your model from the book. Check the steps, fix or cut what's wrong, and keep the
-    lines between --- at the top: an agent reads the description to decide when to use the skill. The book's chapters are
+  <p class="small muted">Written by your model from the document. Check the steps, fix or cut what's wrong, and keep the
+    lines between --- at the top: an agent reads the description to decide when to use the skill. The document's chapters are
     in references/ beside it.</p>
-  <form hx-post="/books/skills/{{ slug }}" hx-target="#modal-body">
+  <form hx-post="/knowledge/skills/{{ slug }}" hx-target="#modal-body">
     <textarea name="text" rows="22" style="width:100%" class="mono" spellcheck="true">{{ text }}</textarea>
     <div class="actions"><button type="submit">Save</button></div>
   </form>
