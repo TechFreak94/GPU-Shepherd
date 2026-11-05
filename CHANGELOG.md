@@ -4,6 +4,12 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.26 - 2026-11-05
+
+- Scanned PDFs show as *Needs OCR*, and **Read with OCR** reads them with Tesseract, which now comes with GPU Shepherd's container. (#57)
+- PDF text that the first reader missed is now read with a second reader (PDFium). PDFs that failed before are tried again at the next scan. (#57)
+- Each document on the Knowledge page has a Delete button. It removes the file, its text and its copy in Open WebUI. (#57)
+
 ## 0.13.25 - 2026-11-05
 
 - Uploading documents from the browser now sends each file in pieces, so files with very long paths on Windows upload instead of failing with "GPU Shepherd is not reachable", and a dropped connection only resends one piece. (#56)
