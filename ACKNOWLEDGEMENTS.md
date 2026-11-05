@@ -32,7 +32,9 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [HTTPX](https://www.python-httpx.org) | BSD-3-Clause | Talks to model servers and checks for updates |
 | [itsdangerous](https://itsdangerous.palletsprojects.com) | BSD-3-Clause | Signs login sessions |
 | [python-multipart](https://github.com/Kludex/python-multipart) | Apache-2.0 | Reads form posts |
-| [pypdf](https://github.com/py-pdf/pypdf) | BSD-3-Clause | Reads the text of PDF books |
+| [pypdf](https://github.com/py-pdf/pypdf) | BSD-3-Clause | Reads the text of PDF documents |
+| [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) | Apache-2.0 or BSD-3-Clause (PDFium: BSD-3-Clause) | Reads PDF text pypdf misses and draws pages for OCR |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | Apache-2.0 | Reads scanned PDFs (OCR), in the container image |
 | [pytest](https://pytest.org) | MIT | Tests (development only) |
 
 ## Works with

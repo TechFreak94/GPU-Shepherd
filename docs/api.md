@@ -128,6 +128,8 @@ For instances of kind `llama-swap`.
 | `POST /api/v1/knowledge/scan`, `POST /api/v1/knowledge/stop` | Scan the folder for new documents (`202`), or stop the work running. |
 | `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep"}` (`202`). |
 | `POST /api/v1/knowledge/{key}/skill` | Draft an agent skill from a document with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
+| `POST /api/v1/knowledge/ocr` | Read the scanned PDFs (status `scanned`) with OCR, in the background (`202`). |
+| `DELETE /api/v1/knowledge/{key}` | Delete one document: its files, its text, and its copies in a running Open WebUI. |
 | `POST /api/v1/knowledge/clear` | Start over: `{"what": ["documents", "converted", "skills", "apps"]}` (all four if left out; `202`). |
 | `GET`, `PUT`, `DELETE /api/v1/skills/{slug}` | Read a draft (`text`), save an edited one (`{"text": "..."}`), delete it. |
 | `POST /api/v1/skills/{slug}/install` | Install it in Hermes Agent: `{"instance": "hermes"}`. |
