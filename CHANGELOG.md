@@ -4,6 +4,13 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.22 - 2026-11-05
+
+- Books: the table fits the page without sideways scrolling, and long lists scroll with the header kept in view. (#53)
+- New experimental setting, Settings > Experimental > Tensor unlock. It installs gpu-unlock, which runs FP16/BF16 tensor math at full speed on GeForce RTX 20, 30 and 40 cards. Image generation and unquantized models get faster. (#53)
+- You choose which cards to unlock. Every change applies at the next reboot, and each GPU on the dashboard shows whether it is unlocked. (#53)
+- The unlock turns itself off after a boot that fails its check, and you can turn it off or remove it from Settings. (#53)
+
 ## 0.13.21 - 2026-11-04
 
 - Books upload explains files the browser can't read (on Windows, paths over 260 characters) instead of saying GPU Shepherd is not reachable (#52)
