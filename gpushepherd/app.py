@@ -1084,13 +1084,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return svc.document_files()
 
     @app.put("/knowledge/files")
-    async def knowledge_put_file(request: Request, path: str = ""):
-        """One document or zip of them as the raw body (the Knowledge page's upload sends them one by one)."""
+    async def knowledge_put_file(request: Request, path: str = "", offset: int | None = None, total: int | None = None):
+        """One document or zip of them as the raw body, or a piece of one (the Knowledge page's upload
+        sends them one by one, in pieces read into memory)."""
         size = request.headers.get("content-length")
         try:
-            r = await svc.receive_document(path, request.stream(), int(size) if size and size.isdigit() else None)
+            r = await svc.receive_document(path, request.stream(), int(size) if size and size.isdigit() else None,
+                                           offset, total)
         except Problem as err:
-            return JSONResponse({"error": err.msg}, status_code=err.status)
+            return JSONResponse({"error": err.msg} | err.data, status_code=err.status)
         return r
 
     @app.post("/knowledge/scan")

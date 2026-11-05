@@ -640,3 +640,25 @@ def test_clearing_a_folder_of_your_own_keeps_other_files(stack):
     assert client.post("/api/v1/knowledge/clear", json={"what": "documents,converted"}).status_code == 202
     assert "deleted 1 file" in finish(svc).result
     assert (mine / "photo.jpg").exists() and not (mine / "a.epub").exists()
+
+
+def test_upload_in_pieces_resumes_and_puts_the_file_in_place(stack):
+    app, client, backend, data = stack
+    book = epub(data / "x" / "long.epub").read_bytes()
+    a, b, total = book[:1000], book[1000:], len(book)
+    path = "A very long folder name/" + "x" * 150 + "/long.epub"
+    for c in (client, browser(app)):
+        route = "/api/v1/knowledge/files" if c is client else "/knowledge/files"
+        h = {} if c is client else {"HX-Request": "true"}
+        r = c.put(route, params={"path": path, "offset": 0, "total": total}, content=a, headers=h)
+        assert r.json() == {"received": 1000}
+        r = c.put(route, params={"path": path, "offset": 5, "total": total}, content=b, headers=h)
+        assert r.status_code == 409 and r.json()["have"] == 1000             # out of order: says where to go on
+        r = c.put(route, params={"path": path, "offset": 1000, "total": total}, content=b + b"extra", headers=h)
+        assert r.status_code == 400 and r.json().get("have") is None
+        assert (data / "knowledge" / "documents" / (path + ".part")).stat().st_size == 1000   # the bad piece was cut off
+        r = c.put(route, params={"path": path, "offset": 1000, "total": total}, content=b, headers=h)
+        assert r.json()["added"] == [path]
+        assert (data / "knowledge" / "documents" / path).read_bytes() == book
+        assert not (data / "knowledge" / "documents" / (path + ".part")).exists()
+    assert client.put("/api/v1/knowledge/files", params={"path": "e.txt", "offset": "x", "total": 3}).status_code == 400
