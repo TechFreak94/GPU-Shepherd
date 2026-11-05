@@ -1114,6 +1114,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def knowledge_ocr():
         return knowledge_done(svc.ocr_documents)
 
+    @app.post("/knowledge/delete-all")
+    async def knowledge_delete_all(request: Request):
+        raw = await request.form()
+        return knowledge_done(lambda: svc.delete_documents(str(raw.get("status", ""))))
+
     @app.post("/knowledge/{key}/delete")
     def knowledge_delete(key: str):
         return knowledge_done(lambda: svc.delete_document(key))

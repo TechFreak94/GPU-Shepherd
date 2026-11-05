@@ -120,6 +120,14 @@
   {% endif %}{% endfor %}
   <p class="small kn-filter">{% set cur = show or "" %}
     {% for st, label, n in (("", "All", b.documents|length), ("ready", "Ready", b.counts.get("ready", 0)), ("failed", "Can't read", b.counts.get("failed", 0)), ("skipped", "Skipped", b.counts.get("skipped", 0)), ("duplicate", "Duplicate", b.counts.get("duplicate", 0)), ("scanned", "Needs OCR", b.counts.get("scanned", 0))) %}{% if st == "" or n %}{% if not loop.first %} &middot; {% endif %}<a href="/knowledge{{ '?show=' ~ st if st }}"{% if cur == st %} aria-current="true" style="font-weight:bold"{% endif %}>{{ label }} ({{ n }})</a>{% endif %}{% endfor %}</p>
+  {% set ndup = b.counts.get("duplicate", 0) %}
+  {% set nfail = b.counts.get("failed", 0) %}
+  {% if ndup or nfail %}
+  <div class="small" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+    {% if ndup %}<button type="button" class="small danger" hx-post="/knowledge/delete-all" hx-vals='{"status": "duplicate"}' hx-confirm="Delete the {{ ndup }} duplicate{{ 's' if ndup != 1 }} and their files? The copy each one repeats stays. This can't be undone.">Delete {{ ndup }} duplicate{{ "s" if ndup != 1 }}</button>{% endif %}
+    {% if nfail %}<button type="button" class="small danger" hx-post="/knowledge/delete-all" hx-vals='{"status": "failed"}' hx-confirm="Delete the {{ nfail }} document{{ 's' if nfail != 1 }} that can't be read and their files? Ones waiting for OCR and skipped ones (MOBI/AZW3) stay. This can't be undone.">Delete {{ nfail }} that can't be read</button>{% endif %}
+  </div>
+  {% endif %}
   <div class="books-scroll">
   <table class="table books-table books-main">
     <thead><tr><th>Document</th><th>Folder</th><th>Words</th><th>Status</th><th></th></tr></thead>

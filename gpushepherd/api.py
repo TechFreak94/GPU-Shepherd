@@ -664,6 +664,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         """Read the scanned PDFs (status "scanned") with OCR, in the background."""
         return JSONResponse({"message": svc.ocr_documents()}, status_code=202)
 
+    @r.post("/api/v1/knowledge/delete")
+    @handle
+    async def knowledge_delete_all(request: Request):
+        """Delete every document with a status, in the background: {"status": "duplicate" | "failed"}."""
+        return JSONResponse({"message": svc.delete_documents(str((await body(request)).get("status", "")))},
+                            status_code=202)
+
     @r.delete("/api/v1/knowledge/{key}")
     @handle
     def knowledge_delete(request: Request, key: str):

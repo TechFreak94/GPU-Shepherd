@@ -2378,6 +2378,38 @@ class Shepherd:
                     + (" Send them to Open WebUI to add them to the knowledge base." if done else ""))
         return self._knowledge_work(f"Reading {n} scanned PDF{'s' if n != 1 else ''} with OCR", work)
 
+    BULK_DELETE = {"duplicate": "duplicates", "failed": "documents that can't be read"}
+
+    def delete_documents(self, status: str) -> str:
+        """Delete every document with a status, in the background: "duplicate" (the copies with the
+        same text as another document; that one stays) or "failed" (can't be read). Their files,
+        every copy, and their text go. Documents waiting for OCR or skipped (MOBI/AZW3) stay."""
+        if status not in self.BULK_DELETE:
+            raise Problem(f"Delete which: {', '.join(self.BULK_DELETE)}.")
+        self._knowledge_busy()
+        keys = [b.key for b in self.library.books() if b.status == status]
+        if not keys:
+            raise Problem(f"No {self.BULK_DELETE[status]} to delete.", "warn", 409)
+
+        def work(task: kn.Task) -> str:
+            done = 0
+            for i, key in enumerate(keys):
+                if task.stop:
+                    raise InterruptedError
+                task.progress(i, len(keys), f"Deleting {i + 1} of {len(keys)}")
+                try:
+                    b = self.library.delete(key)
+                except kn.BookError:
+                    continue                       # gone already
+                except OSError as err:
+                    task.errors.append(f"{key}: {err}")
+                    continue
+                if b.status == status:
+                    done += 1
+            what = self.BULK_DELETE[status] if done != 1 else {"duplicate": "duplicate", "failed": "document that can't be read"}[status]
+            return f"Deleted {done} {what}" + (f"; {len(task.errors)} couldn't be." if task.errors else ".")
+        return self._knowledge_work(f"Deleting {len(keys)} {self.BULK_DELETE[status]}", work)
+
     def delete_document(self, key: str) -> str:
         """Delete one document: its files (every copy), its text, and the copies sent to Open WebUI
         (taken out when that Open WebUI is running; otherwise they stay there)."""

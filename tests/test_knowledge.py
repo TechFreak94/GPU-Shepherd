@@ -726,3 +726,28 @@ def test_delete_one_document(stack):
     assert removed == [("kb7", "f9")] and deleted == ["f9"] and not svc.library.text_path(key).exists()
     assert sorted(b.path for b in svc.library.books()) == ["Say \"cheese\".pdf", "keep.epub"]
     assert client.delete(f"/api/v1/knowledge/{key}").status_code == 404
+
+
+def test_delete_all_duplicates_and_unreadable(stack):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    folder = data / "knowledge" / "documents"
+    epub(folder / "A" / "book.epub")
+    epub(folder / "B" / "copy.epub", title="Copy")                 # the same text: a duplicate
+    (folder / "B" / "copy.pdf").write_bytes(b"x")                  # its other format goes with it
+    (folder / "bad.epub").write_bytes(b"nope")
+    (folder / "old.mobi").write_text("x")                          # skipped: stays
+    client.post("/api/v1/knowledge/scan")
+    finish(svc)
+    page = browser(app).get("/knowledge").text
+    assert "Delete 1 duplicate<" in page and "Delete 1 that can" in page
+    assert client.post("/api/v1/knowledge/delete", json={"status": "ready"}).status_code == 400
+    assert client.post("/api/v1/knowledge/delete", json={"status": "duplicate"}).status_code == 202
+    assert finish(svc).result == "Deleted 1 duplicate."
+    assert not (folder / "B").exists() and (folder / "A" / "book.epub").exists()
+    r = browser(app).post("/knowledge/delete-all", data={"status": "failed"}, headers={"HX-Request": "true"})
+    assert r.status_code == 204
+    finish(svc)
+    assert not (folder / "bad.epub").exists() and (folder / "old.mobi").exists()
+    assert sorted(b.status for b in svc.library.books()) == ["ready", "skipped"]
+    assert client.post("/api/v1/knowledge/delete", json={"status": "failed"}).status_code == 409
