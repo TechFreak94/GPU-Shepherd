@@ -49,7 +49,7 @@ import yaml
 
 from .config import load_yaml
 
-READER = 2                   # goes up when reading gets better: documents it couldn't read are tried again
+READER = 3                   # goes up when reading gets better: documents it couldn't read are tried again
 HOME = "knowledge"           # <data>/knowledge holds it all
 # the lower, the better a copy to read a document from
 RANK = {".epub": 0, ".azw3": 1, ".mobi": 2, ".prc": 3, ".pdf": 4, ".docx": 5, ".md": 6, ".markdown": 6, ".txt": 7}
@@ -76,7 +76,7 @@ class Book:
     group: str = ""              # its first folder inside the books folder ("" at the top)
     title: str = ""
     author: str = ""
-    status: str = "new"          # ready | failed | skipped | duplicate
+    status: str = "new"          # ready | failed | skipped | duplicate | scanned (needs OCR)
     reason: str = ""
     words: int = 0
     other_copies: list[str] = field(default_factory=list)   # other formats of the same book
@@ -85,6 +85,7 @@ class Book:
     stamp: str = ""              # size and time of the copy the text came from
     sent: dict[str, str] = field(default_factory=dict)      # "<app>/<knowledge>" -> the app's file id
     reader: int = 0              # READER when it was read
+    ocr: bool = False            # its text came from OCR
 
     @property
     def name(self) -> str:
@@ -472,7 +473,37 @@ def read_docx(path: Path) -> tuple[str, str, str]:
     return title, author, "\n\n".join(out)
 
 
+class NeedsOCR(BookError):
+    """A PDF with no text in it, only pictures of pages: OCR can read it."""
+
+
 def read_pdf(path: Path) -> tuple[str, str, str]:
+    """A PDF's title, author and text: read with pypdf, and with PDFium (pypdfium2) when pypdf finds
+    little text (it misses the text of some fonts). NeedsOCR when neither finds any: a scan."""
+    title = author = text = ""
+    n, failure = 0, None
+    try:
+        title, author, text, n = _pypdf_text(path)
+    except NeedsOCR:
+        raise
+    except BookError as err:
+        failure = err
+    if len(text.split()) < MIN_WORDS:
+        try:
+            other, n2 = _pdfium_text(path)
+            n = n or n2
+            if len(other.split()) > len(text.split()):
+                text, failure = other, None
+        except BookError as err:
+            failure = failure or err
+    if failure and not text:
+        raise failure
+    if len(text.split()) < MIN_WORDS and n > 2:
+        raise NeedsOCR("no text in it, only pictures of pages (a scan): Read with OCR can read it")
+    return title, author, text
+
+
+def _pypdf_text(path: Path) -> tuple[str, str, str, int]:
     try:
         from pypdf import PdfReader
         from pypdf.errors import DependencyError, PdfReadError
@@ -501,10 +532,115 @@ def read_pdf(path: Path) -> tuple[str, str, str]:
             bad += 1
     if n and bad == n:
         raise BookError("not a readable PDF (no page could be read)")
-    text = "\n\n".join(p for p in pages if p)
-    if len(text.split()) < MIN_WORDS and n > 2:
-        raise BookError("no text in it (a scanned PDF needs OCR first)")
-    return _meta(meta, "/Title"), _meta(meta, "/Author"), text
+    return _meta(meta, "/Title"), _meta(meta, "/Author"), "\n\n".join(p for p in pages if p), n
+
+
+def _pdfium(path: Path):
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as err:            # pragma: no cover - a dependency
+        raise BookError("reading this PDF needs the pypdfium2 package") from err
+    try:
+        return pdfium.PdfDocument(str(path))
+    except Exception as err:  # noqa: BLE001 - PdfiumError and friends
+        raise BookError(f"not a readable PDF ({err})") from err
+
+
+def _pdfium_text(path: Path) -> tuple[str, int]:
+    pdf = _pdfium(path)
+    try:
+        pages = []
+        for i in range(len(pdf)):
+            try:
+                page = pdf[i]
+                tp = page.get_textpage()
+                pages.append(pdf_page_text(tp.get_text_range().replace("\r\n", "\n").replace("\r", "\n")))
+                tp.close()
+                page.close()
+            except Exception:  # noqa: BLE001 - one odd page
+                continue
+        return "\n\n".join(p for p in pages if p), len(pdf)
+    finally:
+        pdf.close()
+
+
+OCR_LANG = os.environ.get("SHEPHERD_OCR_LANG", "eng")      # Tesseract's language codes, e.g. eng+deu
+OCR_DPI = 300
+
+
+def ocr_available() -> bool:
+    return bool(shutil.which("tesseract"))
+
+
+def ocr_pdf(path: Path, progress=lambda done, total: None, stop=lambda: False, workers: int = 0) -> str:
+    """The text of a scanned PDF: each page drawn as a picture with PDFium, then read by Tesseract,
+    a few pages at a time. Slow: seconds a page."""
+    tess = shutil.which("tesseract")
+    if not tess:
+        raise BookError("OCR needs Tesseract, which comes with GPU Shepherd's container (update it), "
+                        "or install tesseract-ocr where GPU Shepherd runs")
+    import subprocess
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    workers = workers or max(1, min(4, (os.cpu_count() or 2) // 2))
+    pdf = _pdfium(path)
+    n = len(pdf)
+    texts: dict[int, str] = {}
+
+    def read(i: int, img: Path) -> None:
+        try:
+            r = subprocess.run([tess, str(img), "stdout", "-l", OCR_LANG], capture_output=True, timeout=600)
+            texts[i] = r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            texts[i] = ""
+        finally:
+            img.unlink(missing_ok=True)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="ocr-") as tmp, ThreadPoolExecutor(workers) as pool:
+            jobs = []
+            for i in range(n):                 # PDFium draws one page at a time; Tesseract reads in parallel
+                if stop():
+                    raise InterruptedError
+                while sum(not j.done() for j in jobs) >= workers * 2:   # don't draw the whole book ahead
+                    time.sleep(0.05)
+                progress(len(texts), n)
+                try:
+                    page = pdf[i]
+                    bm = page.render(scale=OCR_DPI / 72, grayscale=True)
+                    img = Path(tmp) / f"{i}.pgm"
+                    _write_pgm(img, bm)
+                    page.close()
+                except Exception:  # noqa: BLE001 - a page that can't be drawn
+                    texts[i] = ""
+                    continue
+                jobs.append(pool.submit(read, i, img))
+            for j in jobs:
+                while not j.done():
+                    if stop():
+                        raise InterruptedError
+                    progress(len(texts), n)
+                    time.sleep(0.2)
+    finally:
+        pdf.close()
+    progress(n, n)
+    text = "\n\n".join(pdf_page_text(texts.get(i, "")) for i in range(n))
+    if len(text.split()) < MIN_TEXT_WORDS:
+        raise BookError("OCR found no text in it")
+    return text.strip()
+
+
+def _write_pgm(path: Path, bm) -> None:
+    """A grayscale PDFium bitmap as a PGM picture (which Tesseract reads), without Pillow."""
+    w, h, stride = bm.width, bm.height, bm.stride
+    raw = bytes(bm.buffer)
+    with open(path, "wb") as f:
+        f.write(f"P5 {w} {h} 255\n".encode())
+        if stride == w:
+            f.write(raw[:w * h])
+        else:
+            for y in range(h):
+                f.write(raw[y * stride:y * stride + w])
 
 
 def _meta(meta, key: str) -> str:
@@ -694,6 +830,7 @@ class Library:
                                                  else prev.reader >= READER):
                 b.title, b.author, b.status, b.reason = prev.title, prev.author, prev.status, prev.reason
                 b.words, b.fingerprint, b.sent, b.reader = prev.words, prev.fingerprint, prev.sent, prev.reader
+                b.ocr = prev.ocr
             else:
                 progress(i, len(found), rel)
                 b.reader, b.sent = READER, prev.sent if prev else {}
@@ -701,6 +838,8 @@ class Library:
                     b.title, b.author, text = read(src)
                     b.status, b.words, b.fingerprint = "ready", len(text.split()), fingerprint(text)
                     self.text_path(key).write_text(markdown(b, text), encoding="utf-8")
+                except NeedsOCR as err:
+                    b.status, b.reason = "scanned", str(err)
                 except BookError as err:
                     b.status = "skipped" if src.suffix.lower() not in CONVERTS else "failed"
                     b.reason = str(err)
@@ -731,6 +870,76 @@ class Library:
         for b in books.values():
             counts[b.status] = counts.get(b.status, 0) + 1
         return counts
+
+
+    # ------------------------------------------------------------------ OCR
+    def ocr(self, progress=lambda done, total, text: None, stop=lambda: False) -> tuple[int, list[str]]:
+        """Read the scanned PDFs with OCR, one after another. Returns how many were read and what
+        went wrong. A stop leaves the rest for next time."""
+        data = self.load()
+        folder = self.folder(data)
+        todo = [b for b in sorted(data["books"].values(), key=lambda b: b.path) if b.status == "scanned"]
+        done, errors = 0, []
+        self.text_dir.mkdir(parents=True, exist_ok=True)
+        for i, b in enumerate(todo):
+            if stop():
+                break
+            try:
+                text = ocr_pdf(folder / b.path, lambda d, t, i=i, b=b: progress(
+                    i, len(todo), f"OCR {i + 1} of {len(todo)}: {b.name}, page {min(d + 1, t)} of {t}"), stop)
+            except InterruptedError:
+                break
+            except BookError as err:
+                errors.append(f"{b.path}: {err}")
+
+                def failed(d, key=b.key, why=str(err)):
+                    if key in d["books"]:
+                        d["books"][key].reason = f"OCR couldn't read it either: {why}"
+                self.update(failed)
+                continue
+            b.words, b.fingerprint, b.ocr, b.status, b.reason = len(text.split()), fingerprint(text), True, "ready", ""
+            self.text_path(b.key).write_text(markdown(b, text), encoding="utf-8")
+
+            def read(d, b=b):
+                if b.key not in d["books"]:
+                    return
+                same = next((o for o in d["books"].values() if o.key != b.key and o.status == "ready"
+                             and o.fingerprint == b.fingerprint), None)
+                if same:
+                    b.status, b.same_as, b.reason = "duplicate", same.key, f"the same text as {same.path}"
+                d["books"][b.key] = b
+            self.update(read)
+            done += 1
+        return done, errors
+
+    def delete(self, key: str) -> Book:
+        """Delete a document: its files (every copy) from the folder, its text and its line in the list.
+        Returns it (with where it was sent, so it can be taken out of apps)."""
+        with self._lock:
+            data = self.load()
+            b = data["books"].get(key)
+            if not b:
+                raise BookError("no such document")
+            folder = self.folder(data)
+            for rel in [b.path, *b.other_copies]:
+                f = folder / rel
+                if f.resolve().is_relative_to(folder.resolve()):
+                    f.unlink(missing_ok=True)
+                    parent = f.parent
+                    while parent != folder and parent.is_relative_to(folder):
+                        try:
+                            parent.rmdir()          # only when empty
+                        except OSError:
+                            break
+                        parent = parent.parent
+            self.text_path(key).unlink(missing_ok=True)
+            data["books"].pop(key)
+            for o in data["books"].values():            # a duplicate of it is the one to keep now
+                if o.same_as == key:
+                    o.status, o.same_as, o.reason = "ready", "", ""
+                    break
+            self.save(data)
+            return b
 
 
 # --------------------------------------------------------------------------- background work

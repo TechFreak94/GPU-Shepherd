@@ -804,6 +804,11 @@ def cmd_knowledge(args, c: Client) -> int:
     elif a == "skill-delete":
         need(1, "skill-delete SKILL")
         out(args, c.call("DELETE", f"/api/v1/skills/{quote(items[0])}"))
+    elif a == "ocr":
+        out(args, c.post("/api/v1/knowledge/ocr"))
+    elif a == "delete":
+        need(1, "delete KEY  (KEY from gpu-shepherd knowledge)")
+        out(args, c.call("DELETE", f"/api/v1/knowledge/{quote(items[0])}"))
     elif a == "clear":
         what = items or ["documents", "converted", "skills", "apps"]
         if not (args.yes or ask(f"Delete {', '.join(what)}? This can't be undone.")):
@@ -987,9 +992,9 @@ def add_commands(sub) -> None:
     p = sub.add_parser("knowledge", aliases=["books"],
                        help="documents (ebooks, manuals, notes) for chat apps and agents: list, status, folder PATH, scan, "
                             "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
-                            "skill-delete SKILL, clear [documents converted skills apps]")
+                            "skill-delete SKILL, ocr, delete KEY, clear [documents converted skills apps]")
     p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "stop", "skill",
-                                                 "skill-show", "skill-install", "skill-delete", "clear"))
+                                                 "skill-show", "skill-install", "skill-delete", "ocr", "delete", "clear"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="clear: without asking")
     p.add_argument("--name", default="Documents", help="send: the knowledge base's name (default Documents)")

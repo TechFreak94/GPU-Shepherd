@@ -21,6 +21,7 @@ dependencies = [
     "itsdangerous>=2.1",
     "python-multipart>=0.0.9",
     "pypdf[crypto]>=4.0",   # crypto: many shop PDFs are AES-encrypted with an empty password
+    "pypdfium2>=4.20",      # PDFium: text pypdf misses, and pages drawn for OCR
 ]
 
 [project.optional-dependencies]

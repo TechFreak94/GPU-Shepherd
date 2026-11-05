@@ -1858,7 +1858,7 @@ class Shepherd:
             free = ""
         return {"folder": str(folder), "folder_ok": folder.is_dir(), "default_folder": str(self.library.default_folder),
                 "own_folder": folder == self.library.default_folder, "home": str(self.library.home),
-                "storage": storage, "free": free,
+                "storage": storage, "free": free, "ocr": kn.ocr_available(),
                 "reasons": {k: sorted(v.items(), key=lambda x: (-x[1], x[0])) for k, v in reasons.items()},
                 "scanned": data.get("scanned"), "counts": counts, "documents": rows,
                 "words": sum(b.words for b in data["books"].values() if b.status == "ready"),
@@ -2358,6 +2358,59 @@ class Shepherd:
                 done.append("deleted the converted text and the list of documents")
             return "Cleared: " + ", ".join(done) + "."
         return self._knowledge_work("Clearing out knowledge", work)
+
+    def ocr_documents(self) -> str:
+        """Read the scanned PDFs with OCR (Tesseract), in the background."""
+        n = sum(b.status == "scanned" for b in self.library.books())
+        if not n:
+            raise Problem("No scanned PDFs waiting for OCR.", "warn", 409)
+        if not kn.ocr_available():
+            raise Problem("OCR needs Tesseract: update GPU Shepherd (its container comes with it), or install "
+                          "tesseract-ocr where it runs.", status=409)
+
+        def work(task: kn.Task) -> str:
+            done, errors = self.library.ocr(task.progress, lambda: task.stop)
+            task.errors += errors
+            if task.stop:
+                raise InterruptedError
+            return (f"Read {done} scanned PDF{'s' if done != 1 else ''} with OCR"
+                    + (f"; {len(errors)} couldn't be read." if errors else ".")
+                    + (" Send them to Open WebUI to add them to the knowledge base." if done else ""))
+        return self._knowledge_work(f"Reading {n} scanned PDF{'s' if n != 1 else ''} with OCR", work)
+
+    def delete_document(self, key: str) -> str:
+        """Delete one document: its files (every copy), its text, and the copies sent to Open WebUI
+        (taken out when that Open WebUI is running; otherwise they stay there)."""
+        self._knowledge_busy()
+        try:
+            b = self.library.delete(key)
+        except kn.BookError as err:
+            raise Problem(f"No document '{key}'.", status=404) from err
+        instances, _ = self.store.instances()
+        left = []
+        by_app: dict[str, list[tuple[str, str]]] = {}
+        for target, fid in b.sent.items():
+            iid, _, kb = target.partition("/")
+            by_app.setdefault(iid, []).append((kb, fid))
+        for iid, files in by_app.items():
+            inst = instances.get(iid)
+            if not inst:
+                continue
+            if not self._running(iid):
+                left.append(inst.name)
+                continue
+            try:
+                ow = self._openwebui(inst)
+                ids = ow.knowledge_bases()
+                for kb, fid in files:
+                    if ids.get(kb):
+                        ow.remove(ids[kb], fid)
+                    ow.delete_file(fid)
+            except (Problem, openwebui.OpenWebUIError) as err:
+                log.warning("knowledge: couldn't take %s out of %s: %s", b.name, inst.name, err)
+                left.append(inst.name)
+        return f"Deleted {b.name}." + (f" It is still in {', '.join(left)} (it wasn't running or answering): remove "
+                                       "it there by hand." if left else "")
 
     @staticmethod
     def _empty_documents(folder: Path, own: bool) -> int:

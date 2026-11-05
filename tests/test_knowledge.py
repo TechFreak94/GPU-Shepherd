@@ -662,3 +662,67 @@ def test_upload_in_pieces_resumes_and_puts_the_file_in_place(stack):
         assert (data / "knowledge" / "documents" / path).read_bytes() == book
         assert not (data / "knowledge" / "documents" / (path + ".part")).exists()
     assert client.put("/api/v1/knowledge/files", params={"path": "e.txt", "offset": "x", "total": 3}).status_code == 400
+
+
+def blank_pdf(path: Path, pages=3) -> Path:
+    from pypdf import PdfWriter
+    w = PdfWriter()
+    for _ in range(pages):
+        w.add_blank_page(200, 200)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        w.write(f)
+    return path
+
+
+def test_pdf_text_pypdf_misses_is_read_with_pdfium(tmp_path, monkeypatch):
+    p = pdf(tmp_path / "a.pdf", WORDS)
+    monkeypatch.setattr(knowledge, "_pypdf_text", lambda path: ("T", "A", "", 3))
+    assert "word5" in knowledge.read(p)[2]
+
+
+def test_scanned_pdfs_are_read_with_ocr(tmp_path, monkeypatch):
+    lib = knowledge.Library(tmp_path)
+    blank_pdf(lib.default_folder / "scan.pdf")
+    epub(lib.default_folder / "ok.epub")
+    assert lib.scan() == {"ready": 1, "scanned": 1}
+    assert "OCR" in {b.path: b for b in lib.books()}["scan.pdf"].reason
+    tess = tmp_path / "bin" / "tesseract"
+    tess.parent.mkdir()
+    tess.write_text("#!/bin/sh\nhead -c 2 \"$1\" | grep -q P5 && echo 'scanned page text " + " ".join(f"w{i}" for i in range(30)) + "'\n")
+    tess.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tess.parent}:{__import__('os').environ['PATH']}")
+    seen = []
+    done, errors = lib.ocr(lambda d, t, text: seen.append(text))
+    assert (done, errors) == (1, []) and any("page" in s for s in seen)
+    b = {b.path: b for b in lib.books()}["scan.pdf"]
+    assert b.status == "ready" and b.ocr and lib.text(b.key).count("scanned page text") == 3
+    assert lib.scan() == {"ready": 2}                         # kept at the next scan
+
+
+def test_delete_one_document(stack):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    folder = data / "knowledge" / "documents"
+    epub(folder / "Cooking" / "bread.epub", title="Bread")
+    (folder / "Cooking" / "bread.mobi").write_text("x")
+    epub(folder / "keep.epub", title="Keep", chapters=[("K", "keep " + WORDS)])
+    blank_pdf(folder / 'Say "cheese".pdf')
+    client.post("/api/v1/knowledge/scan")
+    finish(svc)
+    page = browser(app).get("/knowledge").text
+    assert "Needs OCR" in page and "Read 1 with OCR" in page and page.count(">Delete</button>") == 3
+    assert 'Delete Say &#34;cheese&#34;?' in page or "Delete Say &quot;cheese&quot;?" in page
+    key = next(b.key for b in svc.library.books() if b.path == "Cooking/bread.epub")
+    svc.library.update(lambda d: d["books"][key].sent.update({"webui/Documents": "f9"}))
+    start(app, client, "webui")
+    removed, deleted = [], []
+    FakeOpenWebUI.knowledge_bases = lambda self: {"Documents": "kb7"}
+    FakeOpenWebUI.remove = lambda self, kid, fid: removed.append((kid, fid))
+    FakeOpenWebUI.delete_file = lambda self, fid: deleted.append(fid)
+    r = browser(app).post(f"/knowledge/{key}/delete", headers={"HX-Request": "true"})
+    assert r.status_code == 204 and "Deleted" in r.headers["HX-Redirect"]
+    assert not (folder / "Cooking").exists() and (folder / "keep.epub").exists()
+    assert removed == [("kb7", "f9")] and deleted == ["f9"] and not svc.library.text_path(key).exists()
+    assert sorted(b.path for b in svc.library.books()) == ["Say \"cheese\".pdf", "keep.epub"]
+    assert client.delete(f"/api/v1/knowledge/{key}").status_code == 404

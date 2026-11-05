@@ -1044,7 +1044,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/knowledge", response_class=HTMLResponse)
     def knowledge_page(request: Request, show: str = ""):
         b = svc.knowledge()
-        if show in ("ready", "failed", "skipped", "duplicate"):
+        if show in ("ready", "failed", "scanned", "skipped", "duplicate"):
             b["shown"] = [x for x in b["documents"] if x["status"] == show]
         else:
             show, b["shown"] = "", b["documents"]
@@ -1109,6 +1109,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
         return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
                                                  bool(raw.get("split")), emb))
+
+    @app.post("/knowledge/ocr")
+    def knowledge_ocr():
+        return knowledge_done(svc.ocr_documents)
+
+    @app.post("/knowledge/{key}/delete")
+    def knowledge_delete(key: str):
+        return knowledge_done(lambda: svc.delete_document(key))
 
     @app.post("/knowledge/clear")
     async def knowledge_clear(request: Request):

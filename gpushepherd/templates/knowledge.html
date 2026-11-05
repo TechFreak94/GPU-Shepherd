@@ -103,24 +103,35 @@
 <h3>Documents{% if b.documents %} <span class="muted small">{{ b.counts.get("ready", 0) }} ready, {{ "{:,}".format(b.words) }} words{% for s, n in b.counts.items() if s != "ready" %}, {{ n }} {{ s }}{% endfor %}</span>{% endif %}</h3>
 <div class="card">
   {% if b.documents %}
-  {% set says = {"ready": "Ready", "failed": "Can't read", "skipped": "Skipped", "duplicate": "Duplicate"} %}
+  {% set says = {"ready": "Ready", "failed": "Can't read", "skipped": "Skipped", "duplicate": "Duplicate", "scanned": "Needs OCR"} %}
   {% set rows = b.shown if b.shown is defined else b.documents %}
+  {% set nscan = b.counts.get("scanned", 0) %}
+  {% if nscan %}
+  <div class="small" style="margin-bottom:8px">
+    <div class="row"><span>{{ nscan }} scanned PDF{{ "s" if nscan != 1 }} {{ "has" if nscan == 1 else "have" }} only pictures of pages.</span>
+      <button type="button" class="small" hx-post="/knowledge/ocr"{% if not b.ocr %} disabled{% endif %}>Read {{ nscan }} with OCR</button></div>
+    {% if not b.ocr %}<div class="hint">OCR needs Tesseract: update GPU Shepherd (its container comes with it).</div>{% endif %}
+    <div class="hint">OCR is slow (seconds a page) and runs in the background; progress shows in the task card above.</div>
+  </div>
+  {% endif %}
   {% for st, label in (("failed", "can't be read"), ("skipped", "skipped")) %}{% if b.reasons.get(st) %}
   <details class="small" style="margin-bottom:8px"><summary>{{ b.counts.get(st, 0) }} {{ label }}</summary>
     <ul>{% for why, n in b.reasons[st] %}<li>{{ why }} <span class="muted">({{ n }})</span></li>{% endfor %}</ul></details>
   {% endif %}{% endfor %}
   <p class="small kn-filter">{% set cur = show or "" %}
-    {% for st, label, n in (("", "All", b.documents|length), ("ready", "Ready", b.counts.get("ready", 0)), ("failed", "Can't read", b.counts.get("failed", 0)), ("skipped", "Skipped", b.counts.get("skipped", 0)), ("duplicate", "Duplicate", b.counts.get("duplicate", 0))) %}{% if st == "" or n %}{% if not loop.first %} &middot; {% endif %}<a href="/knowledge{{ '?show=' ~ st if st }}"{% if cur == st %} aria-current="true" style="font-weight:bold"{% endif %}>{{ label }} ({{ n }})</a>{% endif %}{% endfor %}</p>
+    {% for st, label, n in (("", "All", b.documents|length), ("ready", "Ready", b.counts.get("ready", 0)), ("failed", "Can't read", b.counts.get("failed", 0)), ("skipped", "Skipped", b.counts.get("skipped", 0)), ("duplicate", "Duplicate", b.counts.get("duplicate", 0)), ("scanned", "Needs OCR", b.counts.get("scanned", 0))) %}{% if st == "" or n %}{% if not loop.first %} &middot; {% endif %}<a href="/knowledge{{ '?show=' ~ st if st }}"{% if cur == st %} aria-current="true" style="font-weight:bold"{% endif %}>{{ label }} ({{ n }})</a>{% endif %}{% endfor %}</p>
   <div class="books-scroll">
   <table class="table books-table books-main">
     <thead><tr><th>Document</th><th>Folder</th><th>Words</th><th>Status</th><th></th></tr></thead>
     {% for x in rows %}
+    {% set ask = "Delete " ~ x.name ~ "? Its file" ~ ("s" if x.other_copies else "") ~ " in the documents folder, its text" ~ (" and its copies in Open WebUI" if x.sent else "") ~ " go. This can't be undone." %}
     <tr><td>{{ x.name }}<div class="small muted mono">{{ x.path }}</div></td><td class="grp" data-label="Folder">{{ x.group or "-" }}</td>
       <td class="num" data-label="Words">{{ "{:,}".format(x.words) if x.words else "" }}</td>
-      <td><span class="tag{{ ' warn' if x.status == 'failed' else '' }}">{{ says.get(x.status, x.status) }}</span>
+      <td><span class="tag{{ ' warn' if x.status in ('failed', 'scanned') else '' }}">{{ says.get(x.status, x.status) }}</span>
         {% if x.reason %}<div class="small muted">{{ x.reason }}</div>{% endif %}
         {% if x.sent %}<div class="small muted">In {{ x.sent.keys()|map("replace", "/", ": ")|join(", ") }}</div>{% endif %}</td>
-      <td class="act">{% if x.status == "ready" and b.servers %}<button type="button" class="small" hx-post="/knowledge/{{ x.key }}/skill" hx-include="#skill-server">Make a skill</button>{% endif %}</td></tr>
+      <td class="act">{% if x.status == "ready" and b.servers %}<button type="button" class="small" hx-post="/knowledge/{{ x.key }}/skill" hx-include="#skill-server">Make a skill</button>{% endif %}
+        <button type="button" class="small danger" hx-post="/knowledge/{{ x.key }}/delete" hx-confirm="{{ ask|e }}">Delete</button></td></tr>
     {% endfor %}
   </table>
   </div>

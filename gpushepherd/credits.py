@@ -31,7 +31,10 @@ BUILT_ON: tuple[Credit, ...] = (
     Credit("HTTPX", "https://www.python-httpx.org", "BSD-3-Clause", "Talks to model servers and checks for updates"),
     Credit("itsdangerous", "https://itsdangerous.palletsprojects.com", "BSD-3-Clause", "Signs login sessions"),
     Credit("python-multipart", "https://github.com/Kludex/python-multipart", "Apache-2.0", "Reads form posts"),
-    Credit("pypdf", "https://github.com/py-pdf/pypdf", "BSD-3-Clause", "Reads the text of PDF books"),
+    Credit("pypdf", "https://github.com/py-pdf/pypdf", "BSD-3-Clause", "Reads the text of PDF documents"),
+    Credit("pypdfium2", "https://github.com/pypdfium2-team/pypdfium2", "Apache-2.0 or BSD-3-Clause (PDFium: BSD-3-Clause)",
+           "Reads PDF text pypdf misses and draws pages for OCR"),
+    Credit("Tesseract", "https://github.com/tesseract-ocr/tesseract", "Apache-2.0", "Reads scanned PDFs (OCR), in the container image"),
     Credit("pytest", "https://pytest.org", "MIT", "Tests (development only)"),
 )
 

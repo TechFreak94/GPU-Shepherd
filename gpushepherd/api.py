@@ -658,6 +658,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         d = await body(request) if (await request.body()) else {}
         return JSONResponse({"message": svc.make_skill(key, str(d.get("server", "")))}, status_code=202)
 
+    @r.post("/api/v1/knowledge/ocr")
+    @handle
+    def knowledge_ocr(request: Request):
+        """Read the scanned PDFs (status "scanned") with OCR, in the background."""
+        return JSONResponse({"message": svc.ocr_documents()}, status_code=202)
+
+    @r.delete("/api/v1/knowledge/{key}")
+    @handle
+    def knowledge_delete(request: Request, key: str):
+        """Delete one document: its files, its text, and the copies sent to a running Open WebUI."""
+        return {"message": svc.delete_document(key)}
+
     @r.post("/api/v1/knowledge/clear")
     @handle
     async def knowledge_clear(request: Request):
