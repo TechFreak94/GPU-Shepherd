@@ -4,6 +4,11 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.23 - 2026-11-05
+
+- Fixed: updating no longer cuts running apps (and the dashboard) off their GPUs ("nvidia-smi failed ... exit status 255"). (#54)
+- When the GPUs can't be read, GPU Shepherd no longer stops running apps, and the dashboard says what went wrong and how to fix it. (#54)
+
 ## 0.13.22 - 2026-11-05
 
 - Books: the table fits the page without sideways scrolling, and long lists scroll with the header kept in view. (#53)
