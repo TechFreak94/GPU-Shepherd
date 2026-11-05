@@ -93,6 +93,11 @@
     <button type="button" hx-post="/ui/image-updates/check" title="Ask each app's image registry now">Check now</button></div>
 </form>
 
+<h3>Experimental</h3>
+<div class="card" id="unlock" hx-get="/ui/unlock/card" hx-trigger="every 10s">
+  {% include "partials/unlock_card.html" %}
+</div>
+
 <h3>About</h3>
 <div class="card small">
   <p style="margin-top:0">GPU Shepherd {{ version }}{% if u.running.commit %} (<span class="mono">{{ u.running.commit[:7] }}</span>){% endif %} · {{ docker }} ·

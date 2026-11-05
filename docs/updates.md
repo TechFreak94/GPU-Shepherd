@@ -34,7 +34,9 @@ Checking and updating from the dashboard need the small update service on the ho
 installer offers it, or run `sudo ./update.sh --enable-dashboard-updates` once). GPU Shepherd runs
 in a container and can't update itself from inside it. Without the service, the dashboard still
 shows your version and the changelog, and tells you which command to run. From a terminal,
-`sudo ./update.sh` shows the same version and changes, and `--check` only looks.
+`sudo ./update.sh` shows the same version and changes, and `--check` only looks. The same service setup
+also installs the one for the experimental [tensor unlock](advanced.md#tensor-unlock), and each update
+brings in its latest version.
 
 ## Private repository
 

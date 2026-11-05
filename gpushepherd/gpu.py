@@ -20,6 +20,7 @@ class Gpu:
     mem_used: float      # MiB
     mem_total: float     # MiB
     util: float          # percent
+    bus_id: str = ""     # PCI address as lspci -D prints it, e.g. 0000:01:00.0
 
     @property
     def mem_pct(self) -> int:
@@ -47,7 +48,7 @@ def _query() -> tuple[list[Gpu], str]:
         return _fake(fake), ""
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
+            ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,pci.bus_id",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10, check=True).stdout
     except FileNotFoundError:
@@ -60,7 +61,8 @@ def _query() -> tuple[list[Gpu], str]:
         if len(parts) < 5:
             continue
         try:
-            gpus.append(Gpu(int(parts[0]), parts[1], _num(parts[2]), _num(parts[3]), _num(parts[4])))
+            gpus.append(Gpu(int(parts[0]), parts[1], _num(parts[2]), _num(parts[3]), _num(parts[4]),
+                            _bus(parts[5]) if len(parts) > 5 else ""))
         except ValueError:
             continue
     return gpus, ""
@@ -70,11 +72,17 @@ def _num(text: str) -> float:
     return float(text) if text not in ("", "[N/A]", "N/A") else 0.0
 
 
+def _bus(text: str) -> str:
+    """nvidia-smi's 00000000:01:00.0 -> 0000:01:00.0."""
+    b = text.strip().lower()
+    return b[4:] if len(b) == 16 and b[8] == ":" else b
+
+
 def _fake(spec: str) -> list[Gpu]:
     count, _, rest = spec.partition("x")
     mem, _, name = rest.partition(":")
     return [Gpu(i, name or "Fake GPU", round(random.uniform(0.05, 0.2) * float(mem or 8192)),
-                float(mem or 8192), 0.0) for i in range(int(count or 1))]
+                float(mem or 8192), 0.0, f"0000:{i + 1:02x}:00.0") for i in range(int(count or 1))]
 
 
 def physical_cores() -> int:

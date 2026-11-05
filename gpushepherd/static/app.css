@@ -130,12 +130,24 @@ input:focus,select:focus,textarea:focus,button:focus-visible,.btn:focus-visible,
 .credits td{padding:6px 8px}
 .credits td:last-child{overflow-wrap:anywhere}
 .scroll{overflow-x:auto}
-/* Books page: long names and paths wrap inside their cell; Words, Status and the button keep their width. */
-.books-table td:first-child{overflow-wrap:anywhere;min-width:12em}
-.books-table .grp{min-width:9em;max-width:14em;overflow-wrap:anywhere}
-.books-table .num,.books-table .act{white-space:nowrap}
-.books-table .act button{white-space:nowrap}
-.books-table td:nth-child(4){min-width:9em}
+/* Books page: fixed column widths so the table always fits its card; every cell wraps, nothing scrolls sideways.
+   Long lists scroll vertically with a sticky header. */
+.books-table{table-layout:fixed}
+.books-table th,.books-table td{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+.books-main th:nth-child(1){width:38%}.books-main th:nth-child(2){width:22%}.books-main th:nth-child(3){width:8%}
+.books-main th:nth-child(4){width:20%}.books-main th:nth-child(5){width:12%}
+.skills-list th:nth-child(1){width:22%}.skills-list th:nth-child(2){width:26%}.skills-list th:nth-child(3){width:14%}.skills-list th:nth-child(4){width:38%}
+.books-main .act button{white-space:normal}
+.books-scroll{max-height:70vh;overflow-y:auto;overflow-x:hidden}
+.books-scroll th{position:sticky;top:0;background:var(--card);z-index:1}
+@media (max-width:700px){
+  .books-table,.books-table tbody,.books-table tr,.books-table td{display:block;width:auto}
+  .books-table thead{display:none}
+  .books-table tr{padding:8px 0;border-bottom:1px solid var(--line)}
+  .books-table td{border:0;padding:3px 0}
+  .books-table td[data-label]::before{content:attr(data-label) ": ";color:var(--muted);font-size:12px}
+  .books-table td.act:empty{display:none}
+}
 #book-up-fails{overflow-wrap:anywhere}
 .files{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:6px}
 .files button{text-align:left;display:flex;justify-content:space-between;gap:10px}

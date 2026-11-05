@@ -42,6 +42,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
   next to it: hover, tab to or tap it to see what the value means (GPU rule and priority, ports,
   how much of a model sits in system RAM, and so on).
 - **Machine overview**: CPU, RAM and every GPU at a glance, with how much each instance uses.
+  An experimental **tensor unlock** (Settings) can speed up image generation on GeForce RTX cards by
+  30-55%; see [Tensor unlock](docs/advanced.md#tensor-unlock).
 - **GPU policies** per instance:
   - *Fixed* - always these GPUs (e.g. ComfyUI on GPU 0).
   - *Elastic* - at least N GPUs, grows into every free GPU, shrinks when something else needs one

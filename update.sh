@@ -175,6 +175,13 @@ json_str() {   # a JSON string literal
     printf '"%s"' "$s"
 }
 service_enabled() { have systemctl && systemctl is-enabled --quiet "$UNIT.path" 2>/dev/null; }
+# The dashboard's (experimental) gpu-unlock setting goes through gpu-unlock.sh's own small service;
+# it comes with dashboard updates, and an update brings in its latest version.
+unlock_service() {
+    [ -f "$HERE/gpu-unlock.sh" ] && service_enabled || return 0
+    bash "$HERE/gpu-unlock.sh" --install-service --quiet || warn "could not set up the gpu-unlock service (Settings > Experimental)"
+}
+
 version_at() {   # version_at REF: the version number in gpushepherd/__init__.py at that commit
     { g show "$1:gpushepherd/__init__.py" 2>/dev/null || true; } | sed -n 's/^__version__ = "\(.*\)"$/\1/p' | head -n 1
 }
@@ -371,6 +378,7 @@ WantedBy=timers.target
 EOF
     systemctl daemon-reload
     systemctl enable --now "$UNIT.path" "$UNIT-check.timer" >/dev/null
+    unlock_service
     say "Dashboard updates are on: GPU Shepherd checks for updates daily, and Settings > Updates"
     echo "    (or the notice on the dashboard) can check now or update. Turn it off with:"
     echo "      sudo $HERE/update.sh --disable-dashboard-updates"
@@ -568,6 +576,7 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
     write_status updating "Starting the new version and waiting for the dashboard" start
     healthy || recover "$old" "GPU Shepherd did not start on port $PORT"
     tidy_images
+    unlock_service
     write_status "done" "GPU Shepherd $(version_at HEAD) is running ($(g log -1 --format='%h, %cs' HEAD))."
     say "GPU Shepherd $(version_at HEAD) is running $(g log -1 --format='%h from %cs: %s' HEAD)"
     if [ -n "$old" ] && [ "$old" != "$new" ]; then

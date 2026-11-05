@@ -25,6 +25,7 @@ from pydantic import ValidationError
 
 from . import (app_updates, auth, book_skills, books as books_mod, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
+from . import gpu_unlock
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import instance_url, llamaswap, openwebui
@@ -1763,6 +1764,52 @@ class Shepherd:
             raise Problem(str(err)) from err
         log.info("update: GitHub token %s", "removal requested" if clear else "handed to the host")
         return "Token removed." if clear else "Token saved; checking for updates with it."
+
+    # ------------------------------------------------------------------ tensor unlock (gpu-unlock.sh on the host)
+    def unlock_status(self) -> gpu_unlock.UnlockStatus:
+        st = gpu_unlock.status(self.store.root)
+        if not st.repo:
+            st.repo = updates.status(self.store.root).repo
+        return st
+
+    def request_unlock(self, action: str, cards: list[str] | None = None) -> str:
+        """Experimental: install gpu-unlock, choose the cards it unlocks from the next boot, or
+        remove it. The host does the work (gpu-unlock.sh); every change needs a reboot."""
+        if action not in gpu_unlock.ACTIONS:
+            raise Problem("unknown action")
+        st = self.unlock_status()
+        if not st.service:
+            raise Problem(f"The dashboard can't reach gpu-unlock.sh on the server yet. Turn on dashboard updates, or on the "
+                          f"server run: {st.command} --install-service", "warn", 409)
+        if st.busy:
+            raise Problem("gpu-unlock is already being changed; wait for it to finish.", "warn", 409)
+        if action in ("install", "set") and st.blocker:
+            raise Problem(st.blocker, "warn", 409)
+        if action == "install" and not st.supported and st.source:
+            raise Problem("None of this machine's NVIDIA cards is supported by gpu-unlock (RTX 20, 30 and 40 are; RTX 50 isn't).",
+                          "warn", 409)
+        if action == "set":
+            cards = [gpu_unlock.normalize_pci(c) for c in cards or [] if c.strip()]
+            if cards and not st.installed:
+                raise Problem("Install gpu-unlock first.", "warn", 409)
+            known = {c.pci for c in st.supported}
+            for c in cards:
+                if c not in known:
+                    raise Problem(f"{c} is not a card gpu-unlock supports on this machine.", status=404)
+            if sorted(cards) == sorted(st.configured):
+                raise Problem("That is already what the next boot does.", "info", 409)
+        if action == "uninstall" and not st.installed and not st.configured:
+            raise Problem("gpu-unlock is not installed.", "info", 409)
+        try:
+            gpu_unlock.request(self.store.root, action, cards)
+        except ValueError as err:
+            raise Problem(str(err)) from err
+        log.info("gpu-unlock: %s %s requested", action, ",".join(cards or []))
+        return {"check": "Checking this machine…",
+                "install": "Installing gpu-unlock (this takes a few minutes)…",
+                "set": (f"Saving: {len(cards or [])} card(s) unlocked from the next boot. Reboot to apply it." if cards
+                        else "Saving: no card unlocked from the next boot. Reboot to put the cards back to normal."),
+                "uninstall": "Removing gpu-unlock. Reboot afterwards to put the cards back to normal."}[action]
 
     # ------------------------------------------------------------------ books
     @property

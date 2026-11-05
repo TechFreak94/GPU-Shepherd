@@ -76,7 +76,8 @@
 {% for row in gpus %}{% set g = row.gpu %}
   <div class="card stat">
     <div class="row"><strong>GPU {{ g.index }}</strong><span class="figure">{{ g.mem_pct }}%</span></div>
-    <div class="small muted">{{ g.name }}</div>
+    <div class="small muted">{{ g.name }}{% if row.unlock %}{% set x = row.unlock %}
+      <span class="tag {{ 'accent' if x.unlocked else 'warn' }}" title="{% if x.unlocked %}Full-speed FP16/BF16 tensor math (gpu-unlock).{% endif %}{% if x.reboot_needed %} Changes at the next reboot.{% endif %} Settings &gt; Experimental">{{ x.badge }}</span>{% endif %}</div>
     <div class="meter" role="img" aria-label="{{ g.mem_pct }}% video memory used"><i class="{{ level(g.mem_pct) }}" style="width: {{ g.mem_pct }}%"></i></div>
     <div class="small muted">VRAM {{ "%.1f"|format(g.mem_used / 1024) }} of {{ "%.1f"|format(g.mem_total / 1024) }} GB · {{ g.util|int }}% busy</div>
     <ul class="usage" aria-label="Instances on GPU {{ g.index }}">
