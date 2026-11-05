@@ -27,7 +27,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     def fail(err: Exception) -> JSONResponse:
         if isinstance(err, Problem):
-            return JSONResponse({"error": err.msg}, status_code=err.status)
+            return JSONResponse({"error": err.msg} | err.data, status_code=err.status)
         return JSONResponse({"error": message(err)}, status_code=400)
 
     async def body(request: Request, kind=dict):
@@ -38,6 +38,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         if not isinstance(data, kind):
             raise Problem(f"the JSON body must be {'an object' if kind is dict else 'a list'}")
         return data
+
+    def _piece(offset, total) -> tuple[int | None, int | None]:
+        if offset in (None, ""):
+            return None, None
+        if not (str(offset).isdigit() and str(total or "").isdigit()):
+            raise Problem("offset and total are byte counts")
+        return int(offset), int(total)
 
     def handle(fn):
         """Run a route, answering a Problem or a validation error as {"error": ...}."""
@@ -618,10 +625,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     async def knowledge_put_file(request: Request):
         """Add one document, or a zip of them (unpacked into a folder named after it), sent as the raw body:
         PUT /api/v1/knowledge/files?path=Folder/Book.epub. Folders in the path are kept. Doesn't scan:
-        POST /api/v1/knowledge/scan when all are in. Returns {"added": [paths], "left_out": n}."""
-        size = request.headers.get("content-length")
-        return await svc.receive_document(request.query_params.get("path", ""), request.stream(),
-                                      int(size) if size and size.isdigit() else None)
+        POST /api/v1/knowledge/scan when all are in. Returns {"added": [paths], "left_out": n}.
+        A big file can go in pieces: &offset=BYTE&total=SIZE on each (see Service.receive_document)."""
+        size, q = request.headers.get("content-length"), request.query_params
+        return await svc.receive_document(q.get("path", ""), request.stream(), int(size) if size and size.isdigit() else None,
+                                          *_piece(q.get("offset"), q.get("total")))
 
     @r.post("/api/v1/knowledge/scan")
     @handle

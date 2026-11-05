@@ -197,11 +197,7 @@
   const isBook = (en) => !en.name.split("/").some((part) => part.startsWith(".") || part === "__MACOSX") &&
     (EBOOK.test(en.name) || (TEXT.test(en.name) && (en.size >= TEXT_BOOK || en.size === 0xffffffff)));
 
-  // A file the browser can't read (on Windows: a path over 260 characters) fails like a lost
-  // connection, so read its first byte before sending it.
-  async function readable(file) {
-    try { await file.slice(0, 1).arrayBuffer(); return true; } catch (err) { return false; }
-  }
+  // A file the browser can't read at all (moved, blocked, or a path Windows can't open)
   const unreadable = (path) => "this browser can't read the file" + (path.length > 200
     ? " (its path is probably too long for Windows, over 260 characters: move the folder nearer the top of the drive, like C:\\Docs, or shorten folder names, then add it again)"
     : " (moved, renamed, or blocked by the computer?)");
@@ -221,22 +217,47 @@
     });
   }
 
-  function put(item) {
+  // One piece of a file, read into memory first: browsers can send that even where they can't send
+  // the file itself (Chrome on Windows can read a file whose path is over 260 characters, but not
+  // upload it), and a lost piece is sent again instead of the whole file.
+  const PIECE = 32 * 1048576;
+  function sendPiece(item, offset, total, body) {
     return new Promise((ok) => {
       xhr = new XMLHttpRequest();
-      xhr.open("PUT", "/knowledge/files?path=" + encodeURIComponent(item.path));
+      xhr.open("PUT", "/knowledge/files?path=" + encodeURIComponent(item.path) + "&offset=" + offset + "&total=" + total);
       xhr.setRequestHeader("HX-Request", "true");
-      xhr.upload.onprogress = (e) => item.onprogress(e.loaded);
+      xhr.upload.onprogress = (e) => item.onprogress(offset + e.loaded);
       xhr.onload = () => {
         let r = {};
         try { r = JSON.parse(xhr.responseText); } catch (err) { r = { error: "HTTP " + xhr.status }; }
         if (xhr.status === 401) r.error = "signed out: sign in again, then add the same documents to carry on";
-        ok(xhr.status < 300 ? r : { error: r.error || "HTTP " + xhr.status, status: xhr.status });
+        ok(xhr.status < 300 ? r : Object.assign(r, { error: r.error || "HTTP " + xhr.status, status: xhr.status }));
       };
       xhr.onerror = () => ok({ error: "GPU Shepherd is not reachable", net: true });
       xhr.onabort = () => ok({ error: "stopped", aborted: true });
-      xhr.send(item.file);
+      xhr.send(body);
     });
+  }
+
+  async function put(item) {
+    const size = item.file.size;
+    let offset = 0, last = {};
+    do {
+      let body;
+      try { body = new Blob([await item.file.slice(offset, Math.min(size, offset + PIECE)).arrayBuffer()]); }
+      catch (err) { return { error: unreadable(item.path) }; }
+      let r, tries = 0;
+      for (;;) {                                                   // a lost connection: try that piece again
+        r = await sendPiece(item, offset, size, body);
+        if (!r.net || stopped || ++tries > 3) break;
+        await new Promise((ok) => setTimeout(ok, 2000 * tries));
+      }
+      if (r.status === 409 && typeof r.have === "number" && r.have < size) { offset = r.have; continue; }
+      if (r.error) return r;
+      last = r;
+      offset = typeof r.received === "number" ? r.received : size;
+    } while (offset < size);
+    return last;
   }
 
   async function upload(items) {
@@ -274,7 +295,7 @@
         text.textContent = "Looking inside zips: " + (++zipsLooked) + " of " + zips;
         let list;
         try { list = await zipEntries(it.file); } catch (err) { fail(it.path, unreadable(it.path)); continue; }
-        if (list === null) { fail(it.path, "not a zip that can be opened (damaged, or not fully downloaded?)"); continue; }
+        if (list === null) { fail(it.path, "left out: its list of files can't be read (not a zip, or damaged). If it holds documents, unzip it and add the folder"); continue; }
         if (list && !list.some(isBook)) { noBooks++; continue; }     // music, videos, games: left out quietly
       }
       todo.push(it);
@@ -290,12 +311,7 @@
           " (" + (Math.round((sent + n) / 1048576)) + " of " + Math.round(total / 1048576) + " MB)";
       };
       it.onprogress(0);
-      if (!(await readable(it.file))) { fail(it.path, unreadable(it.path)); sent += it.file.size; continue; }
-      let r = await put(it);
-      if (r.net && !stopped) {                                     // the file, or the connection?
-        if (!(await readable(it.file))) r = { error: unreadable(it.path) };
-        else { await new Promise((ok) => setTimeout(ok, 3000)); r = await put(it); }  // one more try
-      }
+      const r = await put(it);
       if (r.aborted) break;
       if (r.error) fail(it.path, r.error); else added += (r.added || []).length;
       if (r.status === 401) break;

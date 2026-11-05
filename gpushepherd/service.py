@@ -45,9 +45,9 @@ class Problem(Exception):
     """A request that can't be done as asked. kind is how the dashboard shows it (error / warn /
     info); status is the HTTP status the API answers with."""
 
-    def __init__(self, msg: str, kind: str = "error", status: int = 400):
+    def __init__(self, msg: str, kind: str = "error", status: int = 400, data: dict | None = None):
         super().__init__(msg)
-        self.msg, self.kind, self.status = msg, kind, status
+        self.msg, self.kind, self.status, self.data = msg, kind, status, data or {}
 
 
 def message(err: Exception) -> str:
@@ -1950,8 +1950,17 @@ class Shepherd:
             raise
         return self._place_book(rel, dest, tmp)
 
-    async def receive_document(self, path: str, stream, size: int | None = None) -> dict:
-        """save_document for a request body streamed in (async chunks), so big files never sit in memory."""
+    async def receive_document(self, path: str, stream, size: int | None = None,
+                               offset: int | None = None, total: int | None = None) -> dict:
+        """save_document for a request body streamed in (async chunks), so big files never sit in memory.
+        With `offset` and `total` the body is one piece of a file sent in pieces, from that byte on:
+        pieces are added to <name>.part in order, and the last one puts the file in place. Until then
+        the answer is {"received": bytes so far}. A piece that doesn't start where the file stops
+        is refused with "have" (where to carry on), and a piece that fails is cut off again, so it can
+        be sent again. (Browsers send a file read into memory piece by piece even where they can't
+        send the file itself, like a Windows path over 260 characters.)"""
+        if offset is not None:
+            return await self._receive_piece(path, stream, offset, total)
         rel, dest, limit = self._book_dest(path, size)
         tmp = dest.with_name(dest.name + ".part")
         try:
@@ -1965,6 +1974,40 @@ class Shepherd:
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
+        return await asyncio.to_thread(self._place_book, rel, dest, tmp)
+
+    async def _receive_piece(self, path: str, stream, offset: int, total: int | None) -> dict:
+        if total is None or total < 0 or offset < 0 or offset > total:
+            raise Problem("A piece needs offset and total (the whole file's size), with offset at most total.")
+        rel, dest, limit = self._book_dest(path, total if offset == 0 else None)
+        if total > limit:
+            raise self._too_big(rel, limit)
+        tmp = dest.with_name(dest.name + ".part")
+        have = tmp.stat().st_size if tmp.exists() else 0
+        if offset and offset != have:
+            raise Problem(f"{rel}: this piece starts at byte {offset}, but {have} are here; carry on from there.",
+                          status=409, data={"have": have})
+        n = offset
+        try:
+            with open(tmp, "r+b" if offset else "wb") as out:
+                out.seek(offset)
+                out.truncate()
+                async for chunk in stream:
+                    n += len(chunk)
+                    if n > total:
+                        raise Problem(f"{rel}: more bytes than its size ({total}).")
+                    out.write(chunk)
+        except BaseException:
+            try:
+                if offset:
+                    os.truncate(tmp, offset)
+                else:
+                    tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        if n < total:
+            return {"received": n}
         return await asyncio.to_thread(self._place_book, rel, dest, tmp)
 
     def add_documents(self, files: list[tuple[str, object]]) -> str:
