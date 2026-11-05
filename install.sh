@@ -881,6 +881,18 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
         say "Letting containers use the GPUs under SELinux (container_use_devices)"
         setsebool -P container_use_devices on
     fi
+    # Without /dev/char links for the NVIDIA device files, any `systemctl daemon-reload` takes the
+    # GPUs away from running containers ("Failed to initialize NVML: Unknown Error"), a known NVIDIA
+    # Container Toolkit issue. Make the links now and after every boot (a udev rule).
+    if ! docker_desktop && have nvidia-ctk && [ -d /run/systemd/system ]; then
+        nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
+        if [ ! -f /etc/udev/rules.d/71-nvidia-dev-char.rules ] && [ ! -f /lib/udev/rules.d/71-nvidia-dev-char.rules ]; then
+            mkdir -p /etc/udev/rules.d
+            printf '%s\n' "# Written by GPU Shepherd: keeps containers' GPUs through a systemd reload" \
+                "ACTION==\"add\", DEVPATH==\"/bus/pci/drivers/nvidia\", RUN+=\"$(command -v nvidia-ctk) system create-dev-char-symlinks --create-all\"" \
+                >/etc/udev/rules.d/71-nvidia-dev-char.rules || true
+        fi
+    fi
 
     say "Checking that containers can see the GPUs"
     if ! docker run --rm --gpus all "$GPU_TEST_IMAGE" nvidia-smi -L; then
