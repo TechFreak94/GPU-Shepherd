@@ -85,6 +85,36 @@ fi
 info() { [ "$QUIET" -eq 1 ] || say "$@"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# `systemctl daemon-reload` takes the GPUs away from every running container (nvidia-smi then fails
+# with "Failed to initialize NVML: Unknown Error") unless /dev/char has links for the NVIDIA device
+# files: a known NVIDIA Container Toolkit issue. So unit files are only rewritten when they change,
+# and before a reload the links are made, with a udev rule that makes them again after a reboot.
+# (gpu-unlock.sh has the same helpers.)
+UDEV_RULE=/etc/udev/rules.d/71-nvidia-dev-char.rules
+UNITS_CHANGED=0
+put_unit() {   # put_unit FILE < text: write a unit file only if it is new or different
+    local new; new=$(cat)
+    if [ ! -f "$1" ] || [ "$(cat "$1")" != "$new" ]; then
+        printf '%s\n' "$new" >"$1"
+        UNITS_CHANGED=1
+    fi
+}
+keep_gpus_through_reload() {
+    have nvidia-ctk || return 0
+    nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
+    [ -f "$UDEV_RULE" ] || [ -f /lib/udev/rules.d/71-nvidia-dev-char.rules ] || {
+        mkdir -p "$(dirname "$UDEV_RULE")" &&
+        printf '%s\n' "# Written by GPU Shepherd: keeps containers' GPUs through a systemd reload" \
+            "ACTION==\"add\", DEVPATH==\"/bus/pci/drivers/nvidia\", RUN+=\"$(command -v nvidia-ctk) system create-dev-char-symlinks --create-all\"" \
+            >"$UDEV_RULE"
+    } 2>/dev/null || true
+}
+reload_units() {   # only after a unit file changed or went away
+    keep_gpus_through_reload
+    systemctl daemon-reload
+    UNITS_CHANGED=0
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --check)        CHECK=1; shift ;;
@@ -327,7 +357,7 @@ if [ "$SERVICE" = enable ]; then
        set [boot] systemd=true in /etc/wsl.conf, then wsl --shutdown in Windows)"; exit 1; }
     [ -d "$DATA_DIR" ] || { err "$DATA_DIR does not exist yet; run install.sh first"; exit 1; }
     mkdir -p "$STATE_DIR"
-    cat >"$UNIT_DIR/$UNIT.path" <<EOF
+    put_unit "$UNIT_DIR/$UNIT.path" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates. Remove with --disable-dashboard-updates.
 [Unit]
 Description=GPU Shepherd: watch for update requests from the dashboard
@@ -338,7 +368,7 @@ PathExists=$REQUEST
 [Install]
 WantedBy=multi-user.target
 EOF
-    cat >"$UNIT_DIR/$UNIT.service" <<EOF
+    put_unit "$UNIT_DIR/$UNIT.service" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates.
 [Unit]
 Description=GPU Shepherd: check for an update or update, as asked from the dashboard
@@ -350,7 +380,7 @@ Type=oneshot
 # Through bash, so SELinux (Fedora, RHEL) lets systemd run it from a clone in a home folder.
 ExecStart=/bin/bash $HERE/update.sh --from-dashboard
 EOF
-    cat >"$UNIT_DIR/$UNIT-check.service" <<EOF
+    put_unit "$UNIT_DIR/$UNIT-check.service" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates.
 [Unit]
 Description=GPU Shepherd: check for an update (nothing is changed)
@@ -362,7 +392,7 @@ Type=oneshot
 ExecStart=/bin/bash $HERE/update.sh --check --quiet
 SuccessExitStatus=10
 EOF
-    cat >"$UNIT_DIR/$UNIT-check.timer" <<EOF
+    put_unit "$UNIT_DIR/$UNIT-check.timer" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates.
 [Unit]
 Description=GPU Shepherd: check for an update once a day
@@ -376,8 +406,8 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-    systemctl daemon-reload
-    systemctl enable --now "$UNIT.path" "$UNIT-check.timer" >/dev/null
+    [ "$UNITS_CHANGED" -eq 0 ] || reload_units
+    systemctl enable --no-reload --now "$UNIT.path" "$UNIT-check.timer" >/dev/null
     unlock_service
     say "Dashboard updates are on: GPU Shepherd checks for updates daily, and Settings > Updates"
     echo "    (or the notice on the dashboard) can check now or update. Turn it off with:"
@@ -386,10 +416,10 @@ EOF
     exit 0
 elif [ "$SERVICE" = disable ]; then
     if have systemctl; then
-        systemctl disable --now "$UNIT.path" "$UNIT-check.timer" >/dev/null 2>&1 || true
+        systemctl disable --no-reload --now "$UNIT.path" "$UNIT-check.timer" >/dev/null 2>&1 || true
         rm -f "$UNIT_DIR/$UNIT.path" "$UNIT_DIR/$UNIT.service" "$UNIT_DIR/$UNIT-check.service" \
               "$UNIT_DIR/$UNIT-check.timer"
-        systemctl daemon-reload
+        reload_units
     fi
     rm -f "$REQUEST"
     [ -f "$STATUS" ] && sed -i 's/"dashboard_updates":true/"dashboard_updates":false/' "$STATUS"
@@ -569,6 +599,9 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
         warn "compose.example.yaml changed. Your compose.yaml is kept as it is; compare them with:
          git -C $HERE diff ${old:0:12} ${new:0:12} -- compose.example.yaml"
     fi
+    # Before the rebuild, so that if it ever has to reload systemd, the new container isn't the one
+    # that loses its GPUs.
+    unlock_service
     say "Rebuilding and restarting GPU Shepherd (your instances keep running)"
     # A failed build leaves the old container running; a new one that doesn't answer is replaced
     # by the old one again. Either way the clone goes back to the old code too.
@@ -576,7 +609,6 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
     write_status updating "Starting the new version and waiting for the dashboard" start
     healthy || recover "$old" "GPU Shepherd did not start on port $PORT"
     tidy_images
-    unlock_service
     write_status "done" "GPU Shepherd $(version_at HEAD) is running ($(g log -1 --format='%h, %cs' HEAD))."
     say "GPU Shepherd $(version_at HEAD) is running $(g log -1 --format='%h from %cs: %s' HEAD)"
     if [ -n "$old" ] && [ "$old" != "$new" ]; then

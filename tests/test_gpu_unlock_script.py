@@ -198,3 +198,23 @@ def test_dashboard_request(m):
     req.write_text("rm -rf\n")
     m.run("--from-dashboard")
     assert m.configured() == CARDS[0]
+
+
+def test_service_reloads_systemd_only_when_units_change(m):
+    """A daemon-reload takes the GPUs away from running containers (NVML "Unknown Error"); every
+    update runs --install-service, so it must not reload unless a unit file changed, and before a
+    reload it makes the /dev/char links that keep the GPUs."""
+    calls = m.root / "calls"
+    for name in ("systemctl", "nvidia-ctk"):
+        (m.root / "bin" / name).write_text(f'#!/bin/bash\necho "{name} $*" >>"{calls}"\nexit 0\n')
+        (m.root / "bin" / name).chmod(0o755)
+    (m.root / "run/systemd/system").mkdir(parents=True)
+    m.run("--install-service")
+    log = calls.read_text().splitlines()
+    reload = log.index("systemctl daemon-reload")
+    assert "nvidia-ctk system create-dev-char-symlinks --create-all" in log[:reload]
+    assert (m.root / "etc/udev/rules.d/71-nvidia-dev-char.rules").exists()
+    assert not [c for c in log if c.startswith("systemctl enable") and "--no-reload" not in c]
+    calls.write_text("")
+    m.run("--install-service")                                       # what each update does
+    assert "daemon-reload" not in calls.read_text()

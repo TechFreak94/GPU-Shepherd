@@ -82,6 +82,35 @@ fi
 info() { [ "$QUIET" -eq 1 ] || say "$@"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# `systemctl daemon-reload` takes the GPUs away from every running container (nvidia-smi then fails
+# with "Failed to initialize NVML: Unknown Error") unless /dev/char has links for the NVIDIA device
+# files: a known NVIDIA Container Toolkit issue. So unit files are only rewritten when they change,
+# and before a reload the links are made, with a udev rule that makes them again after a reboot.
+UDEV_RULE=$T/etc/udev/rules.d/71-nvidia-dev-char.rules
+UNITS_CHANGED=0
+put_unit() {   # put_unit FILE < text: write a unit file only if it is new or different
+    local new; new=$(cat)
+    if [ ! -f "$1" ] || [ "$(cat "$1")" != "$new" ]; then
+        printf '%s\n' "$new" >"$1"
+        UNITS_CHANGED=1
+    fi
+}
+keep_gpus_through_reload() {
+    have nvidia-ctk || return 0
+    nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
+    [ -f "$UDEV_RULE" ] || [ -f "$T/lib/udev/rules.d/71-nvidia-dev-char.rules" ] || {
+        mkdir -p "$(dirname "$UDEV_RULE")" &&
+        printf '%s\n' "# Written by GPU Shepherd: keeps containers' GPUs through a systemd reload" \
+            "ACTION==\"add\", DEVPATH==\"/bus/pci/drivers/nvidia\", RUN+=\"$(command -v nvidia-ctk) system create-dev-char-symlinks --create-all\"" \
+            >"$UDEV_RULE"
+    } 2>/dev/null || true
+}
+reload_units() {   # only after a unit file changed or went away
+    keep_gpus_through_reload
+    systemctl daemon-reload
+    UNITS_CHANGED=0
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --check|--install|--uninstall|--install-service|--remove-service|--boot|--confirm)
@@ -280,7 +309,7 @@ EOF
 
 ensure_safety_units() {   # the boot and 10-minute checks; harmless while nothing is unlocked
     have systemctl || return 0
-    cat >"$UNIT_DIR/$UNIT-boot.service" <<EOF
+    put_unit "$UNIT_DIR/$UNIT-boot.service" <<EOF
 # Written by $HERE/gpu-unlock.sh. Turns gpu-unlock off after a boot that skipped it or did not stay up.
 [Unit]
 Description=GPU Shepherd: gpu-unlock boot safety check
@@ -293,7 +322,7 @@ ExecStart=/bin/bash $HERE/gpu-unlock.sh --boot --quiet
 [Install]
 WantedBy=multi-user.target rescue.target
 EOF
-    cat >"$UNIT_DIR/$UNIT-confirm.service" <<EOF
+    put_unit "$UNIT_DIR/$UNIT-confirm.service" <<EOF
 # Written by $HERE/gpu-unlock.sh.
 [Unit]
 Description=GPU Shepherd: check that gpu-unlock worked on this boot
@@ -302,7 +331,7 @@ Description=GPU Shepherd: check that gpu-unlock worked on this boot
 Type=oneshot
 ExecStart=/bin/bash $HERE/gpu-unlock.sh --confirm --quiet
 EOF
-    cat >"$UNIT_DIR/$UNIT-confirm.timer" <<EOF
+    put_unit "$UNIT_DIR/$UNIT-confirm.timer" <<EOF
 # Written by $HERE/gpu-unlock.sh.
 [Unit]
 Description=GPU Shepherd: check gpu-unlock $CONFIRM_AFTER after boot
@@ -313,8 +342,8 @@ OnBootSec=$CONFIRM_AFTER
 [Install]
 WantedBy=timers.target
 EOF
-    systemctl daemon-reload
-    systemctl enable "$UNIT-boot.service" "$UNIT-confirm.timer" >/dev/null 2>&1 || warn "could not enable the boot safety checks"
+    [ "$UNITS_CHANGED" -eq 0 ] || reload_units
+    systemctl enable --no-reload "$UNIT-boot.service" "$UNIT-confirm.timer" >/dev/null 2>&1 || warn "could not enable the boot safety checks"
 }
 
 # rollback NOTE: unlock nothing from the next boot (this boot stays as it is)
@@ -408,9 +437,9 @@ do_uninstall() {
     fi
     rm -rf "$SRC"
     if have systemctl; then
-        systemctl disable "$UNIT-boot.service" "$UNIT-confirm.timer" >/dev/null 2>&1 || true
+        systemctl disable --no-reload "$UNIT-boot.service" "$UNIT-confirm.timer" >/dev/null 2>&1 || true
         rm -f "$UNIT_DIR/$UNIT-boot.service" "$UNIT_DIR/$UNIT-confirm.service" "$UNIT_DIR/$UNIT-confirm.timer"
-        systemctl daemon-reload
+        reload_units
     fi
     RUN_MSG="gpu-unlock is removed. Reboot to put the cards back to normal."
     say "$RUN_MSG"
@@ -464,7 +493,7 @@ install_service() {
     have systemctl && [ -d "$T/run/systemd/system" ] || { err "systemd is needed for the dashboard to manage gpu-unlock"; exit 1; }
     [ -d "$DATA_DIR" ] || { err "$DATA_DIR does not exist yet; run install.sh first"; exit 1; }
     mkdir -p "$SHARED"
-    cat >"$UNIT_DIR/$UNIT.path" <<EOF
+    put_unit "$UNIT_DIR/$UNIT.path" <<EOF
 # Written by $HERE/gpu-unlock.sh --install-service. Remove with --remove-service.
 [Unit]
 Description=GPU Shepherd: watch for gpu-unlock requests from the dashboard
@@ -475,7 +504,7 @@ PathExists=$REQUEST
 [Install]
 WantedBy=multi-user.target
 EOF
-    cat >"$UNIT_DIR/$UNIT.service" <<EOF
+    put_unit "$UNIT_DIR/$UNIT.service" <<EOF
 # Written by $HERE/gpu-unlock.sh --install-service.
 [Unit]
 Description=GPU Shepherd: change gpu-unlock, as asked from the dashboard
@@ -486,8 +515,8 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/bin/bash $HERE/gpu-unlock.sh --from-dashboard
 EOF
-    systemctl daemon-reload
-    systemctl enable --now "$UNIT.path" >/dev/null
+    [ "$UNITS_CHANGED" -eq 0 ] || reload_units
+    systemctl enable --no-reload --now "$UNIT.path" >/dev/null
     read_state
     [ "$ST_STATE" = off ] || ensure_safety_units
     write_status
@@ -496,9 +525,9 @@ EOF
 
 remove_service() {
     if have systemctl; then
-        systemctl disable --now "$UNIT.path" >/dev/null 2>&1 || true
+        systemctl disable --no-reload --now "$UNIT.path" >/dev/null 2>&1 || true
         rm -f "$UNIT_DIR/$UNIT.path" "$UNIT_DIR/$UNIT.service"
-        systemctl daemon-reload
+        reload_units
     fi
     rm -f "$REQUEST"
     write_status

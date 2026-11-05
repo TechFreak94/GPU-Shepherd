@@ -65,8 +65,17 @@ class Engine:
     def plan(self, action: str, target: str | None, extra_wanted: set[str] | None = None) -> Plan:
         snap = self.snapshot()
         gpu_ids = [g.index for g in snap.gpus]
-        return make_plan(gpu_ids, snap.instances, snap.allocations, action, target, extra_wanted,
-                         self.usable(snap))
+        if snap.gpu_error:
+            # GPUs that can't be read are not gone: plan with the ones running containers hold, so a
+            # passing nvidia-smi failure never stops or moves what is running
+            gpu_ids = sorted({g for held in snap.allocations.values() for g in held})
+        p = make_plan(gpu_ids, snap.instances, snap.allocations, action, target, extra_wanted,
+                      self.usable(snap))
+        if snap.gpu_error and not p.error and action != "stop" and (p.side_effects or p.to_stop):
+            p.error = "it would stop or move other apps"
+        if snap.gpu_error and p.error:
+            p.error = f"The GPUs can't be read right now, so nothing was changed: {p.error}. ({snap.gpu_error})"
+        return p
 
     # ------------------------------------------------------------------ model servers on the GPUs
     def model_needs(self, inst: Instance, cat: Catalog) -> dict[str, int]:

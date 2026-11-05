@@ -53,6 +53,8 @@ def _query() -> tuple[list[Gpu], str]:
             capture_output=True, text=True, timeout=10, check=True).stdout
     except FileNotFoundError:
         return [], "nvidia-smi not found - give GPU Shepherd's container the 'utility' GPU capability"
+    except subprocess.CalledProcessError as err:
+        return [], explain_failure(f"{err.stdout or ''}\n{err.stderr or ''}", err.returncode)
     except (subprocess.SubprocessError, OSError) as err:
         return [], f"nvidia-smi failed: {err}"
     gpus = []
@@ -66,6 +68,23 @@ def _query() -> tuple[list[Gpu], str]:
         except ValueError:
             continue
     return gpus, ""
+
+
+def explain_failure(output: str, code: int) -> str:
+    """What a failed nvidia-smi means, and what to do about it, from what it printed."""
+    said = " ".join(output.split())[:300]
+    low = said.lower()
+    if "unknown error" in low:
+        return ("GPU Shepherd's container lost access to the GPUs (NVML: Unknown Error). That happens "
+                "when the host reloads systemd while containers run. Running apps lost them too: "
+                "restart the containers on the host (docker restart $(docker ps -q)) or reboot.")
+    if "version mismatch" in low:
+        return ("The NVIDIA driver on the host was updated but the old one is still loaded "
+                "(Driver/library version mismatch). Reboot the machine.")
+    if "couldn't communicate" in low or "no devices were found" in low:
+        return (f"The NVIDIA driver isn't working on the host ({said}). Run nvidia-smi on the host; "
+                "after a kernel update, reinstalling the driver or rebooting usually fixes it.")
+    return f"nvidia-smi failed (exit status {code}): {said or 'no output'}"
 
 
 def _num(text: str) -> float:
