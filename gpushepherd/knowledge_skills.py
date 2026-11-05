@@ -1,4 +1,4 @@
-"""Agent skills made from books: the book's methods, steps and checklists, in the open Agent
+"""Agent skills made from documents (books, manuals): their methods, steps and checklists, in the open Agent
 Skills format (a folder with SKILL.md, https://agentskills.io) that Hermes Agent reads.
 
 A knowledge base lets a chat model look facts up in a book; a skill tells an agent what to *do*
@@ -7,10 +7,11 @@ and when. Making one reads the whole book with the user's own model server, a pa
 then one SKILL.md from all the notes. The chapters go beside it in references/, so the agent can
 read the details when it uses the skill.
 
-    <data>/book-skills/<name>/SKILL.md          the draft, which the user can edit
-    <data>/book-skills/<name>/references/*.md   the book's chapters
+    <data>/knowledge/skills/<name>/SKILL.md          the draft, which the user can edit
+    <data>/knowledge/skills/<name>/references/*.md   the document's chapters
 Nothing reaches an agent until the user installs the draft: then the folder is copied to the
-agent's skills folder (Hermes Agent: <its data folder>/skills/books/<name>).
+agent's skills folder (Hermes Agent: <its data folder>/skills/knowledge/<name>; older
+versions used skills/books/<name>, which an install or a clear-out removes).
 
 `make` takes the chat call as a function, so this module has no network code of its own.
 """
@@ -24,7 +25,8 @@ from typing import Callable
 MAX_PART_WORDS = 12000
 MIN_PART_WORDS = 1500
 NOTES_WORDS = 350            # asked-for length of each part's notes
-SKILLS_FOLDER = "skills/books"   # inside Hermes Agent's data folder
+SKILLS_FOLDER = "skills/knowledge"   # inside Hermes Agent's data folder
+OLD_SKILLS_FOLDER = "skills/books"   # where older versions put them
 
 NOTES_PROMPT = """You are turning a book into a skill for an AI agent: instructions it can follow.
 Below is part {n} of {total} of the book "{name}".
@@ -189,8 +191,18 @@ def write(folder: Path, skill_md: str, text: str) -> None:
 def install(draft: Path, skills_root: Path) -> Path:
     """Copy a draft into an agent's skills folder, replacing an older copy of it."""
     dest = skills_root / SKILLS_FOLDER / draft.name
-    if dest.exists():
-        shutil.rmtree(dest)
+    uninstall(draft.name, skills_root)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(draft, dest)
     return dest
+
+
+def uninstall(name: str, skills_root: Path) -> bool:
+    """Remove a skill from an agent's skills folder (where this version and older ones put it)."""
+    gone = False
+    for folder in (SKILLS_FOLDER, OLD_SKILLS_FOLDER):
+        dest = skills_root / folder / name
+        if dest.is_dir() and not dest.is_symlink():
+            shutil.rmtree(dest)
+            gone = True
+    return gone

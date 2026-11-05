@@ -1,21 +1,29 @@
-"""Books: ebooks turned into plain text that chat apps can search (and agents can learn from).
+"""Knowledge: documents (ebooks, manuals, notes) turned into plain text that chat apps can search
+(and agents can learn from).
 
-A books folder (<data>/books unless another one GPU Shepherd can see is chosen) holds the ebooks,
-in any folder layout. A scan finds them and converts each one to Markdown:
+Everything lives in one folder, <data>/knowledge:
 
-    EPUB, PDF, TXT, Markdown    converted here (PDF with pypdf)
-    AZW3, MOBI, PRC             only counted as other copies of a book: converting them needs Calibre
+    documents/          the documents (unless another folder GPU Shepherd can see is chosen), in any layout
+    index.yaml          the documents found and what happened to them
+    text/<key>.md       each document's text
+    skills/<slug>/      skills drafted from documents (knowledge_skills.py)
 
-A book often comes in several formats: copies in the same folder with the same name. Only the best
-copy is converted: EPUB > AZW3 > MOBI > PRC > PDF > Markdown > TXT. A book whose text matches one
-already found (the same book from two bundles, under another name) is a duplicate and skipped. Books that
-can't be read (DRM, a scanned PDF with no text) are listed with the reason.
+A scan finds the documents and converts each one to Markdown:
 
-    <data>/state/books.yaml     the books found and what happened to them (the index)
-    <data>/book-text/<key>.md   each book's text
+    EPUB, PDF, TXT, Markdown, HTML, DOCX    converted here (PDF with pypdf)
+    AZW3, MOBI, PRC                         only counted as other copies: converting them needs Calibre
 
-Pure file work: no network and no containers here. Sending books to an app is in service.py
-with connectors/openwebui.py; skills are made in book_skills.py.
+A document often comes in several formats: copies in the same folder with the same name. Only the best
+copy is converted: EPUB > AZW3 > MOBI > PRC > PDF > DOCX > HTML > Markdown > TXT. One whose text matches one
+already found (the same book from two bundles, under another name) is a duplicate and skipped. Ones that
+can't be read (DRM, a scanned PDF with no text) are listed with the reason. When the reader gets better
+(READER goes up), the ones it couldn't read are tried again at the next scan.
+
+Older installs kept these as <data>/books, <data>/state/books.yaml, <data>/book-text and
+<data>/book-skills: migrate() moves them on first use.
+
+Pure file work: no network and no containers here. Sending documents to an app is in service.py
+with connectors/openwebui.py; skills are made in knowledge_skills.py.
 """
 from __future__ import annotations
 
@@ -27,7 +35,11 @@ import re
 import shutil
 import threading
 import time
+import unicodedata
 import zipfile
+from zlib import error as zlib_error
+from html.entities import name2codepoint
+from urllib.parse import unquote
 from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -37,19 +49,24 @@ import yaml
 
 from .config import load_yaml
 
-# the lower, the better a copy to read the book from
-RANK = {".epub": 0, ".azw3": 1, ".mobi": 2, ".prc": 3, ".pdf": 4, ".md": 5, ".markdown": 5, ".txt": 6}
-CONVERTS = {".epub", ".pdf", ".md", ".markdown", ".txt"}
+READER = 2                   # goes up when reading gets better: documents it couldn't read are tried again
+HOME = "knowledge"           # <data>/knowledge holds it all
+# the lower, the better a copy to read a document from
+RANK = {".epub": 0, ".azw3": 1, ".mobi": 2, ".prc": 3, ".pdf": 4, ".docx": 5, ".md": 6, ".markdown": 6, ".txt": 7}
+CONVERTS = {".epub", ".pdf", ".docx", ".md", ".markdown", ".txt"}
 TEXT = {".md", ".markdown", ".txt"}
 TEXT_BOOK_BYTES = 20480      # a text file in a zip smaller than this is a readme or licence, not a book
-MIN_WORDS = 200              # less text than this: nothing to search (a scanned PDF, an empty file)
+MIN_WORDS = 200              # less text than this in an ebook: nothing to search (a scanned PDF, pictures only)
+MIN_TEXT_WORDS = 20          # a note (TXT, Markdown, DOCX) can be short
+# loose text files that come with ebooks but aren't documents
+NOT_DOCUMENTS = re.compile(r"^(read ?me|license|licence|copying|changelog|credits|install|errata|version)\b", re.I)
 SAMPLE_WORDS = 400           # words compared to find the same book under another name
 UPLOAD_MB = 4096             # the biggest book the dashboard takes as an upload (streamed to disk, so only free space matters)
 ZIP_MB = 65536               # the biggest zip of books it takes (unpacked into the books folder)
 
 
 class BookError(Exception):
-    """Why a book can't be read."""
+    """Why a document can't be read."""
 
 
 @dataclass
@@ -67,6 +84,7 @@ class Book:
     fingerprint: str = ""
     stamp: str = ""              # size and time of the copy the text came from
     sent: dict[str, str] = field(default_factory=dict)      # "<app>/<knowledge>" -> the app's file id
+    reader: int = 0              # READER when it was read
 
     @property
     def name(self) -> str:
@@ -90,6 +108,16 @@ def _stem(name: str) -> str:
     return re.sub(r"\b(epub|pdf|mobi|azw3|retail|ebook|v\d+)\b", "", s).strip()
 
 
+def _readme(path: Path) -> bool:
+    """A short readme or licence beside the ebooks: not a document."""
+    if path.suffix.lower() not in TEXT or not NOT_DOCUMENTS.match(path.stem):
+        return False
+    try:
+        return path.stat().st_size < TEXT_BOOK_BYTES
+    except OSError:
+        return True
+
+
 def find(folder: Path) -> list[tuple[str, list[str]]]:
     """The books in a folder: for each, its best copy and the other copies (paths relative to
     the folder). Copies of one book are files in the same folder with the same name (apart from
@@ -99,7 +127,7 @@ def find(folder: Path) -> list[tuple[str, list[str]]]:
         dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_duplicates")))
         rel = os.path.relpath(root, folder)
         for f in sorted(files):
-            if Path(f).suffix.lower() in RANK and not f.startswith("."):
+            if Path(f).suffix.lower() in RANK and not f.startswith(".") and not _readme(Path(root) / f):
                 by_dir.setdefault("" if rel == "." else rel, []).append(f)
     out = []
     for d, files in by_dir.items():
@@ -125,7 +153,7 @@ def safe_rel(path: str) -> str:
     if len(parts) > 12 or len("/".join(parts)) > 400:
         raise BookError(f"{path}: folders too deep or name too long")
     if Path(parts[-1]).suffix.lower() not in RANK and Path(parts[-1]).suffix.lower() != ".zip":
-        raise BookError(f"{parts[-1]}: not a book (EPUB, PDF, TXT, Markdown, AZW3, MOBI, PRC) or a zip of books")
+        raise BookError(f"{parts[-1]}: not a document (EPUB, PDF, DOCX, TXT, Markdown, AZW3, MOBI, PRC) or a zip of them")
     return "/".join(parts)
 
 
@@ -229,6 +257,8 @@ class _Text(HTMLParser):
             self.parts.append("\n- ")
         elif tag == "br":
             self.parts.append("\n")
+        elif tag in ("td", "th"):
+            self.parts.append(" ")
         elif tag in self.BLOCK:
             self.parts.append("\n\n")
 
@@ -261,51 +291,185 @@ def html_text(markup: str) -> str:
     return p.text()
 
 
-_NS = {"c": "urn:oasis:names:tc:opendocument:xmlns:container", "opf": "http://www.idpf.org/2007/opf",
-       "dc": "http://purl.org/dc/elements/1.1/", "enc": "http://www.w3.org/2001/04/xmlenc#"}
 _FONT_OBFUSCATION = ("http://www.idpf.org/2008/embedding", "http://ns.adobe.com/pdf/enc#RC")
+_HTML = (".xhtml", ".html", ".htm", ".xml")
+_HTML_TYPES = ("application/xhtml+xml", "text/html", "application/x-dtbook+xml")
+
+
+def _local(tag) -> str:
+    """An XML tag without its namespace: EPUBs in the wild use the wrong one, or none."""
+    return tag.rsplit("}", 1)[-1].lower() if isinstance(tag, str) else ""
+
+
+def _all(root, name: str):
+    return (e for e in root.iter() if _local(e.tag) == name)
+
+
+def _xml(raw: bytes):
+    """Parse XML that may have a BOM, HTML entities (&nbsp;) or junk around it; None if it can't be."""
+    try:
+        return ElementTree.fromstring(raw)
+    except ElementTree.ParseError:
+        pass
+    t = raw.decode("utf-8", "replace").lstrip("﻿ \r\n\t")
+    t = re.sub(r"&([a-zA-Z][a-zA-Z0-9]*);", lambda m: m.group(0) if m.group(1) in ("amp", "lt", "gt", "quot", "apos")
+               else f"&#{name2codepoint[m.group(1)]};" if m.group(1) in name2codepoint else "", t)
+    t = re.sub(r"&(?![a-zA-Z#][a-zA-Z0-9]*;)", "&amp;", t)
+    try:
+        return ElementTree.fromstring(t[t.find("<"):].encode())
+    except ElementTree.ParseError:
+        return None
+
+
+def _decode(raw: bytes) -> str:
+    """A chapter's bytes as text, in the encoding it says it is in (UTF-8 if it doesn't say)."""
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", "replace")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw[3:].decode("utf-8", "replace")
+    m = re.search(rb"""(?:encoding|charset)\s*=\s*["']?([A-Za-z0-9_\-]+)""", raw[:1024])
+    try:
+        return raw.decode(m.group(1).decode() if m else "utf-8")
+    except (LookupError, UnicodeDecodeError):
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return raw.decode("cp1252", "replace")
 
 
 def read_epub(path: Path) -> tuple[str, str, str]:
-    """An EPUB's title, author and text, its chapters in reading order."""
+    """An EPUB's title, author and text, its chapters in reading order. Copes with what EPUBs in the
+    wild get wrong: names in the package that differ from the files (escaped, other case), a broken
+    or missing package file, and chapters left out of the reading order."""
     try:
         z = zipfile.ZipFile(path)
     except (zipfile.BadZipFile, OSError) as err:
-        raise BookError(f"not a readable EPUB ({err})") from err
+        raise BookError(f"not a readable EPUB: damaged or not fully copied ({err})") from err
     with z:
-        names = set(z.namelist())
-        if "META-INF/rights.xml" in names:
-            raise BookError("protected by DRM")
-        try:
-            container = ElementTree.fromstring(z.read("META-INF/container.xml"))
-            opf_path = container.find(".//c:rootfile", _NS).get("full-path")
-            opf = ElementTree.fromstring(z.read(opf_path))
-        except (KeyError, AttributeError, ElementTree.ParseError) as err:
-            raise BookError("not a readable EPUB (no package file)") from err
-        base = posixpath.dirname(opf_path)
-        items = {i.get("id"): posixpath.normpath(posixpath.join(base, html.unescape(i.get("href", ""))))
-                 for i in opf.iterfind(".//opf:manifest/opf:item", _NS)}
-        spine = [items[r.get("idref")] for r in opf.iterfind(".//opf:spine/opf:itemref", _NS) if r.get("idref") in items]
-        if "META-INF/encryption.xml" in names:            # fonts may be obfuscated; text must not be encrypted
-            enc = ElementTree.fromstring(z.read("META-INF/encryption.xml"))
-            for data in enc.iterfind(".//enc:EncryptedData", _NS):
-                method = data.find("enc:EncryptionMethod", _NS)
-                ref = data.find(".//enc:CipherReference", _NS)
-                if ref is not None and (method is None or method.get("Algorithm") not in _FONT_OBFUSCATION) \
-                        and posixpath.normpath(ref.get("URI", "")) in spine:
-                    raise BookError("protected by DRM")
-        title = (opf.findtext(".//dc:title", "", _NS) or "").strip()
-        author = (opf.findtext(".//dc:creator", "", _NS) or "").strip()
-        chapters = []
-        for name in spine:
+        names = [n for n in z.namelist() if not n.endswith("/")]
+        lower = {n.lower(): n for n in names}
+
+        def member(href: str) -> str | None:
+            for n in (href, unquote(href)):
+                n = posixpath.normpath(n).lstrip("/")
+                if n in names or n.lower() in lower:
+                    return n if n in names else lower[n.lower()]
+            return None
+
+        def data(name: str) -> bytes:
             try:
-                raw = z.read(name).decode("utf-8", "replace")
-            except KeyError:
+                return z.read(name)
+            except (KeyError, zipfile.BadZipFile, NotImplementedError, RuntimeError, OSError, EOFError,
+                    zlib_error) as err:
+                raise _Unreadable(name) from err
+
+        encrypted = set()
+        if "META-INF/encryption.xml" in names:            # fonts may be obfuscated; text must not be encrypted
+            enc = _xml(data("META-INF/encryption.xml"))
+            for d in (_all(enc, "encrypteddata") if enc is not None else ()):
+                method = next(_all(d, "encryptionmethod"), None)
+                ref = next(_all(d, "cipherreference"), None)
+                if ref is not None and (method is None or method.get("Algorithm") not in _FONT_OBFUSCATION):
+                    encrypted.add(member(ref.get("URI", "")) or ref.get("URI", ""))
+        opf = opf_path = None
+        container = _xml(data("META-INF/container.xml")) if "META-INF/container.xml" in names else None
+        root = next(_all(container, "rootfile"), None) if container is not None else None
+        if root is not None and member(root.get("full-path", "")):
+            opf_path = member(root.get("full-path", ""))
+        else:
+            opf_path = next((n for n in names if n.lower().endswith(".opf")), None)
+        if opf_path:
+            opf = _xml(data(opf_path))
+        title = author = ""
+        order: list[str] = []
+        if opf is not None:
+            base = posixpath.dirname(opf_path)
+            items = {}
+            for i in _all(opf, "item"):
+                href = i.get("href", "")
+                m = member(posixpath.join(base, href)) if href else None
+                if m:
+                    items[i.get("id")] = (m, (i.get("media-type") or "").lower())
+            for r in _all(opf, "itemref"):
+                if r.get("idref") in items and items[r.get("idref")][0] not in order:
+                    order.append(items[r.get("idref")][0])
+            if not order:                                  # no reading order: the pages in the manifest
+                order = [m for m, t in items.values() if t in _HTML_TYPES or m.lower().endswith(_HTML)]
+            title = next((e.text or "" for e in _all(opf, "title") if (e.text or "").strip()), "").strip()
+            author = next((e.text or "" for e in _all(opf, "creator") if (e.text or "").strip()), "").strip()
+        pages = [n for n in names if n.lower().endswith((".xhtml", ".html", ".htm")) and not n.startswith("META-INF/")]
+        if not order:                                      # no usable package file: every page, by name
+            order = sorted(pages)
+        if encrypted & (set(order) | set(pages)):
+            raise BookError("protected by DRM")
+        chapters, bad = [], 0
+        for name in order:
+            try:
+                t = html_text(_decode(data(name)))
+            except _Unreadable:
+                bad += 1
                 continue
-            t = html_text(raw)
             if t:
                 chapters.append(t)
-    return title, author, "\n\n".join(chapters)
+        text = "\n\n".join(chapters)
+        if len(text.split()) < MIN_WORDS:                 # chapters outside the reading order
+            rest = [n for n in sorted(pages) if n not in order]
+            for name in rest:
+                try:
+                    t = html_text(_decode(data(name)))
+                except _Unreadable:
+                    bad += 1
+                    continue
+                if t:
+                    chapters.append(t)
+            text = "\n\n".join(chapters)
+        if bad and not chapters:
+            raise BookError("not a readable EPUB: its pages can't be unpacked (damaged, or not fully copied)")
+        if "META-INF/rights.xml" in names and _garbled(text):
+            raise BookError("protected by DRM")
+    if _garbled(text):
+        raise BookError("its text is scrambled: protected by DRM, or damaged")
+    return title, author, text
+
+
+class _Unreadable(Exception):
+    pass
+
+
+def _garbled(text: str) -> bool:
+    """Encrypted or binary bytes read as text: mostly replacement and control characters."""
+    sample = text[:20000]
+    if len(sample) < 500:
+        return False
+    odd = sum(1 for c in sample if c == "�" or (unicodedata.category(c) in ("Cc", "Co", "Cn") and c not in "\n\t"))
+    return odd > len(sample) * 0.05
+
+
+def read_docx(path: Path) -> tuple[str, str, str]:
+    """A Word document's title, author and text: its paragraphs, headings kept."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            body = _xml(z.read("word/document.xml"))
+            core = _xml(z.read("docProps/core.xml")) if "docProps/core.xml" in z.namelist() else None
+    except (zipfile.BadZipFile, KeyError, OSError, NotImplementedError, RuntimeError, zlib_error) as err:
+        raise BookError(f"not a readable Word document ({err.__class__.__name__})") from err
+    if body is None:
+        raise BookError("not a readable Word document")
+    out = []
+    for para in _all(body, "p"):
+        style = next((e.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val", "")
+                      for e in _all(para, "pstyle")), "")
+        t = "".join(e.text or "" if _local(e.tag) == "t" else "\t" if _local(e.tag) == "tab" else ""
+                    for e in para.iter()).strip()
+        if not t:
+            continue
+        level = 1 if re.match(r"(?i)title", style) else int(m.group(1)) if (m := re.match(r"(?i)heading ?(\d)", style)) else 0
+        out.append("#" * min(level, 6) + " " + t if level else t)
+    title = author = ""
+    if core is not None:
+        title = next((e.text or "" for e in _all(core, "title")), "").strip()
+        author = next((e.text or "" for e in _all(core, "creator")), "").strip()
+    return title, author, "\n\n".join(out)
 
 
 def read_pdf(path: Path) -> tuple[str, str, str]:
@@ -361,19 +525,23 @@ def pdf_page_text(text: str) -> str:
 
 
 def read(path: Path) -> tuple[str, str, str]:
-    """A book's title, author and text (Markdown). Raises BookError when it can't be read."""
+    """A document's title, author and text (Markdown). Raises BookError when it can't be read."""
     ext = path.suffix.lower()
+    short = MIN_WORDS
     if ext == ".epub":
         title, author, text = read_epub(path)
     elif ext == ".pdf":
         title, author, text = read_pdf(path)
-    elif ext in (".md", ".markdown", ".txt"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        title, author = "", ""
+    elif ext == ".docx":
+        title, author, text = read_docx(path)
+        short = MIN_TEXT_WORDS
+    elif ext in TEXT:
+        text = _decode(path.read_bytes())
+        title, author, short = "", "", MIN_TEXT_WORDS
     else:
         raise BookError(f"{ext[1:].upper()} needs Calibre to convert; add an EPUB or PDF copy instead")
-    if len(text.split()) < MIN_WORDS:
-        raise BookError("almost no text in it")
+    if len(text.split()) < short:
+        raise BookError("almost no text in it" + (" (only pictures?)" if ext == ".epub" else ""))
     return title, author, text
 
 
@@ -392,13 +560,69 @@ def markdown(b: Book, text: str) -> str:
 
 # --------------------------------------------------------------------------- the index
 
+def migrate(root: Path) -> list[str]:
+    """Move an older install's books (<data>/books, state/books.yaml, book-text, book-skills) into
+    <data>/knowledge. Renames on one disk, so even a big library moves at once. A books folder that
+    can't be renamed (another disk mounted there) stays where it is and is used from there.
+    Returns what was moved, for the log."""
+    home, moved = root / HOME, []
+    old_index, new_index = root / "state" / "books.yaml", home / "index.yaml"
+    data = {}
+    if old_index.exists() and not new_index.exists():
+        try:
+            data = load_yaml(old_index.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            data = {}
+    for old, new in ((root / "book-text", home / "text"), (root / "book-skills", home / "skills"),
+                     (root / "books", home / "documents")):
+        if not old.is_dir() or new.exists():
+            continue
+        if old.name == "books" and data.get("folder") not in ("", None, str(old)):
+            continue                                     # another folder is used: leave this one alone
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            os.rename(old, new)
+            moved.append(f"{old} -> {new}")
+            if data.get("folder") == str(old):
+                data["folder"] = ""
+        except OSError:
+            if old.name == "books":
+                data["folder"] = str(old)
+    if old_index.exists() and not new_index.exists():
+        home.mkdir(parents=True, exist_ok=True)
+        new_index.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        old_index.unlink(missing_ok=True)
+        moved.append(f"{old_index} -> {new_index}")
+    elif not new_index.exists() and data.get("folder"):
+        home.mkdir(parents=True, exist_ok=True)
+        new_index.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return moved
+
+
+def size(path: Path) -> tuple[int, int]:
+    """How many files a folder holds and their bytes (0, 0 if it isn't there)."""
+    n = total = 0
+    for root, _dirs, names in os.walk(path):
+        for f in names:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+                n += 1
+            except OSError:
+                pass
+    return n, total
+
+
 class Library:
-    """The books folder, the books found in it and their text."""
+    """The documents folder, the documents found in it and their text."""
 
     def __init__(self, root: Path | str):
         self.root = Path(root)
-        self.index_file = self.root / "state" / "books.yaml"
-        self.text_dir = self.root / "book-text"
+        self.home = self.root / HOME
+        self.moved = migrate(self.root)
+        self.index_file = self.home / "index.yaml"
+        self.text_dir = self.home / "text"
+        self.skills_dir = self.home / "skills"
+        self.default_folder = self.home / "documents"
         self._lock = threading.RLock()
 
     # the index: {folder: str, books: {key: Book}, sends: [...], skills: {...}}
@@ -432,7 +656,7 @@ class Library:
 
     def folder(self, data: dict | None = None) -> Path:
         data = data if data is not None else self.load()
-        return Path(data.get("folder") or self.root / "books")
+        return Path(data.get("folder") or self.default_folder)
 
     def books(self) -> list[Book]:
         return sorted(self.load()["books"].values(), key=lambda b: (b.group.lower(), b.name.lower()))
@@ -448,7 +672,7 @@ class Library:
         """Find the books in the folder and convert the new and changed ones. Returns counts."""
         folder = self.folder()
         if not folder.is_dir():
-            raise BookError(f"GPU Shepherd can't see the books folder {folder}")
+            raise BookError(f"GPU Shepherd can't see the documents folder {folder}")
         found = find(folder)
         old = self.load()["books"]
         books: dict[str, Book] = {}
@@ -466,11 +690,13 @@ class Library:
             prev = old.get(key)
             b = Book(key=key, path=rel, group=rel.split("/", 1)[0] if "/" in rel else "", other_copies=others,
                      stamp=stamp)
-            if prev and prev.stamp == stamp and (prev.status != "ready" or self.text_path(key).exists()):
+            if prev and prev.stamp == stamp and (self.text_path(key).exists() if prev.status in ("ready", "duplicate")
+                                                 else prev.reader >= READER):
                 b.title, b.author, b.status, b.reason = prev.title, prev.author, prev.status, prev.reason
-                b.words, b.fingerprint, b.sent = prev.words, prev.fingerprint, prev.sent
+                b.words, b.fingerprint, b.sent, b.reader = prev.words, prev.fingerprint, prev.sent, prev.reader
             else:
                 progress(i, len(found), rel)
+                b.reader, b.sent = READER, prev.sent if prev else {}
                 try:
                     b.title, b.author, text = read(src)
                     b.status, b.words, b.fingerprint = "ready", len(text.split()), fingerprint(text)

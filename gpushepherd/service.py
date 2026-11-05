@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, book_skills, books as books_mod, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
+from . import (app_updates, auth, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
 from . import gpu_unlock
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
@@ -118,9 +118,9 @@ class Shepherd:
     drive_error: str = ""               # why the machine's drives can't be looked at, if they can't
     image_log: image_updates.Records | None = None
     _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
-    book_task: books_mod.Task | None = None     # what is being done with the books now (or last)
+    knowledge_task: kn.Task | None = None     # what is being done with the books now (or last)
     openwebui_client: object = openwebui.OpenWebUI   # (address, token) -> client; a stand-in in tests
-    _library: books_mod.Library | None = None
+    _library: kn.Library | None = None
 
     def __post_init__(self):
         if self.downloads is None:
@@ -1811,20 +1811,23 @@ class Shepherd:
                         else "Saving: no card unlocked from the next boot. Reboot to put the cards back to normal."),
                 "uninstall": "Removing gpu-unlock. Reboot afterwards to put the cards back to normal."}[action]
 
-    # ------------------------------------------------------------------ books
+    # ------------------------------------------------------------------ knowledge
     @property
-    def library(self) -> books_mod.Library:
+    def library(self) -> kn.Library:
         if self._library is None:
-            self._library = books_mod.Library(self.store.root)
+            self._library = kn.Library(self.store.root)
+            for line in self._library.moved:
+                log.info("knowledge: moved %s", line)
         return self._library
 
     def _book_apps(self, instances: dict[str, Instance]) -> tuple[list[Instance], list[Instance]]:
-        """Open WebUI instances (books go into their knowledge) and Hermes Agent instances (skills)."""
+        """Open WebUI instances (documents go into their knowledge) and Hermes Agent instances (skills)."""
         apps = {t: [i for i in instances.values() if tpl.matches(tpl.get(t), i)] for t in ("open-webui", "hermes")}
         return apps["open-webui"], apps["hermes"]
 
-    def books(self) -> dict:
-        """The books folder, the books found in it, what is being done with them and where they can go."""
+    def knowledge(self, sizes: bool = True) -> dict:
+        """The documents folder, the documents found in it, what is being done with them, where they
+        can go and where it is all kept (with sizes, unless `sizes` is False)."""
         data = self.library.load()
         folder = self.library.folder(data)
         instances, _ = self.store.instances()
@@ -1832,58 +1835,75 @@ class Shepherd:
         m = self.machine()
         counts: dict[str, int] = {}
         rows = []
+        reasons: dict[str, dict[str, int]] = {}
         for b in sorted(data["books"].values(), key=lambda b: (b.group.lower(), b.name.lower())):
             counts[b.status] = counts.get(b.status, 0) + 1
             rows.append(asdict(b) | {"name": b.name})
+            if b.status in ("failed", "skipped") and b.reason:
+                why = reasons.setdefault(b.status, {})
+                why[b.reason] = why.get(b.reason, 0) + 1
         skills = []
         for slug, s in sorted((data.get("skills") or {}).items()):
             skills.append(s | {"slug": slug, "path": str(self._skill_dir(slug)),
                                "exists": (self._skill_dir(slug) / "SKILL.md").exists()})
-        return {"folder": str(folder), "folder_ok": folder.is_dir(), "default_folder": str(self.store.root / "books"),
-                "scanned": data.get("scanned"), "counts": counts, "books": rows,
+        storage = []
+        for what, path in (("Documents", folder), ("Converted text", self.library.text_dir),
+                           ("Skill drafts", self.library.skills_dir)):
+            files, size = kn.size(path) if sizes else (None, None)
+            storage.append({"what": what, "path": str(path), "exists": path.is_dir(), "files": files, "bytes": size,
+                            "size": gb(size) if size is not None else ""})
+        try:
+            free = gb(shutil.disk_usage(folder if folder.is_dir() else self.store.root).free)
+        except OSError:
+            free = ""
+        return {"folder": str(folder), "folder_ok": folder.is_dir(), "default_folder": str(self.library.default_folder),
+                "own_folder": folder == self.library.default_folder, "home": str(self.library.home),
+                "storage": storage, "free": free,
+                "reasons": {k: sorted(v.items(), key=lambda x: (-x[1], x[0])) for k, v in reasons.items()},
+                "scanned": data.get("scanned"), "counts": counts, "documents": rows,
                 "words": sum(b.words for b in data["books"].values() if b.status == "ready"),
-                "task": self.book_task.as_dict() if self.book_task else None,
+                "task": self.knowledge_task.as_dict() if self.knowledge_task else None,
                 "webuis": [{"id": i.id, "name": i.name, "running": self._running(i.id)} for i in webuis],
                 "hermes": [{"id": i.id, "name": i.name} for i in hermes],
                 "servers": [{"id": k, "name": v["name"], "model": v.get("default_model", ""), "embed": v.get("embed", "")}
                             for k, v in m.servers.items()],
-                "sends": data.get("sends") or [], "skills": skills, "upload_mb": books_mod.UPLOAD_MB,
-                "zip_mb": books_mod.ZIP_MB}
+                "sends": data.get("sends") or [], "skills": skills, "upload_mb": kn.UPLOAD_MB,
+                "zip_mb": kn.ZIP_MB}
 
-    def _books_busy(self) -> None:
-        if self.book_task and self.book_task.running:
-            raise Problem(f"Wait for the current book work to finish ({self.book_task.title}), or stop it.", "warn", 409)
+    def _knowledge_busy(self) -> None:
+        if self.knowledge_task and self.knowledge_task.running:
+            raise Problem(f"Wait for the current knowledge work to finish ({self.knowledge_task.title}), or stop it.", "warn", 409)
 
-    def set_books_folder(self, path: str) -> str:
-        self._books_busy()
+    def set_documents_folder(self, path: str) -> str:
+        self._knowledge_busy()
         path = path.strip()
         if path and not path.startswith("/"):
-            raise Problem("Give the books folder as a full path, like /srv/books.")
-        target = Path(path) if path else self.store.root / "books"
+            raise Problem("Give the documents folder as a full path, like /srv/documents.")
+        target = Path(path) if path else self.library.default_folder
         if path and not target.is_dir():
             raise Problem(f"GPU Shepherd can't see {path}. Mount it into GPU Shepherd's container at the same path "
-                          "(like a models folder), or put the books in its own books folder.", status=404)
+                          "(like a models folder), or put the documents in its own documents folder.", status=404)
         self.library.update(lambda d: d.__setitem__("folder", path))
-        return f"Books folder: {target}. Scan it to find the books."
+        return f"Documents folder: {target}. Scan it to find the documents."
 
-    def book_files(self) -> dict:
-        """The book files already in the books folder, {path: size}, so an upload can skip them."""
+    def document_files(self) -> dict:
+        """The document files already in the documents folder, {path: size}, so an upload can skip them."""
         folder = self.library.folder()
-        return {"folder": str(folder), "files": books_mod.files(folder) if folder.is_dir() else {}}
+        return {"folder": str(folder), "files": kn.files(folder) if folder.is_dir() else {}}
 
     def _book_dest(self, path: str, size: int | None) -> tuple[str, Path, int]:
         """Where an uploaded file goes, and the most bytes it may have."""
         try:
-            rel = books_mod.safe_rel(path)
-        except books_mod.BookError as err:
+            rel = kn.safe_rel(path)
+        except kn.BookError as err:
             raise Problem(str(err)) from err
-        limit = (books_mod.ZIP_MB if rel.lower().endswith(".zip") else books_mod.UPLOAD_MB) << 20
+        limit = (kn.ZIP_MB if rel.lower().endswith(".zip") else kn.UPLOAD_MB) << 20
         if size is not None and size > limit:
             raise self._too_big(rel, limit)
         folder = self.library.folder()
         if not folder.is_dir():
-            if folder != self.store.root / "books":
-                raise Problem(f"GPU Shepherd can't see the books folder {folder}.", status=404)
+            if folder != self.library.default_folder:
+                raise Problem(f"GPU Shepherd can't see the documents folder {folder}.", status=404)
             folder.mkdir(parents=True, exist_ok=True)
         if size and size > shutil.disk_usage(folder).free:
             raise Problem(f"Not enough free space in {folder} for {rel}.", status=507)
@@ -1893,7 +1913,7 @@ class Shepherd:
 
     @staticmethod
     def _too_big(rel: str, limit: int) -> Problem:
-        return Problem(f"{rel} is over {limit >> 20} MB: copy it into the books folder another way.", status=413)
+        return Problem(f"{rel} is over {limit >> 20} MB: copy it into the documents folder another way.", status=413)
 
     def _place_book(self, rel: str, dest: Path, tmp: Path) -> dict:
         """Put a received file in place; a zip is unpacked into a folder named after it, then removed."""
@@ -1902,18 +1922,18 @@ class Shepherd:
             return {"added": [rel], "left_out": 0}
         into = dest.with_name(dest.name[:-4])
         try:
-            saved, other = books_mod.unpack(tmp, into, Path(rel).name)
-        except books_mod.BookError as err:
+            saved, other = kn.unpack(tmp, into, Path(rel).name)
+        except kn.BookError as err:
             raise Problem(str(err)) from err
         finally:
             tmp.unlink(missing_ok=True)
         base = rel[:-4]
         if not saved:
-            raise Problem(f"{Path(rel).name} has no books in it (EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC).")
+            raise Problem(f"{Path(rel).name} has no documents in it (EPUB, PDF, DOCX, TXT, Markdown, AZW3, MOBI or PRC).")
         return {"added": [f"{base}/{r}" for r in saved], "left_out": other}
 
-    def save_book(self, path: str, f, size: int | None = None) -> dict:
-        """Save one uploaded book or zip of books (a file-like) at `path` in the books folder,
+    def save_document(self, path: str, f, size: int | None = None) -> dict:
+        """Save one uploaded document or zip of documents (a file-like) at `path` in the documents folder,
         folders kept. Returns {"added": [paths], "left_out": n}. Doesn't scan."""
         rel, dest, limit = self._book_dest(path, size)
         tmp = dest.with_name(dest.name + ".part")
@@ -1930,8 +1950,8 @@ class Shepherd:
             raise
         return self._place_book(rel, dest, tmp)
 
-    async def receive_book(self, path: str, stream, size: int | None = None) -> dict:
-        """save_book for a request body streamed in (async chunks), so big files never sit in memory."""
+    async def receive_document(self, path: str, stream, size: int | None = None) -> dict:
+        """save_document for a request body streamed in (async chunks), so big files never sit in memory."""
         rel, dest, limit = self._book_dest(path, size)
         tmp = dest.with_name(dest.name + ".part")
         try:
@@ -1947,68 +1967,68 @@ class Shepherd:
             raise
         return await asyncio.to_thread(self._place_book, rel, dest, tmp)
 
-    def add_books(self, files: list[tuple[str, object]]) -> str:
-        """Save uploaded books or zips of books (name, file-like) into the books folder, then scan."""
+    def add_documents(self, files: list[tuple[str, object]]) -> str:
+        """Save uploaded documents or zips of them (name, file-like) into the documents folder, then scan."""
         saved, refused = [], []
         for name, f in files:
             try:
-                r = self.save_book(str(name), f)
+                r = self.save_document(str(name), f)
             except Problem as err:
                 refused.append(Path(str(name).replace("\\", "/")).name or "?")
-                log.info("book upload refused: %s", err.msg)
+                log.info("document upload refused: %s", err.msg)
                 continue
             saved += r["added"]
         if not saved:
-            raise Problem("No books added: " + (", ".join(refused) + " " if refused else "") +
-                          "(EPUB, PDF, TXT, Markdown, AZW3, MOBI or PRC files, or zips of them).")
-        msg = f"Added {len(saved)} book{'s' if len(saved) != 1 else ''}"
+            raise Problem("No documents added: " + (", ".join(refused) + " " if refused else "") +
+                          "(EPUB, PDF, DOCX, TXT, Markdown, AZW3, MOBI or PRC files, or zips of them).")
+        msg = f"Added {len(saved)} document{'s' if len(saved) != 1 else ''}"
         msg += f"; left out {', '.join(refused)}." if refused else "."
         try:
-            return msg + " " + self.scan_books()
+            return msg + " " + self.scan_documents()
         except Problem as err:
             return msg + " " + err.msg + " Then scan the folder again."
 
-    def _book_work(self, title: str, fn) -> str:
-        self._books_busy()
-        task = books_mod.Task(title)
-        self.book_task = task
+    def _knowledge_work(self, title: str, fn) -> str:
+        self._knowledge_busy()
+        task = kn.Task(title)
+        self.knowledge_task = task
 
         def run():
             try:
                 task.finish(fn(task) or "Done.")
             except InterruptedError:
                 task.finish("Stopped. Start it again to carry on where it stopped.", stopped=True)
-            except (Problem, books_mod.BookError, openwebui.OpenWebUIError, BackendError, OSError, ValueError) as err:
+            except (Problem, kn.BookError, openwebui.OpenWebUIError, BackendError, OSError, ValueError) as err:
                 task.fail(err.msg if isinstance(err, Problem) else str(err))
-            except Exception as err:  # noqa: BLE001 - shown on the Books page
-                log.exception("books: %s failed", title)
+            except Exception as err:  # noqa: BLE001 - shown on the Knowledge page
+                log.exception("knowledge: %s failed", title)
                 task.fail(f"{err.__class__.__name__}: {err}")
-        threading.Thread(target=run, name="books", daemon=True).start()
+        threading.Thread(target=run, name="knowledge", daemon=True).start()
         return title + "…"
 
-    def stop_books(self) -> str:
-        if not (self.book_task and self.book_task.running):
+    def stop_knowledge(self) -> str:
+        if not (self.knowledge_task and self.knowledge_task.running):
             raise Problem("Nothing is running.", "warn", 409)
-        self.book_task.stop = True
-        return "Stopping after the current book…"
+        self.knowledge_task.stop = True
+        return "Stopping after the current document…"
 
-    def scan_books(self) -> str:
+    def scan_documents(self) -> str:
         folder = self.library.folder()
         if not folder.is_dir():
-            if folder == self.store.root / "books":
+            if folder == self.library.default_folder:
                 folder.mkdir(parents=True, exist_ok=True)
             else:
-                raise Problem(f"GPU Shepherd can't see the books folder {folder}.", status=404)
+                raise Problem(f"GPU Shepherd can't see the documents folder {folder}.", status=404)
 
-        def work(task: books_mod.Task) -> str:
+        def work(task: kn.Task) -> str:
             def progress(done, total, name):
                 task.progress(done, total, f"Reading {name}")
             counts = self.library.scan(progress, lambda: task.stop)
             if task.stop:
                 raise InterruptedError
             parts = [f"{counts.get('ready', 0)} ready"] + [f"{n} {s}" for s, n in sorted(counts.items()) if s != "ready"]
-            return "Found the books: " + ", ".join(parts) + "."
-        return self._book_work("Finding and reading books", work)
+            return "Found the documents: " + ", ".join(parts) + "."
+        return self._knowledge_work("Finding and reading documents", work)
 
     # Open WebUI
     def _openwebui(self, inst: Instance) -> openwebui.OpenWebUI:
@@ -2030,24 +2050,24 @@ class Shepherd:
         return next((k for k, v in m.servers.items() if v.get("embed") and k in m.instances), "")
 
     @checked
-    def send_books(self, iid: str, name: str = "Books", split: bool = False,
+    def send_documents(self, iid: str, name: str = "Documents", split: bool = False,
                    use_server_embeddings: bool | None = None) -> str:
-        """Put the ready books into an Open WebUI knowledge base (one per first-level folder with
-        `split`), in the background. Books already sent there are skipped, so it carries on after a stop.
+        """Put the ready documents into an Open WebUI knowledge base (one per first-level folder with
+        `split`), in the background. Documents already sent there are skipped, so it carries on after a stop.
         use_server_embeddings: True switches Open WebUI to the model server's embeddings model, False
         keeps whatever it uses, None stops with a question when they differ."""
         inst = self.instance(iid)
         if not tpl.matches(tpl.get("open-webui"), inst):
-            raise Problem(f"{inst.name} isn't Open WebUI: books go into Open WebUI's knowledge bases.")
+            raise Problem(f"{inst.name} isn't Open WebUI: documents go into Open WebUI's knowledge bases.")
         if not self._running(iid):
             raise Problem(f"Start {inst.name} first.", status=409)
-        name = re.sub(r"\s+", " ", name or "").strip()[:80] or "Books"
+        name = re.sub(r"\s+", " ", name or "").strip()[:80] or "Documents"
         if not any(b.status == "ready" for b in self.library.books()):
-            raise Problem("No books ready to send: add books and scan the books folder first.", status=409)
+            raise Problem("No documents ready to send: add documents and scan the documents folder first.", status=409)
         m = self.machine()
         server = self._embed_server(inst, m)
 
-        def work(task: books_mod.Task) -> str:
+        def work(task: kn.Task) -> str:
             task.text = f"Signing in to {inst.name}"
             ow = self._openwebui(inst)
             if server:
@@ -2075,7 +2095,7 @@ class Shepherd:
                 task.progress(i, len(todo), f"Sending {b.name}")
                 try:
                     if kb not in kbs:
-                        kbs[kb] = ow.knowledge_id(kb, "Books added by GPU Shepherd")
+                        kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
                     fid = ow.upload(b.file_name, self.library.text(b.key))
                     ow.add(kbs[kb], fid)
                 except (openwebui.OpenWebUIError, OSError) as err:
@@ -2083,7 +2103,7 @@ class Shepherd:
                         ow = self._openwebui(inst)
                         kbs.clear()
                         try:
-                            kbs[kb] = ow.knowledge_id(kb, "Books added by GPU Shepherd")
+                            kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
                             fid = ow.upload(b.file_name, self.library.text(b.key))
                             ow.add(kbs[kb], fid)
                         except (openwebui.OpenWebUIError, OSError) as err2:
@@ -2095,7 +2115,7 @@ class Shepherd:
                         in_a_row += 1
                         task.errors.append(f"{b.name}: {err}")
                         if in_a_row >= 5:
-                            raise openwebui.OpenWebUIError(f"stopped after 5 books in a row failed; the last: {err}")
+                            raise openwebui.OpenWebUIError(f"stopped after 5 documents in a row failed; the last: {err}")
                         continue
                 in_a_row = 0
                 sent += 1
@@ -2107,15 +2127,21 @@ class Shepherd:
             self.library.update(lambda d: d.__setitem__("sends", [
                 s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
                 {"instance": iid, "name": name, "split": split, "when": time.time()}]))
-            msg = f"Sent {sent} book{'s' if sent != 1 else ''} to {inst.name}"
+            msg = f"Sent {sent} document{'s' if sent != 1 else ''} to {inst.name}"
             msg += f" ({skipped} were there already)" if skipped else ""
             msg += f"; {failed} failed." if failed else "."
             return msg + " In a chat, type # and pick the knowledge base."
-        return self._book_work(f"Sending books to {inst.name}", work)
+        return self._knowledge_work(f"Sending documents to {inst.name}", work)
 
     # skills
     def _skill_dir(self, slug: str) -> Path:
-        return self.store.root / "book-skills" / slug
+        return self.library.skills_dir / slug
+
+    def _hermes_data(self, inst: Instance) -> Path | None:
+        """A Hermes Agent's data folder, if GPU Shepherd can see it."""
+        inside = dict(tpl.get("hermes").appdata)["data"]
+        v = next((v for v in inst.volumes if v.container == inside), None)
+        return Path(v.host) if v and Path(v.host).is_relative_to(self.store.root) else None
 
     def _skill(self, slug: str) -> dict:
         s = (self.library.load().get("skills") or {}).get(slug)
@@ -2138,14 +2164,14 @@ class Shepherd:
                 r.raise_for_status()
                 return r.json()["choices"][0]["message"].get("content") or ""
             except (httpx.HTTPError, ValueError, KeyError, IndexError) as err:
-                raise books_mod.BookError(f"{info['name']} didn't answer: {err.__class__.__name__}: {err}") from err
+                raise kn.BookError(f"{info['name']} didn't answer: {err.__class__.__name__}: {err}") from err
         return chat
 
     def make_skill(self, key: str, server: str = "") -> str:
-        """Draft an agent skill from a book with a model server, in the background."""
+        """Draft an agent skill from a document with a model server, in the background."""
         b = self.library.load()["books"].get(key)
         if not b or b.status not in ("ready", "duplicate"):
-            raise Problem("That book isn't ready: scan the books folder first.", status=404)
+            raise Problem("That document isn't ready: scan the documents folder first.", status=404)
         m = self.machine()
         server = server or next(iter(m.servers), "")
         if server not in m.servers or server not in m.instances:
@@ -2153,19 +2179,19 @@ class Shepherd:
                           if not server else f"No model server '{server}'.", status=404)
         if not self._running(server):
             raise Problem(f"Start {m.servers[server]['name']} first: its chat model writes the skill.", status=409)
-        slug = book_skills.slug(b.name)
+        slug = knowledge_skills.slug(b.name)
 
-        def work(task: books_mod.Task) -> str:
+        def work(task: kn.Task) -> str:
             text = self.library.text(b.key)
-            md = book_skills.make(b.name, text, self._chat(server, m), m.servers[server].get("ctx") or 0,
+            md = knowledge_skills.make(b.name, text, self._chat(server, m), m.servers[server].get("ctx") or 0,
                                   lambda s: setattr(task, "text", f"{b.name}: {s}"), lambda: task.stop)
             folder = self._skill_dir(slug)
-            book_skills.write(folder, md, text)
+            knowledge_skills.write(folder, md, text)
             self.library.update(lambda d: d.setdefault("skills", {}).__setitem__(slug, {
                 "book": b.key, "name": b.name, "server": server, "made": time.time(),
                 "installed": ((d.get("skills") or {}).get(slug) or {}).get("installed", {})}))
             return f"Drafted the skill {slug}. Check it, then install it in an agent."
-        return self._book_work(f"Making a skill from {b.name}", work)
+        return self._knowledge_work(f"Making a skill from {b.name}", work)
 
     def skill_text(self, slug: str) -> str:
         self._skill(slug)
@@ -2186,13 +2212,12 @@ class Shepherd:
         self._skill(slug)
         inst = self.instance(iid)
         if not tpl.matches(tpl.get("hermes"), inst):
-            raise Problem(f"{inst.name} isn't Hermes Agent: skills from books go to Hermes Agent.")
-        inside = dict(tpl.get("hermes").appdata)["data"]
-        v = next((v for v in inst.volumes if v.container == inside), None)
-        if not v or not Path(v.host).is_relative_to(self.store.root):
+            raise Problem(f"{inst.name} isn't Hermes Agent: skills from documents go to Hermes Agent.")
+        home = self._hermes_data(inst)
+        if home is None:
             raise Problem(f"GPU Shepherd can't see {inst.name}'s data folder, so it can't add skills there.", status=409)
         owner = tpl.get("hermes").data_owner
-        dest = book_skills.install(self._skill_dir(slug), Path(v.host))
+        dest = knowledge_skills.install(self._skill_dir(slug), home)
         if owner and os.geteuid() == 0:
             for p in [dest.parent, dest, *dest.rglob("*")]:
                 os.chown(p, *owner)
@@ -2205,6 +2230,114 @@ class Shepherd:
         shutil.rmtree(self._skill_dir(slug), ignore_errors=True)
         self.library.update(lambda d: d["skills"].pop(slug, None))
         return f"Deleted the draft {slug}. Copies installed in agents stay there."
+
+    CLEAR = ("documents", "converted", "skills", "apps")
+
+    def clear_knowledge(self, what: tuple[str, ...] | list[str] = CLEAR) -> str:
+        """Start over, in the background. `what` picks the parts:
+            documents   the files in the documents folder (all of it when it is GPU Shepherd's own
+                        folder; only document files and zips in a folder of your own)
+            converted   the converted text and the list of documents (and where they were sent)
+            skills      the skill drafts, and the copies installed in Hermes Agents
+            apps        the documents sent to Open WebUI: taken out of its knowledge bases and deleted
+                        there, and a knowledge base GPU Shepherd made is deleted once it is empty"""
+        what = tuple(w for w in self.CLEAR if w in what)
+        if not what:
+            raise Problem(f"Say what to clear: {', '.join(self.CLEAR)}.")
+        self._knowledge_busy()
+        data = self.library.load()
+        instances, _ = self.store.instances()
+        targets: dict[str, dict[str, list[str]]] = {}         # instance -> knowledge base -> file ids
+        if "apps" in what:
+            for b in data["books"].values():
+                for target, fid in b.sent.items():
+                    iid, _, kb = target.partition("/")
+                    targets.setdefault(iid, {}).setdefault(kb, []).append(fid)
+            stopped = [instances[i].name for i in targets if i in instances and not self._running(i)]
+            if stopped:
+                raise Problem(f"Start {', '.join(stopped)} first, so the documents can be taken out of it, or clear "
+                              "without Open WebUI.", status=409)
+
+        def work(task: kn.Task) -> str:
+            done = []
+            if "apps" in what and targets:
+                removed = 0
+                for iid, kbs in targets.items():
+                    if iid not in instances:
+                        continue
+                    task.text = f"Taking the documents out of {instances[iid].name}"
+                    ow = self._openwebui(instances[iid])
+                    ids = ow.knowledge_bases()
+                    total = sum(len(f) for f in kbs.values())
+                    for kb, fids in kbs.items():
+                        kid = ids.get(kb)
+                        for fid in fids:
+                            if task.stop:
+                                raise InterruptedError
+                            task.progress(removed, total, f"Taking the documents out of {instances[iid].name}: {kb}")
+                            try:
+                                if kid:
+                                    ow.remove(kid, fid)
+                                ow.delete_file(fid)
+                                removed += 1
+                            except openwebui.OpenWebUIError as err:
+                                task.errors.append(f"{kb}: {err}")
+                        if kid and ow.knowledge_empty(kid):
+                            ow.delete_knowledge(kid)
+
+                    def unsent(d, iid=iid):
+                        for b in d["books"].values():
+                            b.sent = {t: f for t, f in b.sent.items() if not t.startswith(iid + "/")}
+                        d["sends"] = [x for x in (d.get("sends") or []) if x.get("instance") != iid]
+                    self.library.update(unsent)
+                done.append(f"took {removed} document{'s' if removed != 1 else ''} out of Open WebUI")
+            if "skills" in what:
+                task.text = "Removing the skills"
+                n = 0
+                for slug, sk in (self.library.load().get("skills") or {}).items():
+                    for iid in (sk.get("installed") or {}):
+                        home = self._hermes_data(instances[iid]) if iid in instances else None
+                        if home is not None:
+                            knowledge_skills.uninstall(slug, home)
+                    n += 1
+                shutil.rmtree(self.library.skills_dir, ignore_errors=True)
+                self.library.update(lambda d: d.__setitem__("skills", {}))
+                done.append(f"deleted {n} skill{'s' if n != 1 else ''}")
+            if "documents" in what:
+                folder = self.library.folder()
+                task.text = f"Deleting the documents in {folder}"
+                n = self._empty_documents(folder, own=folder == self.library.default_folder)
+                done.append(f"deleted {n} file{'s' if n != 1 else ''} from {folder}")
+            if "converted" in what:
+                task.text = "Deleting the converted text"
+                shutil.rmtree(self.library.text_dir, ignore_errors=True)
+                self.library.update(lambda d: d.update({"books": {}, "sends": [], "scanned": None}))
+                done.append("deleted the converted text and the list of documents")
+            return "Cleared: " + ", ".join(done) + "."
+        return self._knowledge_work("Clearing out knowledge", work)
+
+    @staticmethod
+    def _empty_documents(folder: Path, own: bool) -> int:
+        """Delete the documents in a folder: everything in GPU Shepherd's own one; in a folder of
+        the user's, only document files and zips (other files and folders with them stay)."""
+        if not folder.is_dir():
+            return 0
+        n = 0
+        for root, dirs, names in os.walk(folder, topdown=False):
+            for f in names:
+                p = Path(root) / f
+                if own or p.suffix.lower() in kn.RANK or p.suffix.lower() in (".zip", ".part"):
+                    try:
+                        p.unlink()
+                        n += 1
+                    except OSError:
+                        pass
+            if Path(root) != folder:
+                try:
+                    Path(root).rmdir()                  # only when empty
+                except OSError:
+                    pass
+        return n
 
 
 class HelperFileOps(FileOps):

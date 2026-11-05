@@ -83,11 +83,12 @@ each instance says what it needs, and starting or stopping anything re-plans who
   ![Dark theme](docs/screenshots/dashboard-dark.png)
 - **Storage and trash**: free space per disk, folder sizes, unused app images and model files, and a
   trash that deleting an instance or a file goes to first, so you can put it back.
-- **Books**: put your ebooks (EPUB, PDF, TXT, Markdown) in a books folder and a scan reads each one
-  into text, using the best format of each book and skipping duplicates. Books it can't read
-  (DRM, scanned PDFs) are listed with the reason. Send them to an Open WebUI knowledge base to chat
-  with them, or have the model server draft an agent skill from a book for Hermes Agent. Load books
-  from the browser: drop books, a whole folder or zips on the page (no SSH needed).
+- **Knowledge**: put your documents (ebooks, manuals, notes: EPUB, PDF, DOCX, TXT, Markdown) in the
+  documents folder and a scan reads each one into text, using the best format of each and skipping
+  duplicates. Ones it can't read (DRM, scanned PDFs) are listed with the reason. Send them to an Open
+  WebUI knowledge base to chat with them, or have the model server draft an agent skill from one for
+  Hermes Agent. Load documents from the browser: drop files, a whole folder or zips on the page (no
+  SSH needed). The page shows where it is all kept, and can clear it all out to start over.
 - **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
   Separately, GPU Shepherd checks the registries for newer **releases of each app's image** and
   updates the app on a button, or by itself if you choose.

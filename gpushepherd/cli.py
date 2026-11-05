@@ -747,12 +747,12 @@ def cmd_changelog(args, c: Client) -> int:
     return 0
 
 
-def cmd_books(args, c: Client) -> int:
+def cmd_knowledge(args, c: Client) -> int:
     a, items = args.action or "list", args.items
 
     def need(n: int, example: str) -> None:
         if len(items) < n:
-            raise Failed(f"e.g. gpu-shepherd books {example}")
+            raise Failed(f"e.g. gpu-shepherd knowledge {example}")
 
     def task_text(t) -> None:
         if not t:
@@ -767,33 +767,34 @@ def cmd_books(args, c: Client) -> int:
 
     if a == "list":
         def text(s):
-            print(f"Books folder: {s['folder']}" + ("" if s["folder_ok"] else " (not there)"))
-            table([[b["key"], b["status"], b["words"] or "", b["name"][:60], b["reason"][:50]] for b in s["books"]],
-                  ["KEY", "STATUS", "WORDS", "BOOK", "WHY"])
+            for x in s.get("storage") or []:
+                print(f"{x['what']}: {x['path']}" + (f" ({x['files']} files, {x['size']})" if x["exists"] else " (not there yet)"))
+            table([[b["key"], b["status"], b["words"] or "", b["name"][:60], b["reason"][:50]] for b in s["documents"]],
+                  ["KEY", "STATUS", "WORDS", "DOCUMENT", "WHY"])
             if s["skills"]:
                 print()
                 table([[k["slug"], k["name"][:50], ", ".join(k.get("installed") or {}) or "-"] for k in s["skills"]],
-                      ["SKILL", "FROM BOOK", "INSTALLED IN"])
+                      ["SKILL", "FROM", "INSTALLED IN"])
             if s["task"]:
                 print()
                 task_text(s["task"])
-        out(args, c.get("/api/v1/books"), text)
+        out(args, c.get("/api/v1/knowledge"), text)
     elif a == "status":
-        out(args, c.get("/api/v1/books")["task"], task_text)
+        out(args, c.get("/api/v1/knowledge")["task"], task_text)
     elif a == "folder":
-        out(args, c.call("PUT", "/api/v1/books/folder", {"path": items[0] if items else ""}))
+        out(args, c.call("PUT", "/api/v1/knowledge/folder", {"path": items[0] if items else ""}))
     elif a in ("scan", "stop"):
-        out(args, c.post(f"/api/v1/books/{a}"))
+        out(args, c.post(f"/api/v1/knowledge/{a}"))
     elif a == "upload":
         need(1, "upload FOLDER-OR-FILE...  (from any computer: --url http://server:8080 --token TOKEN)")
-        upload_books(c, [Path(i) for i in items])
+        upload_documents(c, [Path(i) for i in items])
     elif a == "send":
-        need(1, "send open-webui [--name Books] [--split] [--embeddings server|keep]")
-        out(args, c.post("/api/v1/books/send", {"instance": items[0], "name": args.name, "split": args.split,
+        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep]")
+        out(args, c.post("/api/v1/knowledge/send", {"instance": items[0], "name": args.name, "split": args.split,
                                                 "embeddings": args.embeddings}))
     elif a == "skill":
-        need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd books)")
-        out(args, c.post(f"/api/v1/books/{quote(items[0])}/skill", {"server": args.server}))
+        need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd knowledge)")
+        out(args, c.post(f"/api/v1/knowledge/{quote(items[0])}/skill", {"server": args.server}))
     elif a == "skill-show":
         need(1, "skill-show SKILL")
         out(args, c.get(f"/api/v1/skills/{quote(items[0])}"), lambda r: print(r["text"]))
@@ -803,13 +804,18 @@ def cmd_books(args, c: Client) -> int:
     elif a == "skill-delete":
         need(1, "skill-delete SKILL")
         out(args, c.call("DELETE", f"/api/v1/skills/{quote(items[0])}"))
+    elif a == "clear":
+        what = items or ["documents", "converted", "skills", "apps"]
+        if not (args.yes or ask(f"Delete {', '.join(what)}? This can't be undone.")):
+            return 1
+        out(args, c.post("/api/v1/knowledge/clear", {"what": what}))
     return 0
 
 
-def upload_books(c: Client, paths: list[Path]) -> None:
-    """Send books, folders of books (folders kept) or zips of books to the books folder, skipping the
-    ones already there, then scan."""
-    from .books import RANK, zip_has_books
+def upload_documents(c: Client, paths: list[Path]) -> None:
+    """Send documents, folders of them (folders kept) or zips of them to the documents folder, skipping
+    the ones already there, then scan."""
+    from .knowledge import RANK, zip_has_books
     todo = []
     for p in paths:
         if p.is_dir():
@@ -820,7 +826,7 @@ def upload_books(c: Client, paths: list[Path]) -> None:
             todo.append((p, p.name))
         else:
             raise Failed(f"{p}: no such file or folder")
-    have = c.get("/api/v1/books/files")["files"]
+    have = c.get("/api/v1/knowledge/files")["files"]
     added = skipped = no_books = 0
     failed = []
     for i, (f, rel) in enumerate(todo, 1):
@@ -833,15 +839,15 @@ def upload_books(c: Client, paths: list[Path]) -> None:
             continue
         print(f"[{i}/{len(todo)}] {rel}", flush=True)
         try:
-            added += len(c.send_file("/api/v1/books/files?path=" + quote(rel), f).get("added", []))
+            added += len(c.send_file("/api/v1/knowledge/files?path=" + quote(rel), f).get("added", []))
         except Failed as err:
             print(f"  not added: {err}", file=sys.stderr)
             failed.append(rel)
-    print(f"Added {added} book{'s' if added != 1 else ''}, skipped {skipped} already there"
-          + (f", left out {no_books} zip{'s' if no_books != 1 else ''} with no books" if no_books else "")
+    print(f"Added {added} document{'s' if added != 1 else ''}, skipped {skipped} already there"
+          + (f", left out {no_books} zip{'s' if no_books != 1 else ''} with no documents" if no_books else "")
           + (f", {len(failed)} not added" if failed else "") + ".")
     if added:
-        print(c.post("/api/v1/books/scan")["message"])
+        print(c.post("/api/v1/knowledge/scan")["message"])
 
 
 def cmd_token(args, c: Client | None) -> int:
@@ -858,7 +864,7 @@ def cmd_token(args, c: Client | None) -> int:
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
-            "settings": cmd_settings, "storage": cmd_storage, "books": cmd_books, "trash": cmd_trash,
+            "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash,
             "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
 
 
@@ -978,14 +984,16 @@ def add_commands(sub) -> None:
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
-    p = sub.add_parser("books", help="ebooks for chat apps and agents: list, status, folder PATH, scan, "
-                                     "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
-                                     "skill-delete SKILL")
+    p = sub.add_parser("knowledge", aliases=["books"],
+                       help="documents (ebooks, manuals, notes) for chat apps and agents: list, status, folder PATH, scan, "
+                            "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
+                            "skill-delete SKILL, clear [documents converted skills apps]")
     p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "stop", "skill",
-                                                 "skill-show", "skill-install", "skill-delete"))
+                                                 "skill-show", "skill-install", "skill-delete", "clear"))
     p.add_argument("items", nargs="*")
-    p.add_argument("--name", default="Books", help="send: the knowledge base's name (default Books)")
-    p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the books folder")
+    p.add_argument("-y", "--yes", action="store_true", help="clear: without asking")
+    p.add_argument("--name", default="Documents", help="send: the knowledge base's name (default Documents)")
+    p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the documents folder")
     p.add_argument("--embeddings", choices=("server", "keep"),
                    help="send: use the model server's embeddings model in Open WebUI, or keep the one it has")
     p.add_argument("--server", default="", help="skill: the model server that writes it (default: the first)")

@@ -1,10 +1,10 @@
-"""Open WebUI connector: putting books into its knowledge bases.
+"""Open WebUI connector: putting documents into its knowledge bases (and taking them out again).
 
 GPU Shepherd talks to Open WebUI's own API as its admin. It doesn't need an API key from the
 user: a short script run inside the Open WebUI container (TOKEN_SCRIPT) signs a login token for the
 first admin with Open WebUI's own secret, the same kind of token its login page hands out.
 
-A book goes in the way Open WebUI's own "upload to knowledge" does it: upload the file (Open WebUI
+A document goes in the way Open WebUI's own "upload to knowledge" does it: upload the file (Open WebUI
 splits it into chunks and embeds them, with the embeddings model it is set to use), wait until it
 is processed, then add it to the knowledge base. Text that is already in the knowledge base is
 reported by Open WebUI as a duplicate, which counts as done.
@@ -141,6 +141,23 @@ class OpenWebUI:
 
     def remove(self, kid: str, fid: str) -> None:
         self._call("POST", f"/api/v1/knowledge/{kid}/file/remove", ok404=True, json={"file_id": fid})
+
+    def delete_file(self, fid: str) -> None:
+        """Delete an uploaded file (and its search index) from Open WebUI."""
+        self._call("DELETE", f"/api/v1/files/{fid}", ok404=True)
+
+    def knowledge_empty(self, kid: str) -> bool:
+        """Whether a knowledge base has no files left (False when it can't tell)."""
+        data = self._call("GET", f"/api/v1/knowledge/{kid}", ok404=True)
+        if not isinstance(data, dict):
+            return False
+        files = data.get("files")
+        if files is None:
+            files = (data.get("data") or {}).get("file_ids") if isinstance(data.get("data"), dict) else None
+        return isinstance(files, list) and not files
+
+    def delete_knowledge(self, kid: str) -> None:
+        self._call("DELETE", f"/api/v1/knowledge/{kid}/delete", ok404=True)
 
     # ------------------------------------------------------------------ settings
     def embedding(self) -> dict:
