@@ -77,8 +77,9 @@ a home folder on SELinux hosts.
 
 ## WSL2
 
-Experimental. The installer detects WSL2 (`/proc/sys/fs/binfmt_misc/WSLInterop`, or "microsoft" in
-`/proc/version`) and prints a warning.
+Experimental. WSL1 is not supported (it has no GPU access): the installer stops and says how to
+convert the distro with `wsl --set-version <distro> 2`. The installer detects WSL2
+(`/proc/sys/fs/binfmt_misc/WSLInterop`, or "microsoft" in `/proc/version`) and prints a warning.
 
 - **Driver:** it never installs a Linux NVIDIA driver. Install NVIDIA's current Windows driver and run
   `wsl --update` in Windows. `nvidia-smi` comes from `/usr/lib/wsl/lib`, which the installer adds to

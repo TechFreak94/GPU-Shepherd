@@ -265,6 +265,11 @@ fi
 WSL=0
 if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] || grep -qi microsoft /proc/version 2>/dev/null; then
     WSL=1
+    # WSL1 has no GPU support at all. Its kernel name ends in "-Microsoft" (WSL2's has "microsoft-standard").
+    case "$(uname -r)" in
+        *-Microsoft) die "this is WSL1, which can't use the GPU. Convert the distro to WSL2 in Windows with
+       wsl --set-version <distro> 2   (wsl -l -v lists them), then run this script again." ;;
+    esac
     warn "WSL2 detected. Support for it is experimental: the NVIDIA driver must be installed in Windows
          (not in Linux), and Docker Desktop with WSL integration, or Docker Engine in this distro, runs
          the containers. See docs/linux.md#wsl2."
