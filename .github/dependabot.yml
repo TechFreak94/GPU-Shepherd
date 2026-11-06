@@ -1,16 +1,20 @@
-# Weekly update pull requests. Each merge makes a release, so these are labelled "no release":
-# create the labels "dependencies" and "no release" once (Issues > Labels).
+# Weekly update pull requests, opened against the testing branch like every other change (they reach
+# main with the next promotion). Security updates always target the default branch (main).
+# Create the labels "dependencies" and "no release" once (Issues > Labels).
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
+    target-branch: testing
     labels: ["dependencies", "no release"]
   - package-ecosystem: pip
     directory: /
     schedule: {interval: weekly}
+    target-branch: testing
     labels: ["dependencies"]
   - package-ecosystem: docker
     directory: /
     schedule: {interval: weekly}
+    target-branch: testing
     labels: ["dependencies"]

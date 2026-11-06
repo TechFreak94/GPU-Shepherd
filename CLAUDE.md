@@ -35,7 +35,8 @@ Host-side scripts: `install.sh`, `update.sh`, `gpu-unlock.sh`. Release automatio
 - Try the UI without Docker or GPUs: `gpu-shepherd --demo --port 8090` (admin / demo-password).
 - Batch changes: commit to the shared batch branch instead of opening a pull request per change.
   Once 3 or more changes are waiting, list them for the maintainer; open the pull request only after they
-  approve. (The branch name and the pending list are kept in the project's notes.)
+  approve. Pull requests target `testing`, never `main`; `main` only gets promotions from `testing`
+  (merge commit) and urgent fixes. See CONTRIBUTING.md#branches. (The branch name and the pending list are kept in the project's notes.)
 - Don't edit the version or `CHANGELOG.md`. Put user-visible changes under `## Changelog` in the
   pull request description; merging releases it.
 - Don't update docs or screenshots in a feature PR unless the change would leave them wrong.

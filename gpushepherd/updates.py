@@ -277,8 +277,13 @@ def _when(iso: str) -> str:
     return d.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if d else ""
 
 
+TESTING = "testing"                     # the integration branch: merged changes wait here for the next release
+PINNED = ("main", "master", TESTING)
+
+
 def branch_options(st: UpdateStatus, prs: dict | None = None) -> list[dict]:
-    """The branch picker's entries: main pinned first (the stable one), then newest commit first.
+    """The branch picker's entries: main pinned first (the stable one), testing next (where changes
+    wait for the next release), then newest commit first.
     Each has name, label and detail; pull request number and title are added when GitHub knows them."""
     prs = pull_requests(st.github) if prs is None else prs
     info = {b["name"]: b for b in st.branch_info}
@@ -293,6 +298,8 @@ def branch_options(st: UpdateStatus, prs: dict | None = None) -> list[dict]:
         subject = str(b.get("subject") or "")
         if n in ("main", "master"):
             title = "stable, the released version"
+        elif n == TESTING:
+            title = "testing, the next release (may break)"
         elif pr:
             title = f"#{pr['number']} {pr['title']} ({pr['state']})"
         else:
@@ -300,9 +307,9 @@ def branch_options(st: UpdateStatus, prs: dict | None = None) -> list[dict]:
         title = title if len(title) <= 70 else title[:69] + "…"
         ver = str(b.get("version") or "")
         out.append({"name": n, "title": title, "when": when, "version": ver, "date": str(b.get("date") or ""),
-                    "label": " · ".join(x for x in (n if n in ("main", "master") else "", f"v{ver}" if ver else "", title, when,
-                                                    "" if n in ("main", "master") else n) if x)})
-    stable = [o for o in out if o["name"] in ("main", "master")][:1]
+                    "label": " · ".join(x for x in (n if n in PINNED else "", f"v{ver}" if ver else "", title, when,
+                                                    "" if n in PINNED else n) if x)})
+    stable = [o for o in out if o["name"] in ("main", "master")][:1] + [o for o in out if o["name"] == TESTING]
     rest = sorted((o for o in out if o not in stable), key=lambda o: _parse(o["date"]) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return stable + rest
 

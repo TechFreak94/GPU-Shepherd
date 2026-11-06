@@ -3,17 +3,22 @@
 For the people who own a GPU Shepherd repository (or a fork). Contributors don't need this page;
 see [CONTRIBUTING.md](../CONTRIBUTING.md). The one thing to remember: **whoever can change `main`
 controls the code that every user's `update.sh` rebuilds and runs as root, and the container image
-published from it.** These settings protect that.
+published from it.** `testing` matters almost as much: it reaches `main` with the next promotion,
+and some users follow it. These settings protect both.
 
-## Protect `main`
+## Protect `main` and `testing`
 
-Settings > Rules > Rulesets (or Branches > branch protection) for `main`:
+Settings > Rules > Rulesets (or Branches > branch protection), one ruleset for `main` and one for
+`testing` (see [Branches](../CONTRIBUTING.md#branches)):
 
 - Require a pull request before merging; block force pushes and deletion.
 - Require the **Tests** status check to pass, with the branch up to date.
-- Require conversation resolution. Squash merge only (Settings > General > Pull Requests; the
-  release workflow expects one commit per pull request). Turn on *Automatically delete head
-  branches*.
+- Require conversation resolution. Allow squash merges and merge commits (Settings > General >
+  Pull Requests): pull requests into `testing` are squashed, promotions from `testing` to `main`
+  must be merged with a merge commit so the branches keep one history. In the `testing` ruleset
+  you can limit it to squash; in the `main` ruleset, allow both (urgent fixes are squashed).
+  Turn on *Automatically delete head branches* (it never deletes `testing`, which is protected).
+- Keep `main` as the default branch: it is what visitors see and what `install.sh` clones.
 - Required approvals: with one maintainer, nobody else can approve your own pull request, so keep
   it at 0 and rely on the required checks, or add a second maintainer and require 1 approval plus
   *Require review from Code Owners* ([CODEOWNERS](../.github/CODEOWNERS)).
@@ -23,12 +28,14 @@ Settings > Rules > Rulesets (or Branches > branch protection) for `main`:
 ## Releases and protected branches
 
 The [Release workflow](../.github/workflows/release.yml) pushes the *Release X.Y.Z* commit and the
-tag to `main` itself. A rule that requires pull requests stops the workflow's built-in token, so
+tag to `main` itself, then brings `testing` level with `main`. A rule that requires pull requests stops the workflow's built-in token, so
 either let it through or release another way:
 
 1. Create a GitHub App (or a fine-grained token limited to this repository with *Contents:
    read and write*), add it to the ruleset's **bypass list**, and save its token as the repository
-   secret `RELEASE_TOKEN`. The workflow uses it when present.
+   secret `RELEASE_TOKEN`. The workflow uses it when present. Add it to the `testing` ruleset's
+   bypass list too, or the step that updates `testing` fails (the release itself still works; merge
+   `main` into `testing` by hand then).
 2. Merge a small change and check that its release appears (a `no release` label skips the
    release, so don't use it for this test). Test this before relying on it.
 

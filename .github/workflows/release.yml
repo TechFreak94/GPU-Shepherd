@@ -1,4 +1,4 @@
-# Gives every pull request merged into main its own version: bumps gpushepherd/__init__.py, adds
+# Gives every pull request merged into main (normally the promotion from testing) its own version: bumps gpushepherd/__init__.py, adds
 # its entry to CHANGELOG.md, commits that to main as "Release X.Y.Z", tags it vX.Y.Z, publishes
 # a GitHub release and pushes the image compose.standalone.yaml runs to ghcr.io (X.Y.Z and latest). Labels on the pull request pick the step: major, minor, patch (default), or
 # "no release". See docs/updates.md#versions-and-releases.
@@ -105,3 +105,24 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.bump.outputs.version }}
+
+      # Keep testing (where changes wait for the next release, see CONTRIBUTING.md) level with main:
+      # the release commit, and any fix merged straight into main, go back into testing so the next
+      # promotion starts from this release. Best effort: if testing is protected, RELEASE_TOKEN must
+      # be allowed to bypass its rule too; if it fails, merge main into testing by hand.
+      - name: Bring testing up to date
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git fetch origin testing || { echo "no testing branch"; exit 0; }
+          main=$(git rev-parse HEAD)
+          if git merge-base --is-ancestor FETCH_HEAD "$main"; then
+            git push origin "$main:refs/heads/testing"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout --quiet -B testing FETCH_HEAD
+            git merge --no-edit -m "Merge main${VERSION:+ (release $VERSION)} into testing" "$main"
+            git push origin testing
+          fi
