@@ -1,5 +1,6 @@
 # llama-swap: one OpenAI-compatible endpoint (http://llm:8080/v1 inside, :8080 outside) that loads
-# whichever model a client asks for. Elastic: it takes every GPU nobody else needs.
+# whichever model a client asks for. Elastic: it takes every GPU nobody else needs, and runs on the
+# CPU (slower) while ComfyUI has the only GPU, so chat and documents keep working.
 id: llm
 name: Llama Swap
 description: llama-swap with Qwen3.5 9B (chat) and Qwen3 Embedding (documents)
@@ -9,6 +10,6 @@ ports:
   - {host: 8080, container: 8080}
 volumes:
   - {host: /srv/models, container: /models, read_only: true}
-gpu: {mode: elastic, min_gpus: 1, max_gpus: 0, priority: 50}
+gpu: {mode: elastic, min_gpus: 1, max_gpus: 0, priority: 50, cpu_fallback: true}
 autostart: true
 open_path: /ui

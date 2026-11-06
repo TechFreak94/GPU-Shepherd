@@ -122,7 +122,8 @@ def test_create_edit_and_validation(stack):
     r = client.post("/instances/save", headers=HX, data=form)
     assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/?msg=Saved Whisper")
     saved = yaml.safe_load((data / "instances" / "whisper.yaml").read_text())
-    assert saved["gpu"] == {"mode": "fixed", "gpus": [1], "min_gpus": 1, "max_gpus": 0, "priority": 60}
+    assert saved["gpu"] == {"mode": "fixed", "gpus": [1], "min_gpus": 1, "max_gpus": 0, "priority": 60,
+                            "cpu_fallback": False, "vram_gb": 0}
     assert saved["command"] == ["serve", "--fast"]
 
     bad = dict(form, id="other", ports="3000:8080")         # webui already uses 3000
@@ -906,3 +907,33 @@ def test_four_gpu_machine(stack, monkeypatch):
     act(client, app, "comfyui-2", "start", confirm=True)
     # ComfyUI's priority is higher, so it grows to its cap of 2 and the Llama Swap keeps the rest
     assert gpus_of(backend, "comfyui-2") == [2, 3] and gpus_of(backend, "llm") == [0, 1]
+
+
+def test_one_gpu_llm_falls_back_to_the_cpu_and_cards_say_why(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "1x8192:Test GPU")
+    monkeypatch.setenv("SHEPHERD_ADMIN_PASSWORD", "correct-horse")
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    shutil.copytree(EXAMPLE, tmp_path, dirs_exist_ok=True)
+    f = tmp_path / "instances" / "llm.yaml"
+    f.write_text(f.read_text().replace("priority: 50}", "priority: 50, cpu_fallback: true}"))
+    backend = FakeBackend()
+    app = create_app(data_dir=str(tmp_path), backend=backend, demo=True, autostart=False)
+    client = TestClient(app)
+    login(client)
+    act(client, app, "llm", "start")
+    assert gpus_of(backend, "llm") == [0]
+    page = client.get("/").text
+    assert "The GPU is in use. Starting it stops LLM" not in page
+    assert re.search(r"The GPU is in use\. Starting it moves .* to the CPU", page)   # ComfyUI's card
+
+    r = act(client, app, "comfyui", "start")
+    assert "to the CPU" in r.text                                    # asked first
+    act(client, app, "comfyui", "start", confirm=True)
+    assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == []
+    gen = (tmp_path / "generated" / "llm" / "llama-swap.yaml").read_text()
+    assert "--n-gpu-layers 0" in gen
+    page = client.get("/").text
+    assert "so it runs on the CPU, slower" in page
+
+    act(client, app, "comfyui", "stop", confirm=True)
+    assert gpus_of(backend, "llm") == [0]

@@ -227,6 +227,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Exception:  # noqa: BLE001 - the cards show without update notices
             log.exception("could not read the app update checks")
             images = {}
+        try:
+            gpu_notes = engine.gpu_notes(snap)
+        except Exception:  # noqa: BLE001 - only a hint
+            log.exception("could not work out the GPU notes")
+            gpu_notes = {}
         cards, cpu_rows, mem_rows = [], [], []
         order = sorted(snap.instances.values(), key=lambda i: (-i.gpu.priority if i.gpu.mode != "none" else 1, i.name.lower()))
         for inst in order:
@@ -252,7 +257,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     "pending": bool(st and st.running and st.config_hash and not cat_error
                                     and st.config_hash != engine.config_hash(inst)),
                     "loaded": [], "models_error": cat_error, "model_count": 0, "aliases": {}, "offload": {},
-                    "loading": sorted(app.state.loading.get(inst.id, set())),
+                    "loading": sorted(app.state.loading.get(inst.id, set())), "gpu_note": gpu_notes.get(inst.id, ""),
                     "waiting": (job.waiting.get(inst.id) if job else None)}
             if cat is not None:
                 card["model_count"] = len(cat.models)
@@ -489,6 +494,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         if kind == "llama-swap":
             return {"kind": "llama-swap", "image": "ghcr.io/mostlygeek/llama-swap:cuda", "ports": "8080:8080",
                     "gpu_mode": "elastic", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/ui",
+                    "cpu_fallback": True,
                     "volumes": "/srv/models:/models:ro", "name": "Llama Swap", "id": "llm",
                     "drain_check": "auto", "drain_timeout": 600, "drain_on_timeout": "stop"}
         return {"kind": "container", "gpu_mode": "none", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/",
@@ -500,6 +506,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "ports": format_ports(inst.ports), "volumes": format_volumes(inst.volumes),
                 "gpu_mode": inst.gpu.mode, "gpu_list": inst.gpu.gpus, "min_gpus": inst.gpu.min_gpus,
                 "max_gpus": inst.gpu.max_gpus, "priority": inst.gpu.priority, "autostart": inst.autostart,
+                "vram_gb": "%g" % inst.gpu.vram_gb if inst.gpu.vram_gb else "", "cpu_fallback": inst.gpu.cpu_fallback,
                 "open_port": inst.open_port or "", "open_path": inst.open_path, "shm_size": inst.shm_size or "",
                 "user_spec": inst.user or "", "memory_limit": inst.memory_limit or "",
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
@@ -649,9 +656,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
                                           "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
-                                          "drain_path", "drain_key", "app", "requires")}
+                                          "drain_path", "drain_key", "app", "requires", "vram_gb")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
+        f["cpu_fallback"] = raw.get("cpu_fallback") == "on"
         f["auto_update"] = raw.get("auto_update") == "on"
         editing = f["editing"] == "1"
         try:
@@ -661,7 +669,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 env=parse_env(f["env"]), ports=parse_ports(f["ports"]), volumes=parse_volumes(f["volumes"]),
                 gpu=GpuPolicy(mode=f["gpu_mode"] or "none", gpus=f["gpu_list"],
                               min_gpus=int(f["min_gpus"] or 1), max_gpus=int(f["max_gpus"] or 0),
-                              priority=int(f["priority"] or 50)),
+                              priority=int(f["priority"] or 50),
+                              vram_gb=float(f["vram_gb"]) if str(f["vram_gb"]).strip() and f["gpu_mode"] == "elastic" else 0,
+                              cpu_fallback=f["cpu_fallback"] and (f["gpu_mode"] == "elastic")),
                 autostart=f["autostart"], open_port=int(f["open_port"]) if str(f["open_port"]).strip() else None,
                 open_path=f["open_path"] or "/", shm_size=f["shm_size"] or None, user=f["user_spec"] or None,
                 memory_limit=f["memory_limit"] or None,

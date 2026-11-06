@@ -197,6 +197,8 @@ class Shepherd:
                     continue
                 gpus = p.allocations.get(iid, [])
                 vram = sum(vram_of.get(g, 0) for g in gpus)
+                if inst.gpu.shares:            # a shared GPU: only its budget is its own
+                    vram = min(vram, int(inst.gpu.vram_gb * 2**30))
                 cat = self.store.catalog(iid) if inst.kind == "llama-swap" else None
                 n = budget.ram_needed(inst, cat, len(gpus), vram, peaks.get(iid, 0))
                 if n:

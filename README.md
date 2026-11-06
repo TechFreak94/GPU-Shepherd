@@ -253,7 +253,9 @@ Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, Llama Swap *elastic 
 | Start ComfyUI | GPU 0 | restarted on GPU 1 |
 | Stop ComfyUI | stopped | restarted on GPUs 0,1 |
 
-With a single GPU the same settings make them take turns. A second ComfyUI *fixed GPU 1,
+With a single GPU the same settings make them take turns: starting ComfyUI moves Llama Swap to
+the CPU (it keeps answering, slower) until ComfyUI stops. Apps given a video memory budget can
+instead share one GPU, as many as fit ([GPU settings](docs/advanced.md#gpus)). A second ComfyUI *fixed GPU 1,
 priority 40* would stop the Llama Swap when started (you are asked first), and starting the LLM
 again stops it, since the LLM has the higher priority.
 
@@ -341,7 +343,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and
 
 ## Roadmap
 
-- Shared GPUs: let several small instances share one GPU with memory budgets.
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).
 - Live log streaming, Prometheus metrics, multiple users.

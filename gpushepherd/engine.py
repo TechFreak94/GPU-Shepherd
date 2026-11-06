@@ -54,7 +54,10 @@ class Engine:
     def config_hash(self, inst: Instance) -> str:
         # the drain policy, the app it came from, what starts with it, skipped app updates and how
         # its image is updated only matter to GPU Shepherd: no restart for those
-        data = inst.model_dump(mode="json", exclude={"drain", "app", "requires", "skipped_updates", "auto_update"})
+        # (nor the CPU fallback and video memory budget, which only steer the GPU planner)
+        data = inst.model_dump(mode="json", exclude={"drain": True, "app": True, "requires": True,
+                                                     "skipped_updates": True, "auto_update": True,
+                                                     "gpu": {"cpu_fallback", "vram_gb"}})
         if inst._file_name is not None:            # renamed only on screen (see config._named)
             data["name"] = inst._file_name
         if inst.kind == "llama-swap":
@@ -62,15 +65,19 @@ class Engine:
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:12]
 
     # ------------------------------------------------------------------ planning
-    def plan(self, action: str, target: str | None, extra_wanted: set[str] | None = None) -> Plan:
+    def plan(self, action: str, target: str | None, extra_wanted: set[str] | None = None,
+             first: set[str] | None = None) -> Plan:
         snap = self.snapshot()
         gpu_ids = [g.index for g in snap.gpus]
+        gpu_mem = {g.index: g.mem_total / 1024 for g in snap.gpus}
         if snap.gpu_error:
             # GPUs that can't be read are not gone: plan with the ones running containers hold, so a
-            # passing nvidia-smi failure never stops or moves what is running
+            # passing nvidia-smi failure never stops or moves what is running (and apps sharing
+            # one keep sharing it: its size is unknown, so nothing limits them)
             gpu_ids = sorted({g for held in snap.allocations.values() for g in held})
+            gpu_mem = {g: 1e9 for g in gpu_ids}
         p = make_plan(gpu_ids, snap.instances, snap.allocations, action, target, extra_wanted,
-                      self.usable(snap))
+                      self.usable(snap), gpu_mem, first)
         if snap.gpu_error and not p.error and action != "stop" and (p.side_effects or p.to_stop):
             p.error = "it would stop or move other apps"
         if snap.gpu_error and p.error:
@@ -103,11 +110,60 @@ class Engine:
         mem = [mem_of.get(g, 0) for g in gpus]
         if not all(mem):
             return {}
+        if inst.gpu.shares:                 # a GPU shared with other apps: only its budget is its own
+            mem = [min(m, int(inst.gpu.vram_gb * 2**30)) for m in mem]
         return placement.place(cat, self.model_needs(inst, cat), mem)
 
+    def gpu_notes(self, snap: Snapshot) -> dict[str, str]:
+        """Why an app isn't on a GPU, for its dashboard card: a running one that fell back to the
+        CPU, or a stopped one whose start would stop or move others (the GPUs are taken, as on a
+        machine with one GPU)."""
+        names = {i: inst.name for i, inst in snap.instances.items()}
+        holders = sorted({names[i] for i, g in snap.allocations.items() if g and i in names})
+
+        def joined(items: list[str]) -> str:
+            return ", ".join(items[:-1]) + " and " + items[-1] if len(items) > 1 else "".join(items)
+        out: dict[str, str] = {}
+        if snap.gpu_error:
+            return out
+        gpu_ids = [g.index for g in snap.gpus]
+        gpu_mem = {g.index: g.mem_total / 1024 for g in snap.gpus}
+        usable = None
+        for iid, inst in snap.instances.items():
+            if inst.gpu.mode == "none":
+                continue
+            st = snap.states.get(iid)
+            if st and st.running:
+                if not snap.allocations.get(iid):
+                    out[iid] = (f"No GPU was free ({joined(holders)} {'has' if len(holders) == 1 else 'have'} "
+                                f"{'it' if len(gpu_ids) == 1 else 'them'}), so it runs on the CPU, slower. "
+                                "It moves back onto a GPU when one is free; Restart takes one now."
+                                if holders else "It runs on the CPU: this machine has no GPU it can use.")
+                continue
+            if usable is None:
+                usable = self.usable(snap)
+            p = make_plan(gpu_ids, snap.instances, snap.allocations, "start", iid, usable=usable, gpu_mem=gpu_mem)
+            if p.error:
+                out[iid] = f"Can't start: {p.error}."
+                continue
+            stops = [names[i] for i in p.preempted if i != iid]
+            cpu = [names[i] for i in p.on_cpu if i != iid and i in p.to_restart]
+            parts = ([f"stops {joined(stops)}"] if stops else []) + ([f"moves {joined(cpu)} to the CPU"] if cpu else [])
+            if parts:
+                taken = "The GPU is" if len(gpu_ids) == 1 else "The GPUs are"
+                out[iid] = f"{taken} in use. Starting it {' and '.join(parts)} (you are asked first)."
+            elif iid in p.on_cpu:
+                out[iid] = "No GPU is free for it, so it would start on the CPU, slower."
+        return out
+
     def autostart_plan(self) -> Plan:
+        """Start every autostart instance. When the GPUs can't hold them all (one GPU for Llama Swap
+        and ComfyUI), model servers get theirs first, so chat works after a reboot; the others
+        start when you press Start (which stops or moves what is in the way, after you confirm)."""
         instances, _ = self.store.instances()
-        return self.plan("rebalance", None, {i for i, inst in instances.items() if inst.autostart})
+        wanted = {i for i, inst in instances.items() if inst.autostart}
+        return self.plan("rebalance", None, wanted,
+                         first={i for i in wanted if instances[i].kind == "llama-swap"})
 
     # ------------------------------------------------------------------ execution
     def _probe(self, inst: Instance) -> drain.Activity:

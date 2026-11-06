@@ -53,6 +53,10 @@
         <div class="hint">It won't start with fewer GPUs than this.</div></div>
       <div><label for="max_gpus">Maximum GPUs</label><input type="number" id="max_gpus" name="max_gpus" min="0" max="64" value="{{ f.max_gpus }}">
         <div class="hint">It never takes more than this. 0 = as many as are free.</div></div>
+      <div><label for="vram_gb">Share a GPU: video memory budget in GB (optional)</label><input type="number" id="vram_gb" name="vram_gb" min="0" max="1024" step="0.5" value="{{ f.vram_gb or '' }}" placeholder="0">
+        <div class="hint">For an app that uses one GPU (Maximum GPUs 1): the most video memory it takes. Apps with a budget share a GPU, as many as fit in its memory, so two small apps can run on one big GPU. Leave empty for a GPU of its own. Make the budget honest: a GPU that runs out of memory makes an app fail.</div></div>
+      <div><label class="check" style="margin-top:22px"><input type="checkbox" name="cpu_fallback" {{ "checked" if f.cpu_fallback }}> Run on the CPU when no GPU is free</label>
+        <div class="hint">Instead of stopping when another app needs its GPU, it keeps running on the CPU (slower), and moves back onto a GPU when one is free. Good for a chat model server on a machine with one GPU.</div></div>
     </div>
   </div>
 

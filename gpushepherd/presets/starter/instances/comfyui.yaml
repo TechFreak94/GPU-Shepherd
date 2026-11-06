@@ -1,5 +1,6 @@
 # ComfyUI for images and video. It needs one GPU, any one, and outranks the Llama Swap: with two
-# or more GPUs they run side by side; with one GPU, starting either stops the other (you are asked).
+# or more GPUs they run side by side. With one GPU, starting ComfyUI moves Llama Swap to the CPU
+# (slower) and starting Llama Swap's GPU back stops ComfyUI (you are asked both times).
 # Image: https://github.com/YanWenKun/ComfyUI-Docker (CUDA 13, needs NVIDIA driver 580 or newer).
 # Models go in the models folder's comfyui/ subfolder (checkpoints/, loras/, vae/ ...).
 id: comfyui

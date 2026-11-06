@@ -524,6 +524,9 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ConfigError("Port: enter a number from 1 to 65535")
     gpu = _gpu_policy(str(a.get("gpu") or t.gpu), t.priority)
+    if t.kind == "llama-swap" and gpu.mode == "elastic":
+        # a chat server keeps answering (on the CPU, slower) while an image app has the only GPU
+        gpu.cpu_fallback = True
 
     volumes = []
     if t.models_mount:

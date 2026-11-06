@@ -73,12 +73,20 @@ class GpuPolicy(BaseModel):
              It shrinks again when something else needs a GPU (e.g. a Llama Swap server).
     priority decides who keeps their GPUs when there are not enough to go around; the instance
     you are starting always wins, anything that can no longer fit is stopped (after you confirm).
+
+    cpu_fallback  elastic only: instead of being stopped when it can't get a GPU, it keeps running
+                  without one (a model server then runs its models on the CPU, slower) and moves
+                  back to a GPU as soon as one is free
+    vram_gb       one-GPU elastic only: the most video memory it uses. Instances with a budget can
+                  share a GPU, as many as fit in its memory; 0 = it needs a GPU of its own
     """
     mode: Literal["none", "fixed", "elastic"] = "none"
     gpus: list[int] = []
     min_gpus: int = Field(default=1, ge=1, le=64)
     max_gpus: int = Field(default=0, ge=0, le=64)
     priority: int = Field(default=50, ge=0, le=100)
+    cpu_fallback: bool = False
+    vram_gb: float = Field(default=0, ge=0, le=1024)
 
     @model_validator(mode="after")
     def _check(self) -> "GpuPolicy":
@@ -88,7 +96,17 @@ class GpuPolicy(BaseModel):
             raise ValueError("max GPUs must be 0 (no limit) or at least min GPUs")
         if len(set(self.gpus)) != len(self.gpus):
             raise ValueError("a GPU is listed twice")
+        if self.vram_gb and not (self.mode == "elastic" and self.max_gpus == 1):
+            raise ValueError("only an instance that uses one GPU, whichever is free, can share a GPU "
+                             "(a video memory budget)")
+        if self.cpu_fallback and self.mode != "elastic":
+            raise ValueError("only an elastic instance can fall back to the CPU")
         return self
+
+    @property
+    def shares(self) -> bool:
+        """Shares a GPU with other instances that have a video memory budget."""
+        return self.vram_gb > 0
 
 
 class DrainPolicy(BaseModel):

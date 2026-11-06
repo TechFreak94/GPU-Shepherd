@@ -71,9 +71,11 @@ def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, li
             if len(shares) >= gpu_count:     # one share per GPU it has now; the first ones when it has fewer
                 args += ["--tensor-split", ",".join(shares[p] for p in (own or range(gpu_count)))]
         rule = m.offload_for(gpu_count)
-        if rule and rule.gpu_layers is not None:
+        if not gpu_count:                    # no GPU (it fell back to the CPU): everything in RAM
+            args += ["--n-gpu-layers", "0"]
+        elif rule and rule.gpu_layers is not None:
             args += ["--n-gpu-layers", str(rule.gpu_layers)]
-        if rule and rule.cpu_moe:
+        if gpu_count and rule and rule.cpu_moe:
             args += ["--n-cpu-moe", str(rule.cpu_moe)]
         if m.sampling:
             args.append(m.sampling)

@@ -93,3 +93,12 @@ def test_tensor_split_on_many_gpus():
     assert "--tensor-split 1,1,2" in cmd[3] and "--tensor-split 1,1,2,2" in cmd[4]
     assert "--tensor-split" not in cmd[6]           # fewer shares than GPUs: llama.cpp splits by memory
     assert "for 6 GPU(s)" in render(cat, 6, 8)
+
+
+def test_no_gpu_keeps_every_layer_in_ram():
+    cat = catalog()
+    cat.models[0].offload = [OffloadRule(min_gpus=1, gpu_layers=20, cpu_moe=10)]
+    cfg = yaml.safe_load(render(cat, 0, 8))["models"]
+    assert "--n-gpu-layers 0" in cfg["qwen"]["cmd"] and "--n-cpu-moe" not in cfg["qwen"]["cmd"]
+    assert "--n-gpu-layers 0" in cfg["muse"]["cmd"]
+    assert "--n-gpu-layers 0" not in yaml.safe_load(render(cat, 1, 8))["models"]["muse"]["cmd"]

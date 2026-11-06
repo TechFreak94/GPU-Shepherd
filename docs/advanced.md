@@ -40,10 +40,13 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 | Minimum GPUs | `gpu.min_gpus` | Elastic only. Fewer than this and it can't start. |
 | Maximum GPUs | `gpu.max_gpus` | Elastic only. `0` = no limit. `1` makes "one GPU, whichever is free". |
 | Priority (0-100) | `gpu.priority` | When there aren't enough GPUs, higher priority keeps theirs and lower ones are moved or stopped (after you confirm). The instance you are starting always wins. |
+| Run on the CPU when no GPU is free | `gpu.cpu_fallback` | Elastic only. Instead of being stopped when it loses its GPUs, it keeps running without one (a Llama Swap server runs its models on the CPU, slower) and moves back onto a GPU when one is free. On by default for Llama Swap servers. |
+| Video memory budget (GB) | `gpu.vram_gb` | Elastic with a maximum of 1 only. Apps with a budget share a GPU, as many as fit in its memory (a Llama Swap server also fits its models into the budget). `0` = a GPU of its own. |
 
 Rule of thumb: apps that use one GPU (ComfyUI, speech models) are fixed or elastic with a maximum
 of 1; Llama Swap servers that split a model across GPUs are elastic with no maximum. The
-[README](../README.md#how-gpu-sharing-works) walks through how a plan is made.
+[README](../README.md#how-gpu-sharing-works) walks through how a plan is made. At boot, Llama Swap
+servers get their GPUs first, so chat works after a reboot even when one GPU can't hold every app.
 
 A container only sees the GPUs it was given. When its GPUs change it is re-created, so anything it
 needs to keep must be in a mounted folder.
