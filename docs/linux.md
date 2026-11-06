@@ -91,7 +91,20 @@ convert the distro with `wsl --set-version <distro> 2`. The installer detects WS
   the installer stops before changing anything and says so.
 - **Updates:** the dashboard's update service needs systemd too. Without it the installer skips the
   service with a warning, and you update with `sudo ./update.sh`.
-- **Ports:** open the dashboard from Windows at `http://localhost:PORT`.
+- **Ports:** open the dashboard from Windows at `http://localhost:PORT`. With Docker Desktop, other
+  devices (and Tailscale for Windows) reach it at the Windows machine's address. With Docker Engine
+  inside the distro, WSL only forwards ports to Windows' own `localhost` unless you turn on mirrored
+  networking: `networkingMode=mirrored` under `[wsl2]` in `%UserProfile%\.wslconfig`.
+- **GPUs:** WSL2 can't hide a GPU from a container, so GPU Shepherd tells each app which GPUs are its
+  own (`CUDA_VISIBLE_DEVICES`, by GPU UUID). A model split over two GPUs is slower than on native Linux,
+  because WSL2 has no GPU-to-GPU transfers.
+- **Memory:** WSL2 gives Linux half of Windows' RAM by default, and that's all GPU Shepherd can offload
+  models to. Raise it with `memory=` under `[wsl2]` in `%UserProfile%\.wslconfig`, then `wsl --shutdown`.
+- **Storage:** keep models on the distro's own disk. Windows drives (`/mnt/c` ...) work, but models load
+  far more slowly from them. New drives are never mounted by themselves on WSL2 (the other distros'
+  disks would look like new drives), and with Docker Desktop the Storage page shows Docker's own disks.
+- **Starting:** the apps start again when Docker does, which needs WSL to be running: set Docker Desktop
+  to start when you sign in, or open the distro.
 
 ## Other distributions
 

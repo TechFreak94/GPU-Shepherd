@@ -300,7 +300,7 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | Theme | - | System (follows your device), Light or Dark. Saved per browser in a `theme` cookie, not in `settings.yaml`. The theme button at the top of every page cycles through them. |
 | API token | - | For the [JSON API](api.md) and the `gpu-shepherd` commands. Kept in the `api-token` file in the data folder (mode 600), not in `settings.yaml`. *Make a new token* replaces it. |
 | Look for new app versions every | `image_check_hours` | Hours between checks of the registries for newer releases of the apps' images, 12 by default; `0` = only when you press *Check now*. See [App image updates](#app-image-updates). |
-| Mount new drives automatically | `auto_mount_drives` | On by default. A drive that is attached while GPU Shepherd runs and already holds data is mounted for you (see [Other disks](#other-disks)). |
+| Mount new drives automatically | `auto_mount_drives` | On by default (always off on WSL2). A drive that is attached while GPU Shepherd runs and already holds data is mounted for you (see [Other disks](#other-disks)). |
 | Empty the trash after | `trash_days` | Days before the [trash](#storage-and-trash) empties itself, 30 by default; `0` keeps things until you empty it. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |

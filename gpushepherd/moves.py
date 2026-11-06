@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import re
 import shlex
 import shutil
 import threading
@@ -51,11 +52,15 @@ class Check:
     disk: str = ""                     # the disk the new place is on, e.g. /dev/sdb1
     same_disk: bool = False            # the same disk as the folder now
     exists: bool = False               # the new place is an empty folder already
+    windows: bool = False              # a Windows drive on WSL2 (/mnt/c ...): slow, no Linux owners
     error: str = ""
 
     @property
     def warnings(self) -> list[str]:
         out = []
+        if self.windows:
+            out.append("This is a Windows drive. It works, but models load much more slowly from it than from "
+                       "Linux's own disk, and files there keep no Linux owners or permissions.")
         if self.same_disk:
             out.append("The new place is on the same disk as the folder now, so no space is freed. If it should "
                        "be on another disk, check that disk is mounted (it may not be, after a restart).")
@@ -175,6 +180,13 @@ def relocate(path: str, old: str, new: str) -> str:
     return str(Path(new) / rest) if str(rest) != "." else new
 
 
+def windows_drive(path: str) -> bool:
+    """A Windows drive as WSL2 mounts it (/mnt/c, /mnt/d ...). Copies there keep no owners: a
+    `cp -a` would fail trying to set them."""
+    from . import host
+    return host.is_wsl() and re.match(r"^/mnt/[a-z](/|$)", posixpath.normpath(path)) is not None
+
+
 def check_paths(source: str, dest: str, data_dir: str) -> str:
     """A problem with the two paths themselves (before looking at the disk), or ""."""
     dest = dest.strip()
@@ -230,7 +242,7 @@ true
 
 COPY = r"""S=/src; D=/dst/{name}
 mkdir -p "$D" || exit 3
-(cd "$S" && cp -a . "$D/") & pid=$!
+(cd "$S" && cp {keep} . "$D/") & pid=$!
 while kill -0 $pid 2>/dev/null; do echo "COPIED $(du -sk "$D" | cut -f1)"; sleep 5; done
 wait $pid || {{ echo "ERROR the copy failed"; exit 4; }}
 echo "COPIED $(du -sk "$D" | cut -f1)"
@@ -278,7 +290,8 @@ class HelperMover(Mover):
         return parse_check(self.backend.run_task(self.image, script, [("/", "/host", True)], "0:0"))
 
     def start(self, mid: str, source: str, dest: str) -> None:
-        self.backend.run_helper(self.name(mid), self.image, COPY.format(name=shlex.quote(Path(dest).name)),
+        self.backend.run_helper(self.name(mid), self.image, COPY.format(name=shlex.quote(Path(dest).name),
+                                                                         keep="-dR" if windows_drive(dest) else "-a"),
                                 [(source, "/src", True), (str(Path(dest).parent), "/dst", False)], "0:0", KIND)
 
     def poll(self, mid: str) -> tuple[bool, int | None, int]:

@@ -224,11 +224,12 @@ def test_helper_scripts(tmp_path):
     check = moves.CHECK.format(src=str(src), parent=str(dst), dst=str(dst / "models")).replace("/host", "")
     c = moves.parse_check(subprocess.run(["sh", "-c", check], capture_output=True, text=True).stdout)
     assert not c.error and c.size >= 3000 and c.free > 0 and c.disk and c.same_disk
-    copy = moves.COPY.format(name="models").replace("S=/src; D=/dst/", f"S={src}; D={dst}/")
-    p = subprocess.run(["sh", "-c", copy], capture_output=True, text=True)
-    assert p.returncode == 0, p.stdout + p.stderr
-    assert "VERIFIED" in p.stdout and (dst / "models" / "a" / "b" / "m.gguf").read_bytes() == b"m" * 3000
-    assert os.readlink(dst / "models" / "link") == "a/b/m.gguf"
+    for keep, name in (("-dR", "plain"), ("-a", "models")):    # -dR: to a Windows drive on WSL2
+        copy = moves.COPY.format(name=name, keep=keep).replace("S=/src; D=/dst/", f"S={src}; D={dst}/")
+        p = subprocess.run(["sh", "-c", copy], capture_output=True, text=True)
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert "VERIFIED" in p.stdout and (dst / name / "a" / "b" / "m.gguf").read_bytes() == b"m" * 3000
+        assert os.readlink(dst / name / "link") == "a/b/m.gguf"
     again = moves.parse_check(subprocess.run(["sh", "-c", check], capture_output=True, text=True).stdout)
     assert "not an empty folder" in again.error
 

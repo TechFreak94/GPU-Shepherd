@@ -97,6 +97,7 @@ put_unit() {   # put_unit FILE < text: write a unit file only if it is new or di
 }
 keep_gpus_through_reload() {
     have nvidia-ctk || return 0
+    grep -qi microsoft /proc/version 2>/dev/null && return 0   # WSL2: no NVIDIA device files to link
     nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
     [ -f "$UDEV_RULE" ] || [ -f "$T/lib/udev/rules.d/71-nvidia-dev-char.rules" ] || {
         mkdir -p "$(dirname "$UDEV_RULE")" &&

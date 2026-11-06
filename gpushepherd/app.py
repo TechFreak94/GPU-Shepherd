@@ -1237,7 +1237,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     def drives_info() -> dict:
         d = svc.drives()
-        return {"found": [drives.Drive(**x) for x in d["drives"]], "drives_error": d["error"], "auto_mount": d["auto_mount"]}
+        return {"found": [drives.Drive(**x) for x in d["drives"]], "drives_error": d["error"], "auto_mount": d["auto_mount"],
+                "wsl": d.get("wsl", False)}
 
     @app.get("/storage/drives", response_class=HTMLResponse)
     def storage_drives(request: Request, source: str = "", picking: str = ""):
