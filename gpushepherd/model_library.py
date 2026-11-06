@@ -1,4 +1,4 @@
-"""Suggested models: a short list of GGUF models that work well with the LLM server, each with
+"""Suggested models: a short list of GGUF models that work well with the Llama Swap, each with
 its download links and the settings its makers recommend.
 
 Picking one (in the install form or on a model server's Models page) downloads it into the

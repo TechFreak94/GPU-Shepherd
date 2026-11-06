@@ -1,8 +1,8 @@
 # Model files for this preset, fetched by presets/download-models.sh into the models folder.
 #   group <name> <default|optional> <size> <description>
 #   file  <group> <path under the models folder> <url> [fallback url ...]
-group chat  default ~7GB   Qwen3.5 9B and its vision projector, the LLM server's "chat" model (fits an 8 GB GPU)
-group embed default ~1GB   Qwen3 Embedding 0.6B, the LLM server's "embed" model for chatting with documents
+group chat  default ~7GB   Qwen3.5 9B and its vision projector, the Llama Swap's "chat" model (fits an 8 GB GPU)
+group embed default ~1GB   Qwen3 Embedding 0.6B, the Llama Swap's "embed" model for chatting with documents
 group image default ~7GB   Stable Diffusion XL base 1.0 for ComfyUI (checkpoints/)
 file chat  qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf  https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf
 file chat  qwen3.5-9b/mmproj-F16.gguf  https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf

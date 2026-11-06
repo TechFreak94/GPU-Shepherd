@@ -44,7 +44,7 @@
 {% with app_t = t, manual = False %}{% include "partials/install_mode.html" %}{% endwith %}
 {% if t.experimental %}<div class="notice need" role="note"><strong>Experimental.</strong> {{ t.experimental }} The steps are under Afterwards, below.</div>{% endif %}
 {% if no_server %}{% with need = t, manual = False %}{% include "partials/needs_server.html" %}{% endwith %}{% endif %}
-{% if then_t %}<div class="notice next" role="status"><strong>Next: {{ then_t.title }}.</strong> Once this LLM server is installed you go on to set up {{ then_t.title }}, already connected to it.</div>{% endif %}
+{% if then_t %}<div class="notice next" role="status"><strong>Next: {{ then_t.title }}.</strong> Once this Llama Swap is installed you go on to set up {{ then_t.title }}, already connected to it.</div>{% endif %}
 {% if error %}<div class="error-box" role="alert">{{ error }}</div>{% endif %}
 <form class="guided" hx-post="/instances/guided" hx-target="#editor" hx-select="#editor" hx-swap="outerHTML">
   <input type="hidden" name="template" value="{{ t.key }}">

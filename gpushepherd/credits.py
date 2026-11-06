@@ -46,7 +46,7 @@ WORKS_WITH: tuple[Credit, ...] = (
     Credit("NVIDIA driver and nvidia-smi", "https://www.nvidia.com/drivers", "NVIDIA's own license (not open source)",
            "Reads the GPUs; installed by you or your distribution"),
     Credit("llama.cpp", "https://github.com/ggml-org/llama.cpp", "MIT",
-           "Runs GGUF models inside the LLM server"),
+           "Runs GGUF models inside the Llama Swap"),
     Credit("Python", "https://www.python.org", "PSF License", "GPU Shepherd's own image is built on python:3.13-slim "
            "(Debian), whose packages keep their own licenses"),
     Credit("curl", "https://curl.se", "curl license (MIT-style)",

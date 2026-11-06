@@ -16,7 +16,7 @@ modules a task touches: each one starts with a docstring that says what it owns.
 | `backend.py` | Docker Engine backend, plus the in-memory fake used by tests and `--demo` |
 | `drain.py`, `jobs.py` | Waiting for running work before a stop; one background change at a time |
 | `config.py` | Pydantic models stored as YAML in the data directory (layout in its docstring) |
-| `instance_templates.py` | App Center apps (LLM server, ComfyUI, Open WebUI, LibreChat, AnythingLLM, Hermes...) |
+| `instance_templates.py` | App Center apps (Llama Swap, ComfyUI, Open WebUI, LibreChat, AnythingLLM, Hermes...) |
 | `app_updates.py` | Bringing already-installed apps up to the current template |
 | `model_library.py`, `downloads.py` | Suggested GGUF models and downloading them |
 | `connectors/llamaswap.py` | Renders llama-swap's config from the model catalogue |

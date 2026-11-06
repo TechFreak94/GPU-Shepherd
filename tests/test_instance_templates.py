@@ -112,7 +112,7 @@ def test_models_picked_while_installing():
 
 
 def test_renamed_apps():
-    """The chat and coding model servers are one LLM server now; old keys and instances still find it."""
+    """The chat and coding model servers are one Llama Swap now; old keys and instances still find it."""
     assert tpl.get("llm-chat") is tpl.get("llm-coder") is tpl.get("llm-server")
     assert [x.key for x in tpl.TEMPLATES if x.kind == "llama-swap"] == ["llm-server"]
 

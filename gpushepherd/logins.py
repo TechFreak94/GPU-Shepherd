@@ -10,7 +10,7 @@ Each app keeps its accounts its own way:
     LibreChat       accounts in its MongoDB database
     Langflow        accounts in its database (data/langflow.db); the admin is made at its first
                     start from the instance's environment
-    LLM server      no accounts: llama-swap takes its API key as the password, with any user name,
+    Llama Swap      no accounts: llama-swap takes its API key as the password, with any user name,
                     when a browser opens it (the key is in its model catalogue)
 A password GPU Shepherd can read (the environment, server.env) is shown. A database only keeps a
 hash of each password, so for those the accounts are listed and a new password can be set, by a
@@ -30,7 +30,7 @@ from .config import ConfigError, Instance
 
 MIN_PASSWORD = 8
 SINGLE_USER = "(password only)"        # AnythingLLM without multi-user mode: no user name
-ANY_USER = "(any user name)"           # the LLM server: only the password, its API key, is checked
+ANY_USER = "(any user name)"           # the Llama Swap: only the password, its API key, is checked
 # apps whose login is in the instance's environment (Template.login), read when they start
 ENV_LOGINS = ("hermes", "sillytavern", "open-notebook")
 

@@ -44,7 +44,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [Docker Engine (Moby)](https://mobyproject.org) | Apache-2.0 | Runs every instance |
 | [NVIDIA Container Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit) | Apache-2.0 | Gives containers their GPUs; installed by install.sh |
 | [NVIDIA driver and nvidia-smi](https://www.nvidia.com/drivers) | NVIDIA's own license (not open source) | Reads the GPUs; installed by you or your distribution |
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Runs GGUF models inside the LLM server |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Runs GGUF models inside the Llama Swap |
 | [Python](https://www.python.org) | PSF License | GPU Shepherd's own image is built on python:3.13-slim (Debian), whose packages keep their own licenses |
 | [curl](https://curl.se) | curl license (MIT-style) | Downloads models, in the curlimages/curl container |
 | [Tailscale](https://tailscale.com) | BSD-3-Clause (client) | Optional remote access, only if you choose it in install.sh |
@@ -56,7 +56,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 
 | App | License | Image |
 | :- | :- | :- |
-| [LLM server](https://github.com/mostlygeek/llama-swap) | MIT (llama-swap and llama.cpp) | `ghcr.io/mostlygeek/llama-swap:cuda` |
+| [Llama Swap](https://github.com/mostlygeek/llama-swap) | MIT (llama-swap and llama.cpp) | `ghcr.io/mostlygeek/llama-swap:cuda` |
 | [Ollama](https://docs.ollama.com) | MIT | `ollama/ollama:latest` |
 | [vLLM](https://docs.vllm.ai) | Apache-2.0 | `vllm/vllm-openai:latest` |
 | [Open WebUI](https://docs.openwebui.com) | Open WebUI License (BSD-3-Clause plus branding terms) | `ghcr.io/open-webui/open-webui:main` |

@@ -109,10 +109,10 @@
     <div class="fields">
       <div><label for="drain_check">Wait for running work</label>
         <select id="drain_check" name="drain_check">
-          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "LLM server (llama-swap): chat answers in progress"), ("llama-server", "llama.cpp server: requests in progress"), ("comfyui", "ComfyUI: images in the queue"), ("http", "Custom - ask a web address"), ("none", "Don't wait")] %}
+          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "Llama Swap (llama-swap): chat answers in progress"), ("llama-server", "llama.cpp server: requests in progress"), ("comfyui", "ComfyUI: images in the queue"), ("http", "Custom - ask a web address"), ("none", "Don't wait")] %}
           <option value="{{ v }}" {{ "selected" if (f.drain_check or "auto") == v }}>{{ label }}</option>{% endfor %}
         </select>
-        <div class="hint">Automatic works for the LLM server and ComfyUI apps. Any other app is stopped straight away.</div></div>
+        <div class="hint">Automatic works for the Llama Swap and ComfyUI apps. Any other app is stopped straight away.</div></div>
       <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_timeout">Wait at most (seconds)</label>
         <input type="number" id="drain_timeout" name="drain_timeout" min="0" max="86400" value="{{ f.drain_timeout if f.drain_timeout is not none and f.drain_timeout != '' else 600 }}">
         <div class="hint">0 = don't wait. Long video or batch jobs may need more.</div></div>

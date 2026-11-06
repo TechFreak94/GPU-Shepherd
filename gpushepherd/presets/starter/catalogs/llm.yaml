@@ -1,5 +1,5 @@
 # Model catalogue for the "llm" instance. Edit it in the UI (Models page), or add models there.
-# These are two of the LLM server's suggested models (its Models page lists the rest), set up as GPU
+# These are two of the Llama Swap's suggested models (its Models page lists the rest), set up as GPU
 # Shepherd sets them up when you add them there:
 #   https://huggingface.co/unsloth/Qwen3.5-9B-GGUF   ~7 GB with its vision projector, fits one 8 GB GPU
 #   https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF   ~0.6 GB, runs on the CPU, stays loaded

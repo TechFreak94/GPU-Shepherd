@@ -75,7 +75,7 @@ def test_gpu_handoff_flow(stack):
     app, client, backend, data = stack
     login(client)
     page = client.get("/")
-    assert page.status_code == 200 and "ComfyUI" in page.text and "LLM server" in page.text
+    assert page.status_code == 200 and "ComfyUI" in page.text and "Llama Swap" in page.text
 
     # LLM alone: both GPUs, coder -> Qwen3 Coder Next
     act(client, app, "llm", "start")
@@ -91,7 +91,7 @@ def test_gpu_handoff_flow(stack):
     # starting ComfyUI moves the LLM: needs confirmation first
     r = act(client, app, "comfyui", "start")
     assert r.headers.get("HX-Retarget") == "#modal-body"
-    assert "Restart LLM server to move it from GPUs 0,1 to GPU 1" in r.text
+    assert "Restart Llama Swap to move it from GPUs 0,1 to GPU 1" in r.text
     assert "shepherd-comfyui" not in backend.containers
     act(client, app, "comfyui", "start", confirm=True)
     assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == [1]
@@ -110,7 +110,7 @@ def test_gpu_handoff_flow(stack):
     state = client.get("/api/state").json()
     assert state["instances"]["llm"]["gpus"] == [0, 1] and state["instances"]["comfyui"]["running"] is False
     dash = client.get("/ui/dashboard", headers=HX).text
-    assert dash.count('<a href="#inst-llm" title="Go to LLM server">LLM server</a><span class="on">assigned</span>') == 2  # both GPU cards
+    assert dash.count('<a href="#inst-llm" title="Go to Llama Swap">Llama Swap</a><span class="on">assigned</span>') == 2  # both GPU cards
 
 
 def test_create_edit_and_validation(stack):
@@ -343,7 +343,7 @@ def test_guided_setup(stack, tmp_path_factory):
     assert 'href="/instances/new/custom"' in page and "llm-coder" not in page and "llm-chat" not in page
     # old "Add model server" and template links still work; the chat and coding servers are one app now
     assert 'name="kind" value="llama-swap"' in client.get("/instances/new?kind=llama-swap").text
-    assert "Install LLM server" in client.get("/instances/new/llm-coder").text
+    assert "Install Llama Swap" in client.get("/instances/new/llm-coder").text
     r = client.get("/apps/llm-chat?mode=manual", follow_redirects=False)
     assert r.headers["location"] == "/apps/llm-server?mode=manual"
 
@@ -421,11 +421,11 @@ def test_app_store(stack):
 
 
 def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
-    """No LLM server yet: apps that need one say so and offer to install it first, then come back."""
+    """No Llama Swap yet: apps that need one say so and offer to install it first, then come back."""
     app, client, backend, data = stack
     login(client)
     assert "Add model server" not in client.get("/").text
-    assert "needs an LLM server" not in client.get("/apps/open-webui").text       # the example has one
+    assert "needs a Llama Swap server" not in client.get("/apps/open-webui").text       # the example has one
     for f in (data / "instances").glob("*.yaml"):
         f.unlink()
     assert "Add model server" not in client.get("/").text
@@ -435,20 +435,20 @@ def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
     assert "none is installed yet" not in store_page.split('id="app-comfyui"')[1].split("</article>")[0]
     for url in ("/apps/hermes", "/apps/hermes?mode=manual"):
         page = client.get(url).text
-        assert "Hermes Agent needs an LLM server" in page and 'href="/apps/llm-server?then=hermes"' in page
-    assert "needs an LLM server" not in client.get("/apps/comfyui").text
+        assert "Hermes Agent needs a Llama Swap server" in page and 'href="/apps/llm-server?then=hermes"' in page
+    assert "needs a Llama Swap server" not in client.get("/apps/comfyui").text
 
-    # the LLM server installed "first" goes on to Hermes, which then picks it
+    # the Llama Swap installed "first" goes on to Hermes, which then picks it
     page = client.get("/apps/llm-server?then=hermes").text
     assert 'name="then" value="hermes"' in page and "Next: Hermes Agent" in page and "and continue" in page
     assert 'name="then"' not in client.get("/apps/llm-server?then=comfyui").text   # only apps that need a server
     models = tmp_path_factory.mktemp("models")
     r = client.post("/instances/guided", headers=HX, data={
-        "template": "llm-server", "then": "hermes", "name": "LLM server", "id": "llm", "port": "8080", "gpu": "all",
+        "template": "llm-server", "then": "hermes", "name": "Llama Swap", "id": "llm", "port": "8080", "gpu": "all",
         "models_dir": str(models), "offload": "auto", "action": "create"})
-    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/apps/hermes?msg=Installed LLM server")
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/apps/hermes?msg=Installed Llama Swap")
     page = client.get(r.headers["HX-Redirect"]).text
-    assert "needs an LLM server" not in page and '<option value="llm" selected>' in page
+    assert "needs a Llama Swap server" not in page and '<option value="llm" selected>' in page
     assert "Now set up Hermes Agent" in page
 
 
@@ -469,11 +469,11 @@ def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
                "hass_url": "http://ha.lan:8123", "hass_token": "tok", "action": "create"}
     r = client.post("/instances/guided", headers=HX, data=answers)
     assert "at least 8 characters" in r.text and not (data / "instances" / "llm.yaml").exists()
-    assert "A new LLM server" in r.text           # no half-made server in the list
+    assert "A new Llama Swap" in r.text           # no half-made server in the list
 
     r = client.post("/instances/guided", headers=HX, data=answers | {"password": "long-enough-pw"})
     assert r.status_code == 204, re.findall(r"error-box.*?</div>", r.text)
-    assert "Installed Hermes and LLM server" in unquote(r.headers["HX-Redirect"])
+    assert "Installed Hermes and Llama Swap" in unquote(r.headers["HX-Redirect"])
     srv = yaml.safe_load((data / "instances" / "llm.yaml").read_text())
     cat = yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())
     assert srv["kind"] == "llama-swap" and srv["app"] == "llm-server" and srv["ports"][0]["host"] == 8080
@@ -525,7 +525,7 @@ def test_swap_waits_for_running_work(stack):
     busy["llm"] = 0
     wait(app)
     assert gpus_of(backend, "comfyui") == [0] and gpus_of(backend, "llm") == [1]
-    assert any("LLM server finished its work" in ln for ln in app.state.jobs.history[0].lines)
+    assert any("Llama Swap finished its work" in ln for ln in app.state.jobs.history[0].lines)
 
     # Stop now: stops without waiting any longer
     busy["llm"] = 2
@@ -694,7 +694,7 @@ def test_suggested_models_page(stack, tmp_path_factory):
         time.sleep(0.01)
     part = client.get("/instances/llm/suggestions", headers=HX).text
     assert 'hx-trigger="every 3s"' in part and "Downloading" in part and "/suggestions/qwen3.5-9b/cancel" in part
-    assert "already on LLM server" in client.post("/instances/llm/suggestions/qwen3.5-9b/add", headers=HX).headers["HX-Trigger"]
+    assert "already on Llama Swap" in client.post("/instances/llm/suggestions/qwen3.5-9b/add", headers=HX).headers["HX-Trigger"]
     r = client.post("/instances/llm/suggestions/qwen3.5-9b/cancel", headers=HX)
     assert "Stopped downloading" in r.headers["HX-Trigger"] and "/suggestions/qwen3.5-9b/download" in r.text
     assert "no suggested model" in client.post("/instances/llm/suggestions/nope/download", headers=HX).headers["HX-Trigger"]
@@ -743,7 +743,7 @@ def test_install_form_offers_suggested_models(stack):
 def test_app_updates_notice_and_dialog(stack):
     _, client, _, data = stack
     login(client)
-    assert "1 app update:" in client.get("/ui/dashboard").text       # the LLM server's embeddings model
+    assert "1 app update:" in client.get("/ui/dashboard").text       # the Llama Swap's embeddings model
     dlg = client.get("/ui/app-updates").text
     assert "Add an embeddings model" in dlg and "/ui/app-updates/llm/embed-model/apply" in dlg
     r = client.post("/ui/app-updates/llm/embed-model/apply", headers=HX)
@@ -856,7 +856,7 @@ def test_restart_from_the_models_page_goes_back_there(stack):
     wait(app)
     # the message has "…" in it, which a header can only carry encoded
     assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith(
-        "/instances/llm/models?msg=Restarting LLM server")
+        "/instances/llm/models?msg=Restarting Llama Swap")
 
 
 def test_models_page_adds_a_model_from_a_link(stack, monkeypatch):
@@ -904,5 +904,5 @@ def test_four_gpu_machine(stack, monkeypatch):
     assert gpus_of(backend, "llm") == [0, 1, 2, 3]
     assert "GPUs 0-3" in client.get("/", headers=HX).text
     act(client, app, "comfyui-2", "start", confirm=True)
-    # ComfyUI's priority is higher, so it grows to its cap of 2 and the LLM server keeps the rest
+    # ComfyUI's priority is higher, so it grows to its cap of 2 and the Llama Swap keeps the rest
     assert gpus_of(backend, "comfyui-2") == [2, 3] and gpus_of(backend, "llm") == [0, 1]

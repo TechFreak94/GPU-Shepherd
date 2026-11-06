@@ -1,5 +1,5 @@
 id: llm
-name: LLM server
+name: Llama Swap
 description: llama-swap with Qwen3.6 35B-A3B (chat) and Qwen3 Coder Next (coder)
 kind: llama-swap
 image: ghcr.io/mostlygeek/llama-swap:cuda

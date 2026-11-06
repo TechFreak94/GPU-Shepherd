@@ -1,6 +1,6 @@
-{# Shown when installing an app that talks to an LLM server while none is installed; `need` is the app #}
+{# Shown when installing an app that talks to a Llama Swap server while none is installed; `need` is the app #}
 <div class="notice need" role="status">
-  <strong>{{ need.title }} needs an LLM server, and there isn't one yet.</strong>
-  <p>It sends every question to a model server, so it can't answer anything until one is installed. Install the LLM server first and you'll come straight back here with it connected{% if not manual %}, or keep <em>A new LLM server, installed with it</em> under Connections to install both at once{% endif %}.</p>
-  <div class="btns"><a class="btn primary" href="/apps/llm-server?then={{ need.key }}">Install an LLM server first</a></div>
+  <strong>{{ need.title }} needs a Llama Swap server, and there isn't one yet.</strong>
+  <p>It sends every question to a model server, so it can't answer anything until one is installed. Install the Llama Swap first and you'll come straight back here with it connected{% if not manual %}, or keep <em>A new Llama Swap, installed with it</em> under Connections to install both at once{% endif %}.</p>
+  <div class="btns"><a class="btn primary" href="/apps/llm-server?then={{ need.key }}">Install a Llama Swap server first</a></div>
 </div>

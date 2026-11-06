@@ -8,7 +8,7 @@
 #
 # Open http://<server>:8090 and log in as "admin" (the password is also saved in
 # INITIAL_PASSWORD.txt in the data folder). On the first start it sets up the Starter preset (an
-# LLM server, ComfyUI and Open WebUI; nothing starts until you press Start) and downloads its
+# Llama Swap, ComfyUI and Open WebUI; nothing starts until you press Start) and downloads its
 # models (about 15 GB) in the background. Addresses and logins: PRESET_NOTES.txt in the data folder.
 #
 # To change any of this, put it in a .env file next to this one instead of editing it, for example:

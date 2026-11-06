@@ -207,7 +207,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         out["choices"] = {
             "gpu": tpl.gpu_choices(gpus, t),
             "offload": tpl.OFFLOAD_CHOICES if tpl.slots(t) else {},
-            "server": ({tpl.NEW_SERVER: "Install an LLM server with it"} | {k: v["name"] for k, v in m.servers.items()})
+            "server": ({tpl.NEW_SERVER: "Install a Llama Swap server with it"} | {k: v["name"] for k, v in m.servers.items()})
             if t.connects else {},
             "comfyui": {i.id: i.name for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"}
             if t.connects == "openwebui" else {},

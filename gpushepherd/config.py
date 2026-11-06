@@ -70,7 +70,7 @@ class GpuPolicy(BaseModel):
     none     no GPU
     fixed    always exactly the GPUs in `gpus` (e.g. ComfyUI on GPU 0)
     elastic  at least `min_gpus`, and grows into every free GPU up to `max_gpus` (0 = no limit).
-             It shrinks again when something else needs a GPU (e.g. an LLM server).
+             It shrinks again when something else needs a GPU (e.g. a Llama Swap server).
     priority decides who keeps their GPUs when there are not enough to go around; the instance
     you are starting always wins, anything that can no longer fit is stopped (after you confirm).
     """

@@ -489,7 +489,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         if kind == "llama-swap":
             return {"kind": "llama-swap", "image": "ghcr.io/mostlygeek/llama-swap:cuda", "ports": "8080:8080",
                     "gpu_mode": "elastic", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/ui",
-                    "volumes": "/srv/models:/models:ro", "name": "LLM server", "id": "llm",
+                    "volumes": "/srv/models:/models:ro", "name": "Llama Swap", "id": "llm",
                     "drain_check": "auto", "drain_timeout": 600, "drain_on_timeout": "stop"}
         return {"kind": "container", "gpu_mode": "none", "min_gpus": 1, "max_gpus": 0, "priority": 50, "open_path": "/",
                 "drain_check": "auto", "drain_timeout": 600, "drain_on_timeout": "stop"}
@@ -523,7 +523,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     machine, model_files = svc.machine, svc.model_files
 
     def next_app(key: str) -> tpl.Template | None:
-        """The app to go on to after installing an LLM server for it (?then=)."""
+        """The app to go on to after installing a Llama Swap server for it (?then=)."""
         try:
             t = tpl.get(key) if key else None
         except ConfigError:
@@ -568,7 +568,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             t = tpl.get(key)
         except ConfigError as err:
             return RedirectResponse(with_msg("/apps", str(err)), status_code=303)
-        if t.key != key:                      # renamed app (the chat and coding servers are one LLM server now)
+        if t.key != key:                      # renamed app (the chat and coding servers are one Llama Swap now)
             return RedirectResponse(f"/apps/{t.key}" + ("?mode=manual" if mode == "manual" else ""), status_code=303)
         if mode != "manual":
             _, f, m = svc.app_defaults(key)

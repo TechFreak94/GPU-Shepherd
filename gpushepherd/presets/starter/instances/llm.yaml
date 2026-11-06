@@ -1,7 +1,7 @@
 # llama-swap: one OpenAI-compatible endpoint (http://llm:8080/v1 inside, :8080 outside) that loads
 # whichever model a client asks for. Elastic: it takes every GPU nobody else needs.
 id: llm
-name: LLM server
+name: Llama Swap
 description: llama-swap with Qwen3.5 9B (chat) and Qwen3 Embedding (documents)
 kind: llama-swap
 image: ghcr.io/mostlygeek/llama-swap:cuda

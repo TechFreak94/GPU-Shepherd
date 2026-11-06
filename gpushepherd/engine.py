@@ -148,7 +148,7 @@ class Engine:
             self.backend.stop(self.container_name(iid))
 
         # start everything even if one fails, so e.g. a broken ComfyUI does not leave the
-        # LLM server (which was moved to make room) stopped
+        # Llama Swap (which was moved to make room) stopped
         failures = []
         for iid in starts:
             inst = instances[iid]

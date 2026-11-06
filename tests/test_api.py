@@ -61,11 +61,11 @@ def test_token_required(stack):
 def test_start_asks_before_moving_others(stack):
     app, client, backend, _ = stack
     r = client.post("/api/v1/instances/llm/start")
-    assert r.status_code == 202 and r.json()["job"]["title"] == "Starting LLM server"
+    assert r.status_code == 202 and r.json()["job"]["title"] == "Starting Llama Swap"
     wait(app)
     assert client.post("/api/v1/instances/llm/start").json()["noop"] is True
     r = client.post("/api/v1/instances/comfyui/start")
-    assert r.status_code == 409 and r.json()["needs_confirm"] and any("Restart LLM server" in x for x in r.json()["plan"])
+    assert r.status_code == 409 and r.json()["needs_confirm"] and any("Restart Llama Swap" in x for x in r.json()["plan"])
     r = client.post("/api/v1/instances/comfyui/start", json={"confirm": True})
     assert r.status_code == 202
     wait(app)
@@ -226,7 +226,7 @@ def test_cli_status_start_and_set(run, stack):
     assert code == 0 and "GPU 0  Test GPU" in text and "llm" in text
     assert run("start", "llm")[0] == 0
     code, text = run("start", "comfyui")
-    assert code == 1 and "Restart LLM server" in text and "Nothing changed" in text
+    assert code == 1 and "Restart Llama Swap" in text and "Nothing changed" in text
     code, text = run("start", "comfyui", "-y")
     assert code == 0 and "Done." in text and backend.containers["shepherd-comfyui"].gpus == [0]
     code, text = run("set", "comfyui", "gpu.priority=70", "autostart=false", "env=A=1;B=two", "ports=8188:8188;9999:9")
@@ -418,7 +418,7 @@ def test_old_trash_is_emptied_by_itself(stack):
 def test_app_logins(stack):
     app, client, backend, data = stack
     base = "/api/v1/instances"
-    # the LLM server: any user name, its API key as the password (llama-swap's browser login)
+    # the Llama Swap: any user name, its API key as the password (llama-swap's browser login)
     got = client.get(f"{base}/llm/logins").json()
     key = client.get(f"{base}/llm/models").json()["settings"]["api_key"]
     assert got["accounts"][0]["password"] == key and got["accounts"][0]["user"] == "(any user name)" and not got["can_reset"]
