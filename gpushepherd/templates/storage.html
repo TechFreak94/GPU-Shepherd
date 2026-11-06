@@ -17,11 +17,11 @@
 
 <h3>Drives</h3>
 <div class="card" id="drives-card">
-  <p class="small muted" style="margin-top:0">The disks in this machine. {% if drives.auto_mount %}A drive that is attached and has data on it is mounted within seconds, under /mnt, and again after a restart.{% else %}Automatic mounting is off: use Mount on a drive.{% endif %}
+  <p class="small muted" style="margin-top:0">The disks in this machine. {% if drives.wsl %}This is WSL2: Windows drives are already at /mnt/c, /mnt/d and so on, but models load much faster from Linux's own disk. New drives are never mounted by themselves here, because the other WSL distros' disks would look like new drives. With Docker Desktop, this list shows Docker's own disks.{% elif drives.auto_mount %}A drive that is attached and has data on it is mounted within seconds, under /mnt, and again after a restart.{% else %}Automatic mounting is off: use Mount on a drive.{% endif %}
     GPU Shepherd never formats or changes a drive.</p>
   {% set found = drives.found %}{% set drives_error = drives.error %}{% set source = "" %}{% set picking = False %}
   {% include "partials/drives.html" %}
-  <div class="actions" style="margin-top:8px"><button type="button" class="small" hx-post="/storage/drives/auto" hx-vals='{"on": "{{ 0 if drives.auto_mount else 1 }}"}'>{{ "Stop mounting new drives automatically" if drives.auto_mount else "Mount new drives automatically" }}</button></div>
+  {% if not drives.wsl %}<div class="actions" style="margin-top:8px"><button type="button" class="small" hx-post="/storage/drives/auto" hx-vals='{"on": "{{ 0 if drives.auto_mount else 1 }}"}'>{{ "Stop mounting new drives automatically" if drives.auto_mount else "Mount new drives automatically" }}</button></div>{% endif %}
 </div>
 
 <h3>Move to another disk</h3>

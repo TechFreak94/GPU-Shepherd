@@ -265,6 +265,11 @@ fi
 WSL=0
 if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] || grep -qi microsoft /proc/version 2>/dev/null; then
     WSL=1
+    # WSL1 has no GPU support at all. Its kernel name ends in "-Microsoft" (WSL2's has "microsoft-standard").
+    case "$(uname -r)" in
+        *-Microsoft) die "this is WSL1, which can't use the GPU. Convert the distro to WSL2 in Windows with
+       wsl --set-version <distro> 2   (wsl -l -v lists them), then run this script again." ;;
+    esac
     warn "WSL2 detected. Support for it is experimental: the NVIDIA driver must be installed in Windows
          (not in Linux), and Docker Desktop with WSL integration, or Docker Engine in this distro, runs
          the containers. See docs/linux.md#wsl2."
@@ -747,7 +752,11 @@ if [ "$DOWNLOAD" = yes ]; then
     plan+=("At the end, download the preset's models into $MODELS_DIR (about ${DOWNLOAD_GB:-?} GB)")
 fi
 if [ "$NO_START" -eq 0 ]; then
-    plan+=("Build and start GPU Shepherd (it restarts by itself after a reboot)")
+    if [ "$WSL" -eq 1 ]; then
+        plan+=("Build and start GPU Shepherd (it starts again when Docker does, once WSL is running)")
+    else
+        plan+=("Build and start GPU Shepherd (it restarts by itself after a reboot)")
+    fi
 fi
 if [ "$DASH_UPDATES" = yes ]; then
     plan+=("Install the gpu-shepherd-update service: daily update checks, and updates from the dashboard")
@@ -883,8 +892,9 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     fi
     # Without /dev/char links for the NVIDIA device files, any `systemctl daemon-reload` takes the
     # GPUs away from running containers ("Failed to initialize NVML: Unknown Error"), a known NVIDIA
-    # Container Toolkit issue. Make the links now and after every boot (a udev rule).
-    if ! docker_desktop && have nvidia-ctk && [ -d /run/systemd/system ]; then
+    # Container Toolkit issue. Make the links now and after every boot (a udev rule). WSL2 has no
+    # NVIDIA device files to link (the GPUs come through /dev/dxg), so nothing to do there.
+    if [ "$WSL" -eq 0 ] && have nvidia-ctk && [ -d /run/systemd/system ]; then
         nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
         if [ ! -f /etc/udev/rules.d/71-nvidia-dev-char.rules ] && [ ! -f /lib/udev/rules.d/71-nvidia-dev-char.rules ]; then
             mkdir -p /etc/udev/rules.d

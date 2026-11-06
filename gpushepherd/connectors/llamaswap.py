@@ -31,9 +31,12 @@ DETECT_SCRIPT = ("command -v llama-server || { [ -x /app/llama-server ] && echo 
                  "|| find / -name llama-server -type f 2>/dev/null | head -n 1")
 
 
-def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, list[int]] | None = None) -> str:
+def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, list[int]] | None = None,
+           names: list[str] | None = None) -> str:
     """llama-swap's config. `devices`: model id -> the GPUs (0 = the server's first) it runs on,
-    for models that use fewer than all of them (placement.place)."""
+    for models that use fewer than all of them (placement.place). `names`: what CUDA calls the
+    server's GPUs, in order (their UUIDs on WSL2, where the container can see every GPU); without
+    them a model's GPUs are numbered from 0."""
     server = catalog.llama_server or "/app/llama-server"
     auto_for: dict[str, list[str]] = {}
     for auto in catalog.auto_aliases:
@@ -85,7 +88,7 @@ def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, li
         if m.ttl:
             entry["ttl"] = m.ttl
         if own:                              # the container sees only the server's GPUs, numbered from 0
-            entry["env"] = ["CUDA_VISIBLE_DEVICES=" + ",".join(map(str, own))]
+            entry["env"] = ["CUDA_VISIBLE_DEVICES=" + ",".join(names[p] if names else str(p) for p in own)]
         models[m.id] = entry
 
     cfg = {

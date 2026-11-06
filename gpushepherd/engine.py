@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import budget, drain, gpu as gpu_mod, placement
+from . import budget, drain, gpu as gpu_mod, host, placement
 from .backend import Backend, ContainerSpec, ContainerState
 from .config import Catalog, ConfigError, Instance, Store
 from .connectors import llamaswap
@@ -167,13 +167,23 @@ class Engine:
     def build_spec(self, inst: Instance, gpus: list[int], log=lambda _m: None) -> ContainerSpec:
         settings = self.store.settings()
         env = dict(inst.env)
+        names = None
         if gpus:
             env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+            # On WSL2 every GPU reaches Linux through one device (/dev/dxg), so Docker can't hide
+            # the ones a container wasn't given: CUDA is told which ones are its own, by UUID
+            # (right whether the container sees all the GPUs or only its own).
+            if host.is_wsl():
+                names = gpu_mod.cuda_names(gpus)
+                if names:
+                    env.setdefault("CUDA_VISIBLE_DEVICES", ",".join(names))
+                else:
+                    log("Could not read the GPUs' IDs, so on WSL2 this app may see every GPU")
         volumes = [(v.host, v.container, v.read_only) for v in inst.volumes]
         if inst.kind == "llama-swap":
             catalog = self._ensure_llama_server(inst, self.store.catalog(inst.id), log)
             threads = catalog.threads or gpu_mod.physical_cores()
-            text = llamaswap.render(catalog, len(gpus), threads, self.placement(inst, catalog, gpus))
+            text = llamaswap.render(catalog, len(gpus), threads, self.placement(inst, catalog, gpus), names)
             out = self.store.generated_dir(inst.id) / "llama-swap.yaml"
             out.write_text(text, encoding="utf-8")
             host_file = str(self.host_data_dir / "generated" / inst.id / "llama-swap.yaml")

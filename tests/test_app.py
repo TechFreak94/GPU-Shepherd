@@ -617,7 +617,7 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     page = client.get("/apps").text
     assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
     assert "librechat-mongodb" not in page                     # companions are not in the App Center
-    assert page.count(">Experimental</span>") == 1 and "Experimental." in client.get("/apps/langflow").text
+    assert page.count(">Experimental</span>") == 2 and "Experimental." in client.get("/apps/langflow").text  # the app + the Knowledge nav tag
     assert "License: MIT" in client.get("/apps/langflow").text and "License: Apache-2.0" in page
     assert ">Credits</button>" in client.get("/ui/update").text
     cr = client.get("/ui/credits").text

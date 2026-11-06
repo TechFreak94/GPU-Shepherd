@@ -1,5 +1,5 @@
 {# Settings > Experimental > Tensor unlock, refreshed in place. x = gpu_unlock.UnlockStatus #}
-<div class="row"><strong>Tensor unlock <span class="tag warn">experimental</span></strong>
+<div class="row"><strong>Tensor unlock <span class="tag warn">Experimental</span></strong>
   {% if x.installed %}<span class="pill {{ 'on' if x.state == 'on' }}">{{ {"on": "On", "armed": "Set for the next boot", "trying": "Checking this boot", "off": "Off"}.get(x.state, x.state) }}</span>{% endif %}</div>
 <p class="small" style="margin-top:6px">GeForce RTX 20, 30 and 40 cards run FP16, BF16 and TF32 tensor math at half speed;
   <a href="{{ unlock_url }}" target="_blank" rel="noopener">gpu-unlock</a> lifts that limit at boot. Image generation (ComfyUI) and

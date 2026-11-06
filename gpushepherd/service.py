@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
+from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
 from . import gpu_unlock
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
@@ -438,7 +438,7 @@ class Shepherd:
             present = {d.uuid for d in found if d.uuid}
             attached = present - self._drives_seen if self._drives_seen is not None else set()
             self._drives_seen = present
-            if mount_new and self.store.settings().auto_mount_drives:
+            if mount_new and self.auto_mount():
                 for d in found:
                     if d.state == "ready" and d.uuid in attached:
                         self._mount(d, found, persist=True)
@@ -460,7 +460,13 @@ class Shepherd:
     def drives(self) -> dict:
         found = self.scan_drives()
         return {"drives": [asdict(d) for d in found], "error": self.drive_error,
-                "auto_mount": self.store.settings().auto_mount_drives}
+                "auto_mount": self.auto_mount(), "wsl": host_mod.is_wsl()}
+
+    def auto_mount(self) -> bool:
+        """Whether a newly attached drive is mounted by itself. Never on WSL2: every WSL distro's
+        disk (and Docker Desktop's) is attached to the same machine, so starting one looks like a
+        new drive with data on it."""
+        return self.store.settings().auto_mount_drives and not host_mod.is_wsl()
 
     def mount_drive(self, device: str) -> str:
         """Mount one drive now (also one that failed before, or when automatic mounting is off)."""
@@ -482,6 +488,9 @@ class Shepherd:
             return f"Mounted {d.name} at {d.mountpoint}." + (f" {d.note}" if d.note else "")
 
     def set_auto_mount(self, on: bool) -> str:
+        if on and host_mod.is_wsl():
+            raise Problem("On WSL2 new drives are never mounted by themselves: the other WSL distros' "
+                             "disks would look like new drives. Use Mount on a drive.")
         s = self.store.settings()
         s.auto_mount_drives = on
         self.store.save_settings(Settings.model_validate(s.model_dump()))
@@ -579,6 +588,7 @@ class Shepherd:
             c = self.mover.check(m.path, dest)
         except (BackendError, OSError, ValueError) as err:
             raise Problem(f"Could not look at {dest}: {err}", status=500) from err
+        c.windows = moves.windows_drive(dest)
         if c.error:
             hint = (f" Pick a new folder inside it, such as {dest}/{Path(m.path).name}."
                     if "not an empty folder" in c.error else "")
@@ -2377,6 +2387,38 @@ class Shepherd:
                     + (f"; {len(errors)} couldn't be read." if errors else ".")
                     + (" Send them to Open WebUI to add them to the knowledge base." if done else ""))
         return self._knowledge_work(f"Reading {n} scanned PDF{'s' if n != 1 else ''} with OCR", work)
+
+    BULK_DELETE = {"duplicate": "duplicates", "failed": "documents that can't be read"}
+
+    def delete_documents(self, status: str) -> str:
+        """Delete every document with a status, in the background: "duplicate" (the copies with the
+        same text as another document; that one stays) or "failed" (can't be read). Their files,
+        every copy, and their text go. Documents waiting for OCR or skipped (MOBI/AZW3) stay."""
+        if status not in self.BULK_DELETE:
+            raise Problem(f"Delete which: {', '.join(self.BULK_DELETE)}.")
+        self._knowledge_busy()
+        keys = [b.key for b in self.library.books() if b.status == status]
+        if not keys:
+            raise Problem(f"No {self.BULK_DELETE[status]} to delete.", "warn", 409)
+
+        def work(task: kn.Task) -> str:
+            done = 0
+            for i, key in enumerate(keys):
+                if task.stop:
+                    raise InterruptedError
+                task.progress(i, len(keys), f"Deleting {i + 1} of {len(keys)}")
+                try:
+                    b = self.library.delete(key)
+                except kn.BookError:
+                    continue                       # gone already
+                except OSError as err:
+                    task.errors.append(f"{key}: {err}")
+                    continue
+                if b.status == status:
+                    done += 1
+            what = self.BULK_DELETE[status] if done != 1 else {"duplicate": "duplicate", "failed": "document that can't be read"}[status]
+            return f"Deleted {done} {what}" + (f"; {len(task.errors)} couldn't be." if task.errors else ".")
+        return self._knowledge_work(f"Deleting {len(keys)} {self.BULK_DELETE[status]}", work)
 
     def delete_document(self, key: str) -> str:
         """Delete one document: its files (every copy), its text, and the copies sent to Open WebUI

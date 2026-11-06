@@ -1114,6 +1114,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def knowledge_ocr():
         return knowledge_done(svc.ocr_documents)
 
+    @app.post("/knowledge/delete-all")
+    async def knowledge_delete_all(request: Request):
+        raw = await request.form()
+        return knowledge_done(lambda: svc.delete_documents(str(raw.get("status", ""))))
+
     @app.post("/knowledge/{key}/delete")
     def knowledge_delete(key: str):
         return knowledge_done(lambda: svc.delete_document(key))
@@ -1232,7 +1237,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     def drives_info() -> dict:
         d = svc.drives()
-        return {"found": [drives.Drive(**x) for x in d["drives"]], "drives_error": d["error"], "auto_mount": d["auto_mount"]}
+        return {"found": [drives.Drive(**x) for x in d["drives"]], "drives_error": d["error"], "auto_mount": d["auto_mount"],
+                "wsl": d.get("wsl", False)}
 
     @app.get("/storage/drives", response_class=HTMLResponse)
     def storage_drives(request: Request, source: str = "", picking: str = ""):

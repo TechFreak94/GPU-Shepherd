@@ -21,6 +21,7 @@ class Gpu:
     mem_total: float     # MiB
     util: float          # percent
     bus_id: str = ""     # PCI address as lspci -D prints it, e.g. 0000:01:00.0
+    uuid: str = ""       # GPU-xxxxxxxx-..., which CUDA_VISIBLE_DEVICES also accepts
 
     @property
     def mem_pct(self) -> int:
@@ -48,7 +49,7 @@ def _query() -> tuple[list[Gpu], str]:
         return _fake(fake), ""
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,pci.bus_id",
+            ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,pci.bus_id,uuid",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10, check=True).stdout
     except FileNotFoundError:
@@ -64,7 +65,8 @@ def _query() -> tuple[list[Gpu], str]:
             continue
         try:
             gpus.append(Gpu(int(parts[0]), parts[1], _num(parts[2]), _num(parts[3]), _num(parts[4]),
-                            _bus(parts[5]) if len(parts) > 5 else ""))
+                            _bus(parts[5]) if len(parts) > 5 else "",
+                            parts[6] if len(parts) > 6 and parts[6].startswith("GPU-") else ""))
         except ValueError:
             continue
     return gpus, ""
@@ -101,7 +103,14 @@ def _fake(spec: str) -> list[Gpu]:
     count, _, rest = spec.partition("x")
     mem, _, name = rest.partition(":")
     return [Gpu(i, name or "Fake GPU", round(random.uniform(0.05, 0.2) * float(mem or 8192)),
-                float(mem or 8192), 0.0, f"0000:{i + 1:02x}:00.0") for i in range(int(count or 1))]
+                float(mem or 8192), 0.0, f"0000:{i + 1:02x}:00.0", f"GPU-fake-{i}") for i in range(int(count or 1))]
+
+
+def cuda_names(indices: list[int]) -> list[str] | None:
+    """The GPUs' UUIDs, in the same order, for CUDA_VISIBLE_DEVICES; None if any is unknown."""
+    by_index = {g.index: g.uuid for g in query()[0]}
+    names = [by_index.get(i, "") for i in indices]
+    return names if all(names) else None
 
 
 def physical_cores() -> int:

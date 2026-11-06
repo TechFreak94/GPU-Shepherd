@@ -12,6 +12,23 @@ import time
 from dataclasses import dataclass, field
 
 PROC = os.environ.get("SHEPHERD_PROC", "/proc")
+_wsl: bool | None = None
+
+
+def is_wsl() -> bool:
+    """Whether the machine is WSL2. The kernel is shared with every container, so its name in
+    /proc/version ("...-microsoft-standard-WSL2") says so from inside GPU Shepherd's container
+    too. SHEPHERD_WSL=1 or 0 overrides it (tests, demos)."""
+    global _wsl
+    forced = os.environ.get("SHEPHERD_WSL", "")
+    if forced:
+        return forced == "1"
+    if _wsl is None:
+        try:
+            _wsl = "microsoft" in _read("version").lower()
+        except OSError:
+            _wsl = False
+    return _wsl
 
 
 @dataclass
