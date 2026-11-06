@@ -4,6 +4,16 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.27 - 2026-11-06
+
+- New step-by-step installation guide, linked from the README. (#58)
+- An Alpha label now shows next to the version number. (#58)
+- Knowledge: delete all duplicates, or all documents that can't be read, in one go. (#58)
+- Knowledge and Tensor unlock are marked Experimental. (#58)
+- The installer now stops on WSL1, which can't use the GPU, and says how to switch the distro to WSL2. (#58)
+- On WSL2, each app now uses only the GPUs it was given, instead of seeing every GPU. (#58)
+- On WSL2, new drives are no longer mounted automatically, and moving a folder to a Windows drive works and warns that it is slow for models. (#58)
+
 ## 0.13.26 - 2026-11-05
 
 - Scanned PDFs show as *Needs OCR*, and **Read with OCR** reads them with Tesseract, which now comes with GPU Shepherd's container. (#57)
