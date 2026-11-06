@@ -21,7 +21,7 @@
       {% set here = request.url.path %}
       <a href="/"{% if here == "/" %} aria-current="page"{% endif %}>Dashboard</a>
       <a href="/apps"{% if here.startswith("/apps") or here.startswith("/instances/new") %} aria-current="page"{% endif %}>App Center</a>
-      <a href="/knowledge"{% if here == "/knowledge" %} aria-current="page"{% endif %}>Knowledge</a>
+      <a href="/knowledge"{% if here == "/knowledge" %} aria-current="page"{% endif %}>Knowledge <span class="tag warn" title="Knowledge is experimental: it may change or not work with every document">Experimental</span></a>
       <a href="/storage"{% if here == "/storage" %} aria-current="page"{% endif %}>Storage</a>
       <a href="/settings"{% if here == "/settings" %} aria-current="page"{% endif %}>Settings</a>
       {% endif %}
