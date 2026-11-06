@@ -102,6 +102,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Documentation
 
+- [Installation guide](docs/install.md): step by step from a fresh machine to a running dashboard:
+  requirements, installer questions, first login, first apps, updating, uninstalling and troubleshooting.
 - [Instance and model options](docs/advanced.md): every field in the editors and what it does
   (GPU policies, folders, before-stopping checks, GPU/RAM offload, model settings, suggested
   models, auto names).
@@ -121,6 +123,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - [Architecture](docs/architecture.md): how the code fits together.
 
 ## Quick start
+
+A detailed, step-by-step version of this section is the [Installation guide](docs/install.md).
 
 ### Minimum requirements
 
