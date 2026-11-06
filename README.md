@@ -6,7 +6,7 @@ gets both. Everything is configured from the browser - no compose files to edit.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-> Status: early (0.x). It works on one Docker host with NVIDIA GPUs. Expect rough edges and
+> Status: **Alpha** (0.x). It works on one Docker host with NVIDIA GPUs. Expect rough edges and
 > breaking changes to the config format before 1.0.
 
 ## Why
