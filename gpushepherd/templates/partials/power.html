@@ -1,0 +1,48 @@
+{# The Power dialog: restart GPU Shepherd, restart the server, or shut it down.
+   p = Shepherd.power_status(); confirm = the action being confirmed ("" = the list); done = the action just
+   requested; boot = this process's id (the waiting dialog reloads the page once it changes). #}
+{% set blocked = p.change or p.knowledge or p.busy %}
+{% if done %}
+<div{% if done != "shutdown" %} hx-get="/ui/power/back?boot={{ boot }}" hx-trigger="every 2s" hx-swap="none" hx-disinherit="*" data-quiet-offline{% endif %}>
+<div class="dlg-head"><strong id="modal-title">{% if done == "shutdown" %}Shutting down the server…{% elif done == "reboot" %}Restarting the server…{% else %}Restarting GPU Shepherd…{% endif %}</strong>
+  <button data-close-modal>Close</button></div>
+<div class="dlg-body">
+  <p>{{ message }}</p>
+  {% if done == "shutdown" %}
+  <p class="small muted">Once the server is off this page stops answering. Someone has to turn the server back on.</p>
+  {% else %}
+  <p class="small muted">This window waits and reloads the page by itself when GPU Shepherd answers again{% if done == "reboot" %}. That can take a few minutes{% endif %}.</p>
+  {% endif %}
+</div>
+</div>
+{% elif confirm %}
+<div class="dlg-head"><strong id="modal-title">{% if confirm == "restart" %}Restart GPU Shepherd?{% elif confirm == "reboot" %}Restart the server?{% else %}Shut down the server?{% endif %}</strong>
+  <button data-close-modal>Cancel</button></div>
+<div class="dlg-body">
+  {% if confirm == "restart" %}
+  <p>The dashboard restarts and is unreachable for a few seconds. Your apps keep running.</p>
+  {% else %}
+  <p>{% if confirm == "reboot" %}The whole machine restarts.{% else %}The whole machine turns off, and someone has to turn it back on.{% endif %}
+    Every app stops{% if confirm == "reboot" %} until the server is back{% endif %}.</p>
+  {% if p.running %}<p>Running now: {{ p.running|join(", ") }}.</p>{% endif %}
+  {% if p.downloads %}<p>{{ p.downloads }} model download{{ "s" if p.downloads != 1 }} in progress will be interrupted.</p>{% endif %}
+  {% endif %}
+  {% include "partials/power_notice.html" %}
+  <div class="actions">
+    <button hx-get="/ui/power" hx-target="#modal-body">Cancel</button>
+    <button class="danger" hx-post="/ui/power/{{ confirm }}" hx-target="#modal-body" {% if blocked or (confirm != "restart" and not p.host) %}disabled{% endif %}>{% if confirm == "restart" %}Restart GPU Shepherd{% elif confirm == "reboot" %}Restart the server{% else %}Shut down the server{% endif %}</button>
+  </div>
+</div>
+{% else %}
+<div class="dlg-head"><strong id="modal-title">Power</strong><button data-close-modal>Close</button></div>
+<div class="dlg-body">
+  {% include "partials/power_notice.html" %}
+  <div class="row" style="margin:10px 0"><div><strong>Restart GPU Shepherd</strong><br><span class="small muted">The dashboard restarts; your apps keep running.</span></div>
+    <button hx-get="/ui/power?confirm=restart" hx-target="#modal-body" {% if blocked %}disabled{% endif %}>Restart…</button></div>
+  <div class="row" style="margin:10px 0"><div><strong>Restart the server</strong><br><span class="small muted">The whole machine restarts. Every app stops until it is back.{% if p.running %} Running now: {{ p.running|join(", ") }}.{% endif %}{% if p.downloads %} {{ p.downloads }} model download{{ "s" if p.downloads != 1 }} in progress would be interrupted.{% endif %}</span></div>
+    <button class="danger" hx-get="/ui/power?confirm=reboot" hx-target="#modal-body" {% if blocked or not p.host %}disabled{% endif %}>Restart…</button></div>
+  <div class="row" style="margin:10px 0"><div><strong>Shut down the server</strong><br><span class="small muted">The machine turns off. Someone has to turn it back on.</span></div>
+    <button class="danger" hx-get="/ui/power?confirm=shutdown" hx-target="#modal-body" {% if blocked or not p.host %}disabled{% endif %}>Shut down…</button></div>
+  {% if not p.host %}<p class="small muted">{{ p.hint }}</p>{% endif %}
+</div>
+{% endif %}

@@ -32,6 +32,7 @@ RESTORE=0
 RESTORE_FILE=""
 QUIET=0
 FROM_DASHBOARD=0
+POWER=""                # from the dashboard: "reboot" or "poweroff" the server
 FINISH=""               # internal: the commit we updated from, after re-running the new script
 SERVICE=""              # enable / disable
 TOKEN_ACTION=""         # set / clear: the GitHub login used to download updates
@@ -454,6 +455,7 @@ if [ "$FROM_DASHBOARD" -eq 1 ]; then
             fi
             rm -f "$creds"
             CHECK=1 ;;
+        reboot|poweroff) POWER=$action ;;     # the dashboard's top menu: restart or shut down the server
         *)      echo "unknown request; nothing done"; exit 0 ;;
     esac
 fi
@@ -463,6 +465,14 @@ if [ -z "$FINISH" ]; then
     if have flock && { exec 9>"/tmp/gpu-shepherd-update-$(id -u).lock"; } 2>/dev/null && ! flock -n 9; then
         err "another update is already running"; exit 1
     fi
+fi
+
+# Restart or shut down the server, as asked from the dashboard (never in the middle of an update,
+# which the lock above refuses). Docker stops the containers; they come back with the machine.
+if [ -n "${POWER:-}" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $([ "$POWER" = reboot ] && echo restarting || echo shutting down) the server"
+    systemctl --no-block "$POWER" || { err "systemctl $POWER failed"; exit 1; }
+    exit 0
 fi
 
 # --------------------------------------------------------------------------- rebuild
