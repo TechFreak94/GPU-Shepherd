@@ -540,6 +540,17 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                 "branch": u.branch, "branches": u.branches,
                 "dashboard_updates": u.dashboard_updates, "credentials_user": u.credentials, "command": u.command}
 
+    # ------------------------------------------------------------------ power (the top menu's Power dialog)
+    @r.get("/api/v1/power")
+    def get_power():
+        return svc.power_status()
+
+    @r.post("/api/v1/power/{action}")
+    @handle
+    def power(request: Request, action: str):
+        """restart (GPU Shepherd only), reboot or shutdown (the server)."""
+        return JSONResponse({"message": svc.power(action)}, status_code=202)
+
     @r.post("/api/v1/updates/credentials")
     @handle
     async def update_credentials(request: Request):

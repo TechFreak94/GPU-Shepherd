@@ -27,6 +27,10 @@ services:
       # The data folder MUST be mounted at the same path inside and outside: GPU Shepherd hands
       # paths inside it to Docker for the containers it creates (same rule as Dockge's stacks dir).
       - /opt/gpu-shepherd:/opt/gpu-shepherd
+      # Disks under /mnt (where Settings > Storage mounts new drives and moves folders to), at the
+      # same path, so GPU Shepherd can count and clean up moved folders. rslave: a drive mounted
+      # there later shows up without restarting GPU Shepherd.
+      - /mnt:/mnt:rslave
       # Optional: folders whose model files you want to pick from in the UI - also same path.
       # - /srv/models:/srv/models:ro
     deploy:

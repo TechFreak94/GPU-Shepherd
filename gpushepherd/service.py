@@ -15,6 +15,7 @@ import re
 import secrets
 import shlex
 import shutil
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -37,6 +38,17 @@ from .scheduler import Plan
 from .trash import FileOps, Trash
 
 log = logging.getLogger("gpushepherd")
+POWER_ACTIONS = ("restart", "reboot", "shutdown")   # the top menu's Power dialog
+
+
+def restart_process(delay: float = 1.0) -> None:
+    """Start this process again in place, after `delay` seconds so the answer still gets out.
+    Same PID and arguments, so it works in the container (PID 1) and outside it; the apps'
+    containers are not touched."""
+    def again():
+        logging.shutdown()
+        os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+    threading.Timer(delay, again).start()
 ACTIONS = ("start", "stop", "restart")
 VERBS = {"start": "Starting", "stop": "Stopping", "restart": "Restarting"}
 
@@ -121,6 +133,7 @@ class Shepherd:
     knowledge_task: kn.Task | None = None     # what is being done with the books now (or last)
     openwebui_client: object = openwebui.OpenWebUI   # (address, token) -> client; a stand-in in tests
     _library: kn.Library | None = None
+    restarter: object = None            # () -> None: restarts this process (power "restart"); a stand-in in tests
 
     def __post_init__(self):
         if self.downloads is None:
@@ -143,6 +156,8 @@ class Shepherd:
             self.drive_log = drives.Memory(self.store.root)
         if self.image_log is None:
             self.image_log = image_updates.Records(self.store.root)
+        if self.restarter is None:
+            self.restarter = restart_process
         self._auto_tried: set[tuple[str, str]] = set()     # (instance, version) automatic updates tried
         self._drive_lock = threading.Lock()
         self._drives_seen: set[str] | None = None   # drive IDs at the last scan (None: no scan yet)
@@ -591,6 +606,7 @@ class Shepherd:
         except (BackendError, OSError, ValueError) as err:
             raise Problem(f"Could not look at {dest}: {err}", status=500) from err
         c.windows = moves.windows_drive(dest)
+        c.hidden = not Path(dest).parent.is_dir()
         if c.error:
             hint = (f" Pick a new folder inside it, such as {dest}/{Path(m.path).name}."
                     if "not an empty folder" in c.error else "")
@@ -1776,6 +1792,47 @@ class Shepherd:
             raise Problem(str(err)) from err
         log.info("update: GitHub token %s", "removal requested" if clear else "handed to the host")
         return "Token removed." if clear else "Token saved; checking for updates with it."
+
+    # ------------------------------------------------------------------ power (the top menu)
+    def power_status(self) -> dict:
+        """What the Power dialog can do: restart GPU Shepherd itself (always), and restart or shut
+        down the server (through update.sh's service on the host, like updates)."""
+        u = updates.status(self.store.root)
+        instances, _ = self.store.instances()
+        running = sorted(instances[i].name for i in self._all_running() if i in instances)
+        downloading = sorted(n for n, h in self.backend.helpers(DOWNLOAD_KIND).items() if h.running)
+        if u.image:
+            hint = "This install has no update service, so the server can't be restarted from here. On the server run: sudo reboot"
+        elif not u.dashboard_updates:
+            hint = (f"Restarting the server from here needs the update service. On the server run: "
+                    f"{u.command} --enable-dashboard-updates (or just sudo reboot)")
+        else:
+            hint = ""
+        return {"host": not hint, "hint": hint, "busy": u.busy, "change": self.jobs.busy,
+                "knowledge": bool(self.knowledge_task and self.knowledge_task.running),
+                "running": running, "downloads": len(downloading)}
+
+    def power(self, action: str) -> str:
+        """restart: GPU Shepherd only (the apps keep running); reboot / shutdown: the whole server."""
+        if action not in POWER_ACTIONS:
+            raise Problem("unknown action")
+        st = self.power_status()
+        if st["change"]:
+            raise Problem("Wait for the current change to finish (or cancel it) first.", "warn", 409)
+        if st["knowledge"]:
+            raise Problem(f"Wait for the current knowledge work to finish ({self.knowledge_task.title}), or stop it.", "warn", 409)
+        if action == "restart":
+            log.info("power: restarting GPU Shepherd")
+            self.restarter()
+            return "Restarting GPU Shepherd: the dashboard is back in a few seconds."
+        if not st["host"]:
+            raise Problem(st["hint"], "warn", 409)
+        if st["busy"]:
+            raise Problem("An update or check is running; wait for it to finish.", "warn", 409)
+        updates.request(self.store.root, "reboot" if action == "reboot" else "poweroff")
+        log.info("power: server %s requested", action)
+        return ("Restarting the server: the dashboard is back once it has started again." if action == "reboot"
+                else "Shutting down the server. Turn it back on to use GPU Shepherd again.")
 
     # ------------------------------------------------------------------ tensor unlock (gpu-unlock.sh on the host)
     def unlock_status(self) -> gpu_unlock.UnlockStatus:
