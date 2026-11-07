@@ -591,6 +591,7 @@ class Shepherd:
         except (BackendError, OSError, ValueError) as err:
             raise Problem(f"Could not look at {dest}: {err}", status=500) from err
         c.windows = moves.windows_drive(dest)
+        c.hidden = not Path(dest).parent.is_dir()
         if c.error:
             hint = (f" Pick a new folder inside it, such as {dest}/{Path(m.path).name}."
                     if "not an empty folder" in c.error else "")

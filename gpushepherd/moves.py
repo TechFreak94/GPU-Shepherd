@@ -53,6 +53,7 @@ class Check:
     same_disk: bool = False            # the same disk as the folder now
     exists: bool = False               # the new place is an empty folder already
     windows: bool = False              # a Windows drive on WSL2 (/mnt/c ...): slow, no Linux owners
+    hidden: bool = False               # GPU Shepherd's own container can't see the new place
     error: str = ""
 
     @property
@@ -61,6 +62,10 @@ class Check:
         if self.windows:
             out.append("This is a Windows drive. It works, but models load much more slowly from it than from "
                        "Linux's own disk, and files there keep no Linux owners or permissions.")
+        if self.hidden:
+            out.append("GPU Shepherd itself can't see the new place (it sees its data folder and disks under /mnt), "
+                       "so the apps will work but Settings > Storage won't count or clean up what is there. "
+                       "A place under /mnt avoids that.")
         if self.same_disk:
             out.append("The new place is on the same disk as the folder now, so no space is freed. If it should "
                        "be on another disk, check that disk is mounted (it may not be, after a restart).")

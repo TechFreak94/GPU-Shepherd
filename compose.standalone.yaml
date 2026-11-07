@@ -60,6 +60,10 @@ services:
       - ${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}:${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}
       # The models folder, also at the same path; downloads go here.
       - ${SHEPHERD_MODELS_DIR:-${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}/models}:${SHEPHERD_MODELS_DIR:-${SHEPHERD_DATA_DIR:-/opt/gpu-shepherd}/models}
+      # Disks under /mnt (where Settings > Storage mounts new drives and moves folders to), at the
+      # same path, so GPU Shepherd can count and clean up moved folders. rslave: a drive mounted
+      # there later shows up without restarting GPU Shepherd.
+      - /mnt:/mnt:rslave
       # Optional: more folders whose model files you want to pick from in the UI - same path too.
       # - /srv/more-models:/srv/more-models:ro
     deploy:

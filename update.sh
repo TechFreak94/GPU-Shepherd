@@ -587,6 +587,26 @@ recover() {
     exit 1
 }
 
+# Older compose.yaml files mount only the data folder, so GPU Shepherd can't see folders moved to
+# another disk from Settings > Storage. Add /mnt (where it mounts drives and moves folders to) at
+# the same path, once, right after the data folder's line. Nothing else in the file is touched.
+mount_mnt() {
+    local f="$HERE/compose.yaml"
+    grep -Eq '^[[:space:]]*-[[:space:]]*"?/mnt:/mnt' "$f" && return 0
+    [ -n "$DATA_DIR" ] || return 0
+    if grep -Eq "^[[:space:]]*-[[:space:]]*\"?$DATA_DIR:$DATA_DIR" "$f" \
+            && sed -i.before-mnt "\#^[[:space:]]*-[[:space:]]*\"\?$DATA_DIR:$DATA_DIR#{
+                p
+                s#^\([[:space:]]*-[[:space:]]*\).*#\1/mnt:/mnt:rslave   \# disks under /mnt, so moved folders stay visible#
+            }" "$f" && grep -Eq '^[[:space:]]*-[[:space:]]*/mnt:/mnt' "$f"; then
+        say "Added /mnt to compose.yaml, so GPU Shepherd sees folders moved to other disks (old file: compose.yaml.before-mnt)"
+    else
+        warn "could not add /mnt to compose.yaml; to let GPU Shepherd see folders moved to other disks, add
+         - /mnt:/mnt:rslave
+         under volumes by hand (see compose.example.yaml)"
+    fi
+}
+
 rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait for its web UI
     local old=$1 new
     new=$(g rev-parse HEAD)
@@ -600,6 +620,7 @@ rebuild() {   # rebuild OLD_COMMIT: rebuild and restart GPU Shepherd, then wait 
         warn "compose.example.yaml changed. Your compose.yaml is kept as it is; compare them with:
          git -C $HERE diff ${old:0:12} ${new:0:12} -- compose.example.yaml"
     fi
+    mount_mnt
     # Before the rebuild, so that if it ever has to reload systemd, the new container isn't the one
     # that loses its GPUs.
     unlock_service
