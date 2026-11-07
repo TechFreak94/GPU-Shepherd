@@ -4,6 +4,15 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.28 - 2026-11-07
+
+- The default chat server app is now called Llama Swap. (#59)
+- On a one-GPU machine, Llama Swap keeps running on the CPU while an image app uses the GPU, and moves back when the GPU is free. (#59)
+- Apps that need one GPU can share it by video memory budget. (#59)
+- After a reboot, model servers get their GPUs first. (#59)
+- Dashboard cards say why an app isn't on a GPU. (#59)
+- Settings > Updates lists the new testing branch right after main, for trying changes before they are released. (#59)
+
 ## 0.13.27 - 2026-11-06
 
 - New step-by-step installation guide, linked from the README. (#58)
