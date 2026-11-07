@@ -153,6 +153,23 @@ to reboot; run `sudo ./install.sh` again afterwards.
 
 Both are explained in the [Installation guide](docs/install.md); see [WSL2](docs/linux.md#wsl2) for its limits.
 
+### Common problems
+
+| Problem | What to do |
+| :- | :- |
+| `nvidia-smi` fails or shows no GPU | Reboot after the driver install and check [Secure Boot](docs/linux.md#secure-boot). On WSL2 install the Windows driver instead and run `wsl --update`. |
+| The installer exits with status 3 | The driver was just installed. Reboot, then run `sudo ./install.sh` again. |
+| `docker: permission denied` | Log out and back in (you were just added to the `docker` group), or use `sudo docker`. |
+| The page doesn't open | In the clone folder run `sudo docker compose logs gpu-shepherd`, check nothing else uses port 8090, and that a firewall allows it. |
+| Forgot the password | `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` |
+| WSL2: the installer stops or warns about Docker or systemd | Turn on Docker Desktop's WSL integration for the distro, or set `systemd=true` in `/etc/wsl.conf` and run `wsl --shutdown`. |
+| WSL2: models run out of memory | WSL2 gets half of Windows' RAM by default. Raise `memory=` in `%UserProfile%\.wslconfig`, then `wsl --shutdown`. |
+| An app says no GPU is free | Another app holds the GPUs. Press Start and read the plan, or stop the other app. |
+| A model won't load or runs out of memory | Pick a smaller model or quantization, or keep part of it in system RAM. |
+
+More in [Troubleshooting](docs/install.md#9-troubleshooting). Still stuck? Open an issue with the
+installer's output, `nvidia-smi` and your distro; leave out passwords and tokens.
+
 ### Minimum requirements
 
 | | Minimum |
