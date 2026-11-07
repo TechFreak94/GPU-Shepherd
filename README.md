@@ -126,6 +126,33 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 A detailed, step-by-step version of this section is the [Installation guide](docs/install.md).
 
+### Quick install
+
+Check the [minimum requirements](#minimum-requirements) first. The installer checks everything else,
+shows a plan, and changes nothing until you confirm.
+
+**Linux** (Ubuntu, Debian, Fedora, RHEL-family or Arch, with an NVIDIA GPU):
+
+```bash
+git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
+sudo ./install.sh
+```
+
+Answer the questions (the defaults are fine), take the Starter preset, then open the address it
+prints and log in as `admin` with the password it shows. If it installs the NVIDIA driver it asks you
+to reboot; run `sudo ./install.sh` again afterwards.
+
+**Windows with WSL2** (experimental):
+
+1. Install NVIDIA's current Windows driver (not a Linux one), then in PowerShell run `wsl --update`.
+2. Install Docker Desktop and turn on WSL integration for your Ubuntu distro (Settings > Resources >
+   WSL integration). Or skip Docker Desktop: in the distro set `systemd=true` under `[boot]` in
+   `/etc/wsl.conf`, then run `wsl --shutdown` and reopen it.
+3. In the distro, make sure it is WSL2 (`wsl -l -v` shows VERSION 2) and run the two Linux commands above.
+4. Open `http://localhost:8090` in Windows.
+
+Both are explained in the [Installation guide](docs/install.md); see [WSL2](docs/linux.md#wsl2) for its limits.
+
 ### Minimum requirements
 
 | | Minimum |
