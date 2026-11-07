@@ -126,6 +126,50 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 A detailed, step-by-step version of this section is the [Installation guide](docs/install.md).
 
+### Quick install
+
+Check the [minimum requirements](#minimum-requirements) first. The installer checks everything else,
+shows a plan, and changes nothing until you confirm.
+
+**Linux** (Ubuntu, Debian, Fedora, RHEL-family or Arch, with an NVIDIA GPU):
+
+```bash
+git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
+sudo ./install.sh
+```
+
+Answer the questions (the defaults are fine), take the Starter preset, then open the address it
+prints and log in as `admin` with the password it shows. If it installs the NVIDIA driver it asks you
+to reboot; run `sudo ./install.sh` again afterwards.
+
+**Windows with WSL2** (experimental):
+
+1. Install NVIDIA's current Windows driver (not a Linux one), then in PowerShell run `wsl --update`.
+2. Install Docker Desktop and turn on WSL integration for your Ubuntu distro (Settings > Resources >
+   WSL integration). Or skip Docker Desktop: in the distro set `systemd=true` under `[boot]` in
+   `/etc/wsl.conf`, then run `wsl --shutdown` and reopen it.
+3. In the distro, make sure it is WSL2 (`wsl -l -v` shows VERSION 2) and run the two Linux commands above.
+4. Open `http://localhost:8090` in Windows.
+
+Both are explained in the [Installation guide](docs/install.md); see [WSL2](docs/linux.md#wsl2) for its limits.
+
+### Common problems
+
+| Problem | What to do |
+| :- | :- |
+| `nvidia-smi` fails or shows no GPU | Reboot after the driver install and check [Secure Boot](docs/linux.md#secure-boot). On WSL2 install the Windows driver instead and run `wsl --update`. |
+| The installer exits with status 3 | The driver was just installed. Reboot, then run `sudo ./install.sh` again. |
+| `docker: permission denied` | Log out and back in (you were just added to the `docker` group), or use `sudo docker`. |
+| The page doesn't open | In the clone folder run `sudo docker compose logs gpu-shepherd`, check nothing else uses port 8090, and that a firewall allows it. |
+| Forgot the password | `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` |
+| WSL2: the installer stops or warns about Docker or systemd | Turn on Docker Desktop's WSL integration for the distro, or set `systemd=true` in `/etc/wsl.conf` and run `wsl --shutdown`. |
+| WSL2: models run out of memory | WSL2 gets half of Windows' RAM by default. Raise `memory=` in `%UserProfile%\.wslconfig`, then `wsl --shutdown`. |
+| An app says no GPU is free | Another app holds the GPUs. Press Start and read the plan, or stop the other app. |
+| A model won't load or runs out of memory | Pick a smaller model or quantization, or keep part of it in system RAM. |
+
+More in [Troubleshooting](docs/install.md#9-troubleshooting). Still stuck? Open an issue with the
+installer's output, `nvidia-smi` and your distro; leave out passwords and tokens.
+
 ### Minimum requirements
 
 | | Minimum |
@@ -136,6 +180,14 @@ A detailed, step-by-step version of this section is the [Installation guide](doc
 | GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+) |
 
 Less may run, but isn't supported: with under 32 GB of RAM, plan on models that fit in GPU memory.
+
+**Low on RAM (16 to 32 GB)?** Take the `starter` preset in the installer: it needs only 16 GB of RAM and
+a GPU with 8+ GB, because its chat model (Qwen3.5 9B) fits entirely in GPU memory. Then:
+
+- Pick models that fit in GPU memory (the suggested models say whether each one fits) and don't turn on
+  RAM offload; offloading part of a model needs room for it plus the OS and your other containers.
+- Run one app at a time. Stopped apps use no RAM, and GPU Shepherd swaps them for you when you press Start.
+- On WSL2, check how much RAM Linux got (`free -h`); raise `memory=` in `%UserProfile%\.wslconfig`.
 
 ### Linux: guided install
 
