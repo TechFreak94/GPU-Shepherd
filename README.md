@@ -1,7 +1,7 @@
 # GPU Shepherd
 
 A small web dashboard that runs your self-hosted AI containers and **shares the GPUs between them
-automatically**. Start ComfyUI and your LLM server moves to the other GPU; stop it and the LLM
+automatically**. Start ComfyUI and your Llama Swap moves to the other GPU; stop it and the LLM
 gets both. Everything is configured from the browser - no compose files to edit.
 
 ![Dashboard](docs/screenshots/dashboard.png)
@@ -19,7 +19,7 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 ## Features
 
-- **App Center**: install an LLM server (with a chat model, a coding model, an embeddings model for
+- **App Center**: install a Llama Swap server (with a chat model, a coding model, an embeddings model for
   chatting with your documents, or any mix), Ollama, vLLM, Open WebUI, LibreChat, AnythingLLM,
   Hermes Agent, SillyTavern, Open Notebook, Langflow (marked *Experimental*), ComfyUI, InvokeAI or
   Speaches (speech to text and text to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
@@ -150,7 +150,7 @@ sudo ./install.sh
 The installer shows what the machine already has (driver, GPUs, Docker, NVIDIA Container Toolkit,
 RAM), asks a few questions with defaults (models folder, port, settings folder), and changes
 nothing until you confirm the plan. On the first run it offers a [preset](gpushepherd/presets),
-such as `starter` (an LLM server, ComfyUI and Open WebUI for any 8+ GB GPU), and to download its
+such as `starter` (a Llama Swap server, ComfyUI and Open WebUI for any 8+ GB GPU), and to download its
 models. Nothing in a preset starts until you press Start. At the end it prints the address and the
 first login.
 
@@ -245,16 +245,18 @@ Containers only ever see the GPUs they were given (Docker device requests), so a
 no `CUDA_VISIBLE_DEVICES` tricks. Moving an instance re-creates its container; its data lives in
 the folders you mounted, so nothing is lost.
 
-Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, LLM server *elastic 1+, priority 50*:
+Example with two GPUs - ComfyUI *fixed GPU 0, priority 80*, Llama Swap *elastic 1+, priority 50*:
 
-| Action | ComfyUI | LLM server |
+| Action | ComfyUI | Llama Swap |
 |---|---|---|
 | Start the LLM | - | GPUs 0,1 |
 | Start ComfyUI | GPU 0 | restarted on GPU 1 |
 | Stop ComfyUI | stopped | restarted on GPUs 0,1 |
 
-With a single GPU the same settings make them take turns. A second ComfyUI *fixed GPU 1,
-priority 40* would stop the LLM server when started (you are asked first), and starting the LLM
+With a single GPU the same settings make them take turns: starting ComfyUI moves Llama Swap to
+the CPU (it keeps answering, slower) until ComfyUI stops. Apps given a video memory budget can
+instead share one GPU, as many as fit ([GPU settings](docs/advanced.md#gpus)). A second ComfyUI *fixed GPU 1,
+priority 40* would stop the Llama Swap when started (you are asked first), and starting the LLM
 again stops it, since the LLM has the higher priority.
 
 ### Letting running work finish
@@ -341,7 +343,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and
 
 ## Roadmap
 
-- Shared GPUs: let several small instances share one GPU with memory budgets.
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).
 - Live log streaming, Prometheus metrics, multiple users.
@@ -354,7 +355,8 @@ Apache-2.0 - see [LICENSE](LICENSE). Bundles [htmx](https://htmx.org) (Zero-Clau
 
 GPU Shepherd is an independent project. It isn't affiliated with or endorsed by NVIDIA, Docker or
 the projects it runs; their names are trademarks of their owners and are used only to say what
-GPU Shepherd works with. The Apache license doesn't grant rights to the GPU Shepherd name.
+GPU Shepherd works with. Copyright 2026 TechFreak94 and contributors ([NOTICE](NOTICE)). "GPU Shepherd"
+is a trademark of TechFreak94, and the Apache license doesn't grant rights to the name.
 
 ## Acknowledgements
 

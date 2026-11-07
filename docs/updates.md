@@ -68,7 +68,9 @@ again, or written to a log. This only works for clones that download over HTTPS
 Versions look like `MAJOR.MINOR.PATCH`. The number lives in `gpushepherd/__init__.py`, and the
 newest section of `CHANGELOG.md` always matches it (a test checks this).
 
-When a pull request is merged into `main`, the [Release workflow](../.github/workflows/release.yml)
+Changes are merged into the `testing` branch first, which releases nothing; a maintainer then
+promotes `testing` to `main` ([Branches](../CONTRIBUTING.md#branches)). When a pull request is
+merged into `main`, the [Release workflow](../.github/workflows/release.yml)
 runs [`scripts/release.py`](../scripts/release.py), which:
 
 1. picks the next version from the pull request's labels:
@@ -85,6 +87,7 @@ runs [`scripts/release.py`](../scripts/release.py), which:
    Write them for people who use GPU Shepherd: what they will notice, not how it was done.
 3. commits both files to `main` as *Release X.Y.Z*, tags it `vX.Y.Z` and publishes a GitHub
    release with the same notes.
+4. merges `main` back into `testing`, so `testing` carries the new version too.
 
 So a pull request never edits the version or the changelog itself, and two open pull requests
 never conflict over them. Commits pushed straight to `main` get a patch release named after the

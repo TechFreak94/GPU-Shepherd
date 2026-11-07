@@ -8,7 +8,7 @@ def inst(iid, mode="none", gpus=(), min_gpus=1, max_gpus=0, priority=50):
 
 
 def stack():
-    """A typical two-GPU setup: ComfyUI pinned to GPU 0, an elastic LLM server, a CPU-only agent."""
+    """A typical two-GPU setup: ComfyUI pinned to GPU 0, an elastic Llama Swap, a CPU-only agent."""
     return {
         "comfyui": inst("comfyui", "fixed", [0], priority=80),
         "llm": inst("llm", "elastic", min_gpus=1, priority=50),
@@ -208,3 +208,114 @@ def test_gpu_text_shortens_runs():
     assert gpu_text([0, 1]) == "GPUs 0,1"
     assert gpu_text(EIGHT) == "GPUs 0-7"
     assert gpu_text([6, 0, 1, 2, 4]) == "GPUs 0-2,4,6"
+
+
+# ------------------------------------------------------------------ one GPU: CPU fallback, sharing, boot order
+
+def one_gpu_stack(fallback=True):
+    llm = inst("llm", "elastic", min_gpus=1, priority=50)
+    llm.gpu.cpu_fallback = fallback
+    return {"comfyui": inst("comfyui", "elastic", max_gpus=1, priority=60), "llm": llm, "webui": inst("webui")}
+
+
+ONE = [0]
+
+
+def test_one_gpu_starting_comfyui_moves_llm_to_cpu():
+    p = plan(ONE, one_gpu_stack(), {"llm": [0], "webui": []}, "start", "comfyui")
+    assert p.allocations == {"comfyui": [0], "llm": [], "webui": []}
+    assert p.to_restart == ["llm"] and p.on_cpu == ["llm"] and not p.preempted
+    assert p.side_effects == ["llm"]
+    assert any("to the CPU" in line for line in p.describe())
+
+
+def test_one_gpu_llm_moves_back_when_comfyui_stops():
+    p = plan(ONE, one_gpu_stack(), {"comfyui": [0], "llm": [], "webui": []}, "stop", "comfyui")
+    assert p.allocations == {"llm": [0], "webui": []}
+    assert p.to_restart == ["llm"] and not p.on_cpu
+    assert "Restart llm to move it from the CPU to GPU 0" in p.describe()
+
+
+def test_one_gpu_without_fallback_still_stops_the_llm():
+    p = plan(ONE, one_gpu_stack(fallback=False), {"llm": [0]}, "start", "comfyui")
+    assert p.preempted == ["llm"] and not p.on_cpu
+
+
+def test_no_gpus_at_all_runs_a_fallback_server_on_the_cpu():
+    p = plan([], one_gpu_stack(), {}, "start", "llm")
+    assert not p.error and p.allocations == {"llm": []} and p.on_cpu == ["llm"]
+    assert "on the CPU" in p.describe()[0]
+
+
+def test_fallback_never_grows_below_its_minimum():
+    s = {"big": inst("big", "elastic", min_gpus=2, priority=50), "x": inst("x", "fixed", [0], priority=90)}
+    s["big"].gpu.cpu_fallback = True
+    p = plan(TWO, s, {}, "rebalance", None, extra_wanted={"big", "x"})
+    assert p.allocations == {"x": [0], "big": []} and p.on_cpu == ["big"]
+
+
+def test_boot_puts_model_servers_first_on_one_gpu():
+    s = one_gpu_stack()
+    wanted = {"comfyui", "llm", "webui"}
+    assert plan(ONE, s, {}, "rebalance", None, wanted).allocations["comfyui"] == [0]
+    p = plan(ONE, s, {}, "rebalance", None, wanted, first={"llm"})
+    assert p.allocations == {"llm": [0], "webui": []}            # ComfyUI waits for its Start
+    assert p.to_start == ["llm", "webui"]
+
+
+def sharer(iid, gb, priority=50):
+    i = inst(iid, "elastic", max_gpus=1, priority=priority)
+    i.gpu.vram_gb = gb
+    return i
+
+
+def test_apps_with_budgets_share_one_gpu():
+    s = {"a": sharer("a", 8), "b": sharer("b", 10)}
+    p = plan(ONE, s, {"a": [0]}, "start", "b", gpu_mem={0: 24})
+    assert p.allocations == {"a": [0], "b": [0]} and not p.side_effects
+
+
+def test_sharing_stops_at_the_gpus_memory():
+    s = {"a": sharer("a", 8, priority=40), "b": sharer("b", 20)}
+    p = plan(ONE, s, {"a": [0]}, "start", "b", gpu_mem={0: 24})
+    assert p.allocations == {"b": [0]} and p.preempted == ["a"]
+
+
+def test_sharing_without_memory_sizes_needs_a_gpu_each():
+    s = {"a": sharer("a", 8), "b": sharer("b", 8)}
+    p = plan(TWO, s, {}, "rebalance", None, {"a", "b"})
+    assert sorted(map(tuple, p.allocations.values())) == [(0,), (1,)]
+
+
+def test_an_exclusive_app_never_lands_on_a_shared_gpu():
+    s = {"a": sharer("a", 4), "b": sharer("b", 4), "llm": inst("llm", "elastic", priority=50)}
+    p = plan(TWO, s, {"llm": [0, 1]}, "start", "a", gpu_mem={0: 24, 1: 24})
+    assert len(p.allocations["a"]) == 1 and len(p.allocations["llm"]) == 1
+    assert set(p.allocations["a"]).isdisjoint(p.allocations["llm"])
+    p = plan(TWO, s, {"a": [1], "llm": [0]}, "start", "b", gpu_mem={0: 24, 1: 24})
+    assert p.allocations == {"a": [1], "b": [1], "llm": [0]} and not p.side_effects
+
+
+def test_shared_apps_stay_on_the_gpu_they_have():
+    s = {"a": sharer("a", 4), "b": sharer("b", 4)}
+    p = plan(TWO, s, {"a": [1], "b": [1]}, "rebalance", None, gpu_mem={0: 24, 1: 24})
+    assert p.allocations == {"a": [1], "b": [1]} and p.is_noop
+
+
+def test_a_budget_needs_a_one_gpu_elastic_app():
+    import pytest
+    with pytest.raises(ValueError):
+        GpuPolicy(mode="elastic", min_gpus=1, max_gpus=0, vram_gb=8)
+    with pytest.raises(ValueError):
+        GpuPolicy(mode="fixed", gpus=[0], cpu_fallback=True)
+
+
+def test_new_gpu_settings_do_not_ask_running_apps_to_restart(tmp_path):
+    from gpushepherd.backend import FakeBackend
+    from gpushepherd.config import Store
+    from gpushepherd.engine import Engine
+    e = Engine(Store(str(tmp_path)), FakeBackend())
+    a = inst("a", "elastic", max_gpus=1)
+    b = a.model_copy(deep=True)
+    b.gpu.cpu_fallback, b.gpu.vram_gb = True, 6
+    assert e.config_hash(a) == e.config_hash(b)

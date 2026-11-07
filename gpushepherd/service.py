@@ -93,7 +93,7 @@ class Change:
 class Installed:
     inst: Instance
     models: list[CatalogModel]
-    bundle: Instance | None = None      # the LLM server installed alongside it, if one was
+    bundle: Instance | None = None      # the Llama Swap installed alongside it, if one was
     companions: list[Instance] = field(default_factory=list)   # helpers installed with it (its database)
     downloads: list[str] = field(default_factory=list)       # suggested models it started downloading
 
@@ -197,6 +197,8 @@ class Shepherd:
                     continue
                 gpus = p.allocations.get(iid, [])
                 vram = sum(vram_of.get(g, 0) for g in gpus)
+                if inst.gpu.shares:            # a shared GPU: only its budget is its own
+                    vram = min(vram, int(inst.gpu.vram_gb * 2**30))
                 cat = self.store.catalog(iid) if inst.kind == "llama-swap" else None
                 n = budget.ram_needed(inst, cat, len(gpus), vram, peaks.get(iid, 0))
                 if n:
@@ -2228,7 +2230,7 @@ class Shepherd:
         m = self.machine()
         server = server or next(iter(m.servers), "")
         if server not in m.servers or server not in m.instances:
-            raise Problem("Making a skill needs a model server (install the LLM server from the App Center)."
+            raise Problem("Making a skill needs a model server (install the Llama Swap from the App Center)."
                           if not server else f"No model server '{server}'.", status=404)
         if not self._running(server):
             raise Problem(f"Start {m.servers[server]['name']} first: its chat model writes the skill.", status=409)

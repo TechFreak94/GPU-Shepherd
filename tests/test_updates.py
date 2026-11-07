@@ -594,6 +594,18 @@ def test_branch_options_are_labelled_and_sorted():
     assert "Old work (no pull request)" in opts[2]["label"]
 
 
+def test_branch_options_pin_testing_after_main():
+    st = updates.UpdateStatus(
+        branches=["claude/new", "testing", "main"],
+        branch_info=[
+            {"name": "claude/new", "date": "2026-11-05T10:00:00+00:00", "subject": "New work"},
+            {"name": "testing", "date": "2026-11-04T10:00:00+00:00", "subject": "Merge"},
+            {"name": "main", "date": "2026-10-01T10:00:00+00:00", "subject": "Release"}])
+    opts = updates.branch_options(st, {"testing": {"number": 9, "title": "Promote", "state": "open"}})
+    assert [o["name"] for o in opts] == ["main", "testing", "claude/new"]
+    assert opts[1]["label"].startswith("testing · testing, the next release")
+
+
 def test_branch_options_without_details():
     st = updates.UpdateStatus(branches=["main", "feature-x"])
     assert [o["name"] for o in updates.branch_options(st, {})] == ["main", "feature-x"]

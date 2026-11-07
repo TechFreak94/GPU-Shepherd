@@ -53,6 +53,10 @@
         <div class="hint">It won't start with fewer GPUs than this.</div></div>
       <div><label for="max_gpus">Maximum GPUs</label><input type="number" id="max_gpus" name="max_gpus" min="0" max="64" value="{{ f.max_gpus }}">
         <div class="hint">It never takes more than this. 0 = as many as are free.</div></div>
+      <div><label for="vram_gb">Share a GPU: video memory budget in GB (optional)</label><input type="number" id="vram_gb" name="vram_gb" min="0" max="1024" step="0.5" value="{{ f.vram_gb or '' }}" placeholder="0">
+        <div class="hint">For an app that uses one GPU (Maximum GPUs 1): the most video memory it takes. Apps with a budget share a GPU, as many as fit in its memory, so two small apps can run on one big GPU. Leave empty for a GPU of its own. Make the budget honest: a GPU that runs out of memory makes an app fail.</div></div>
+      <div><label class="check" style="margin-top:22px"><input type="checkbox" name="cpu_fallback" {{ "checked" if f.cpu_fallback }}> Run on the CPU when no GPU is free</label>
+        <div class="hint">Instead of stopping when another app needs its GPU, it keeps running on the CPU (slower), and moves back onto a GPU when one is free. Good for a chat model server on a machine with one GPU.</div></div>
     </div>
   </div>
 
@@ -109,10 +113,10 @@
     <div class="fields">
       <div><label for="drain_check">Wait for running work</label>
         <select id="drain_check" name="drain_check">
-          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "LLM server (llama-swap): chat answers in progress"), ("llama-server", "llama.cpp server: requests in progress"), ("comfyui", "ComfyUI: images in the queue"), ("http", "Custom - ask a web address"), ("none", "Don't wait")] %}
+          {% for v, label in [("auto", "Automatic - picked from the image"), ("llama-swap", "Llama Swap (llama-swap): chat answers in progress"), ("llama-server", "llama.cpp server: requests in progress"), ("comfyui", "ComfyUI: images in the queue"), ("http", "Custom - ask a web address"), ("none", "Don't wait")] %}
           <option value="{{ v }}" {{ "selected" if (f.drain_check or "auto") == v }}>{{ label }}</option>{% endfor %}
         </select>
-        <div class="hint">Automatic works for the LLM server and ComfyUI apps. Any other app is stopped straight away.</div></div>
+        <div class="hint">Automatic works for the Llama Swap and ComfyUI apps. Any other app is stopped straight away.</div></div>
       <div data-drain-check="auto llama-swap llama-server comfyui http"><label for="drain_timeout">Wait at most (seconds)</label>
         <input type="number" id="drain_timeout" name="drain_timeout" min="0" max="86400" value="{{ f.drain_timeout if f.drain_timeout is not none and f.drain_timeout != '' else 600 }}">
         <div class="hint">0 = don't wait. Long video or batch jobs may need more.</div></div>

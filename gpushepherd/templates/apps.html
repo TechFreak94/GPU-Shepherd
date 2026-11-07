@@ -27,7 +27,7 @@
     </div>
     <p class="sub">{{ t.blurb }}</p>
     <ul class="points">{% for p in t.points %}<li>{{ p }}</li>{% endfor %}</ul>
-    {% if t.connects and not has_server %}<div class="small warn-text">Needs an LLM server, and none is installed yet. Installing it walks you through adding one.</div>{% endif %}
+    {% if t.connects and not has_server %}<div class="small warn-text">Needs a Llama Swap server, and none is installed yet. Installing it walks you through adding one.</div>{% endif %}
     <div class="small muted">Needs: {{ t.needs }}{% if t.docs %} · <a class="ext" href="{{ t.docs }}" target="_blank" rel="noopener">Project page</a>{% endif %}{% if t.license %} · License: {{ t.license }}{% endif %}</div>
     <div class="btns">
       <a class="btn primary" href="/apps/{{ t.key }}">{{ "Install another" if have else "Install" }}</a>

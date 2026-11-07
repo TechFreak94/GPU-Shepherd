@@ -1,6 +1,6 @@
 """The App Center's apps: built-in templates for installing an app as an instance.
 
-A template is a generic starting point (an LLM server, ComfyUI, Open WebUI, LibreChat, Hermes
+A template is a generic starting point (a Llama Swap server, ComfyUI, Open WebUI, LibreChat, Hermes
 Agent...) that asks a few questions and fills in everything else. What it creates is an ordinary
 instance (and, for model servers, the models picked), so it can be edited field by field
 afterwards. Every app can also be installed by hand: the full form, filled in from the same
@@ -95,11 +95,11 @@ class Template:
 
 TEMPLATES: tuple[Template, ...] = (
     Template(
-        key="llm-server", tag="Model Server", badge="LLM", title="LLM server", group="Model servers",
+        key="llm-server", tag="Model Server", badge="LLM", title="Llama Swap", group="Model servers",
         blurb="An OpenAI-compatible model server that loads whichever model a client asks for: chat, coding or both.",
         points=("llama-swap + llama.cpp", "Uses every free GPU and gives them back when something else needs one",
                 "Pick a chat model and a coding model now, or add models later"),
-        default_id="llm", default_name="LLM server", description="llama-swap model server",
+        default_id="llm", default_name="Llama Swap", description="llama-swap model server",
         kind="llama-swap", image=LLAMA_SWAP_IMAGE, container_port=8080, host_port=8080, gpu="all",
         open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True),
         models=(ModelSlot(key="chat", label="Chat model", alias="chat", ctx_size=32768,
@@ -119,7 +119,7 @@ TEMPLATES: tuple[Template, ...] = (
         blurb="Ollama's model server, for apps that only speak Ollama's API.",
         points=("Uses every free GPU and gives them back when something else needs one",
                 "Models from Ollama's library, kept in the models folder's ollama/ subfolder",
-                "Most apps here use the LLM server instead"),
+                "Most apps here use the Llama Swap instead"),
         default_id="ollama", default_name="Ollama", description="Ollama model server",
         image="ollama/ollama:latest", container_port=11434, host_port=11434, gpu="all",
         env={"OLLAMA_HOST": "0.0.0.0:11434"},
@@ -127,14 +127,14 @@ TEMPLATES: tuple[Template, ...] = (
         after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3:8b (CONTAINER is "
                       "shown on its dashboard card). It answers at http://this-machine:PORT, and has no login or "
                       "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
-                      "LLM server through its llama.cpp integration instead.",
+                      "Llama Swap through its llama.cpp integration instead.",
         needs="An NVIDIA GPU", license="MIT", docs="https://docs.ollama.com"),
     Template(
         key="vllm", tag="Model Server", badge="vL", title="vLLM", group="Model servers", engine="vllm",
         blurb="A fast OpenAI-compatible server for one Hugging Face model, built for many people chatting at once.",
         points=("One model, kept loaded, split across the GPUs you give it",
                 "Downloads the model from Hugging Face into the models folder's huggingface/ subfolder",
-                "Chat apps here can use it like the LLM server, as the model chat"),
+                "Chat apps here can use it like the Llama Swap, as the model chat"),
         default_id="vllm", default_name="vLLM", description="vLLM model server",
         image="vllm/vllm-openai:latest", container_port=8000, host_port=8000, gpu="one",
         models_mount=("huggingface", "/root/.cache/huggingface", False), secrets=("VLLM_API_KEY",),
@@ -154,7 +154,7 @@ TEMPLATES: tuple[Template, ...] = (
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
-        needs="An LLM server to chat with", license="Open WebUI License (BSD-3-Clause plus branding terms)",
+        needs="A Llama Swap server to chat with", license="Open WebUI License (BSD-3-Clause plus branding terms)",
         docs="https://docs.openwebui.com"),
     Template(
         key="hermes", tag="Agent UI", badge="H", title="Hermes Agent", group="Chat and agents",
@@ -184,7 +184,7 @@ TEMPLATES: tuple[Template, ...] = (
         companions=("librechat-mongodb",), connects="librechat",
         after_install="Open it, sign up and log in: the first account becomes the admin. Then turn sign-ups "
                       "off by setting ALLOW_REGISTRATION=false under Edit, unless others should make accounts.",
-        needs="An LLM server to chat with", license="MIT", docs="https://www.librechat.ai/docs"),
+        needs="A Llama Swap server to chat with", license="MIT", docs="https://www.librechat.ai/docs"),
     Template(
         key="anythingllm", tag="Chat UI", badge="ALL", title="AnythingLLM", group="Chat and agents",
         blurb="Chat with your documents: workspaces, built-in RAG and agents, thinking with your own model server.",
@@ -199,7 +199,7 @@ TEMPLATES: tuple[Template, ...] = (
         data_owner=(1000, 1000), connects="anythingllm",
         after_install="Open it and make a workspace to chat in; the model server is already set up. "
                       "It has no login until you set a password under Settings, Security.",
-        needs="An LLM server to chat with", license="MIT",
+        needs="A Llama Swap server to chat with", license="MIT",
         docs="https://docs.anythingllm.com/installation-docker/overview"),
     Template(
         key="langflow", tag="Agent UI", badge="LF", title="Langflow", group="Chat and agents",
@@ -221,7 +221,7 @@ TEMPLATES: tuple[Template, ...] = (
                       "Edit on this instance), and type chat (or another name the server answers to) as the Model "
                       "Name. Its OpenAI API Key is already the server's key. For documents, the OpenAI Embeddings "
                       "block with the same address and the model embed, if the server has an embeddings model.",
-        needs="An LLM server for its flows to use", license="MIT", docs="https://docs.langflow.org"),
+        needs="A Llama Swap server for its flows to use", license="MIT", docs="https://docs.langflow.org"),
     Template(
         key="sillytavern", tag="Chat UI", badge="ST", title="SillyTavern", group="Chat and agents",
         blurb="Chat and role-play with characters you make or import, with group chats, lore books and extensions.",
@@ -237,7 +237,7 @@ TEMPLATES: tuple[Template, ...] = (
         connects="sillytavern",
         after_install="Open it and log in with the user name and password you chose. It is already connected to the "
                       "model server (API Connections: Chat Completion, Custom), so pick a character and chat.",
-        needs="An LLM server to chat with", license="AGPL-3.0", docs="https://docs.sillytavern.app"),
+        needs="A Llama Swap server to chat with", license="AGPL-3.0", docs="https://docs.sillytavern.app"),
     Template(
         key="open-notebook", tag="Research UI", badge="ON", title="Open Notebook", group="Chat and agents",
         blurb="A private NotebookLM: add PDFs, web pages and videos, then chat with them, take notes and make podcasts.",
@@ -251,7 +251,7 @@ TEMPLATES: tuple[Template, ...] = (
         after_install="Open it and log in with the password you chose. Under Settings, Models, press Sync for "
                       "OpenAI Compatible, then pick chat as the default chat model (and embed as the embedding "
                       "model, if the server has one, to search your sources).",
-        needs="An LLM server to chat with", license="MIT", docs="https://github.com/lfnovo/open-notebook"),
+        needs="A Llama Swap server to chat with", license="MIT", docs="https://github.com/lfnovo/open-notebook"),
     Template(
         key="invokeai", tag="Image UI", badge="INV", title="InvokeAI", group="Image and video",
         blurb="Image generation with a polished canvas: inpainting, layers and a model manager, in the browser.",
@@ -313,7 +313,7 @@ TEMPLATES: tuple[Template, ...] = (
 # the model server an app with a connection can install alongside itself, and the model slot it fills
 BUNDLED_SERVER = "llm-server"
 BUNDLED_SLOT = "chat"
-# App Center keys from before there was one LLM server app
+# App Center keys from before there was one Llama Swap app
 RENAMED = {"llm-chat": "llm-server", "llm-coder": "llm-server"}
 NEW_SERVER = "new"
 
@@ -350,7 +350,7 @@ OFFLOAD_CHOICES = {
 def matches(t: Template, inst: Instance) -> bool:
     """Whether an instance was installed from this template (older ones by their image)."""
     if inst.kind == "llama-swap" or t.kind == "llama-swap":
-        return inst.kind == t.kind                 # every model server is an LLM server
+        return inst.kind == t.kind                 # every model server is a Llama Swap server
     if inst.app:
         return RENAMED.get(inst.app, inst.app) == t.key
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
@@ -364,6 +364,10 @@ def tag_for(inst: Instance) -> str:
     return next((t.tag for t in TEMPLATES if matches(t, inst)), OTHER_TAG)
 
 
+# Default names an app used to be installed under; they show as its current title
+LEGACY_NAMES = {"llm-server": ("llm server",)}
+
+
 def app_name(inst: Instance) -> str:
     """Its name, with the app's real name where it only repeats the kind tag.
 
@@ -373,7 +377,7 @@ def app_name(inst: Instance) -> str:
     t = next((t for t in TEMPLATES if matches(t, inst)), None)
     if t is None or t.title == t.tag:
         return inst.name
-    if inst.name.casefold() == t.tag.casefold():
+    if inst.name.casefold() in (t.tag.casefold(), *LEGACY_NAMES.get(t.key, ())):
         return t.title
     head, _, suffix = inst.name.rpartition(" ")
     if head.casefold() == t.tag.casefold() and suffix == inst.id.rsplit("-", 1)[-1]:
@@ -520,6 +524,9 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ConfigError("Port: enter a number from 1 to 65535")
     gpu = _gpu_policy(str(a.get("gpu") or t.gpu), t.priority)
+    if t.kind == "llama-swap" and gpu.mode == "elastic":
+        # a chat server keeps answering (on the CPU, slower) while an image app has the only GPU
+        gpu.cpu_fallback = True
 
     volumes = []
     if t.models_mount:
@@ -603,7 +610,7 @@ def companions(t: Template, inst: Instance) -> list[Instance]:
 
 
 def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
-    """The LLM server an app installs alongside itself when asked to (server = "new"),
+    """The Llama Swap an app installs alongside itself when asked to (server = "new"),
     built from the answers' models folder and model file, with its catalogue (and API key). Adds it
     to the machine, so the app's own build connects to it."""
     if str(a.get("server", "")) != NEW_SERVER:

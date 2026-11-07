@@ -8,7 +8,7 @@ dynamic = ["version"]       # from gpushepherd/__init__.py, which the release wo
 description = "A web dashboard that runs your self-hosted AI containers and shares the GPUs between them automatically."
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",

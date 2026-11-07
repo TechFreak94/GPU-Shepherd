@@ -35,15 +35,18 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 
 | Field | YAML | What it does |
 |---|---|---|
-| GPU use | `gpu.mode` | `none`: no GPU. `fixed`: always exactly the GPUs listed. `elastic`: needs at least *Minimum GPUs*, takes every free GPU up to *Maximum GPUs* (an LLM server: only as many as its models can use), and gives them back when something else needs one. |
+| GPU use | `gpu.mode` | `none`: no GPU. `fixed`: always exactly the GPUs listed. `elastic`: needs at least *Minimum GPUs*, takes every free GPU up to *Maximum GPUs* (a Llama Swap server: only as many as its models can use), and gives them back when something else needs one. |
 | Use GPUs / Preferred GPUs | `gpu.gpus` | Fixed: the GPUs it always uses (by `nvidia-smi` index). Elastic: optional, the GPUs it takes first when it has a choice. |
 | Minimum GPUs | `gpu.min_gpus` | Elastic only. Fewer than this and it can't start. |
 | Maximum GPUs | `gpu.max_gpus` | Elastic only. `0` = no limit. `1` makes "one GPU, whichever is free". |
 | Priority (0-100) | `gpu.priority` | When there aren't enough GPUs, higher priority keeps theirs and lower ones are moved or stopped (after you confirm). The instance you are starting always wins. |
+| Run on the CPU when no GPU is free | `gpu.cpu_fallback` | Elastic only. Instead of being stopped when it loses its GPUs, it keeps running without one (a Llama Swap server runs its models on the CPU, slower) and moves back onto a GPU when one is free. On by default for Llama Swap servers. |
+| Video memory budget (GB) | `gpu.vram_gb` | Elastic with a maximum of 1 only. Apps with a budget share a GPU, as many as fit in its memory (a Llama Swap server also fits its models into the budget). `0` = a GPU of its own. |
 
 Rule of thumb: apps that use one GPU (ComfyUI, speech models) are fixed or elastic with a maximum
-of 1; LLM servers that split a model across GPUs are elastic with no maximum. The
-[README](../README.md#how-gpu-sharing-works) walks through how a plan is made.
+of 1; Llama Swap servers that split a model across GPUs are elastic with no maximum. The
+[README](../README.md#how-gpu-sharing-works) walks through how a plan is made. At boot, Llama Swap
+servers get their GPUs first, so chat works after a reboot even when one GPU can't hold every app.
 
 A container only sees the GPUs it was given. When its GPUs change it is re-created, so anything it
 needs to keep must be in a mounted folder.
@@ -204,7 +207,7 @@ With two or more GPUs:
 
 ### Suggested models
 
-The Models page lists a few current models that work well with the LLM server, best fit for this
+The Models page lists a few current models that work well with the Llama Swap, best fit for this
 machine first. For each it says whether it fits: on how many GPUs, or for a mixture-of-experts
 model, with how much of it in system RAM (with every GPU, and with one). **Add** puts it in the
 model list with its makers' settings and downloads it if it isn't in the models folder yet.
@@ -229,7 +232,7 @@ writes the files as the folder's owner; GPU Shepherd itself only reads the folde
 where they stopped, so **Stop** and starting again (or a restart of GPU Shepherd) loses nothing. The
 progress bar needs GPU Shepherd to see the models folder at the same path, as `install.sh` sets up.
 
-A model file picked in the LLM server's install form that is one of these gets the same settings,
+A model file picked in the Llama Swap's install form that is one of these gets the same settings,
 and is downloaded when you install.
 
 How a mixture-of-experts model is split is worked out from its size and layer count: with N GPUs,
@@ -394,7 +397,7 @@ servers, the models you picked), so every field above can be changed afterwards.
 | vLLM | the GPUs you pick (fixed count) | `vllm/vllm-openai` serving one Hugging Face model as `chat`, downloaded on first start into the models folder's `huggingface/` subfolder, a fresh `VLLM_API_KEY`, and 8 GB of shared memory for splitting a model across GPUs. It keeps the model in GPU memory only (no system RAM) and the GPU count it was installed with: install it again with another count to change it. Needs driver 580 or newer. |
 | SillyTavern | none | `ghcr.io/sillytavern/sillytavern` with `config`, `data`, `plugins` and `extensions` in its app data folder, a user name and password you choose (basic authentication, so it can be reached from other machines), and a connection to the model server (Chat Completion, Custom). |
 | Open Notebook | none | `lfnovo/open_notebook` with its data in the app data folder, a password you choose, fresh `SURREAL_PASS` and `OPEN_NOTEBOOK_ENCRYPTION_KEY` secrets, and its database: a second instance `<id>-surrealdb` (`surrealdb/surrealdb`, no port on the host) that it *starts with*. |
-| LLM server | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
+| Llama Swap | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model, split for books (`CHUNK_SIZE` 1500, `CHUNK_OVERLAP` 200, `RAG_TOP_K` 8) and with Qwen3 Embedding's query instruction (`RAG_EMBEDDING_QUERY_PREFIX`). Open WebUI only reads these at its first start; later they are in its Admin Panel › Documents. *Voice with* picks a Speaches instance for speech to text and text to speech (`AUDIO_STT_*`, `AUDIO_TTS_*` with engine `openai`). |
 | LibreChat | none | `librechat/librechat`, plus its database: a second instance `<id>-mongodb` (`mongo:8.0`, no port on the host, data in the app data folder's `mongodb/`) that it *starts with*. Fresh secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`), `MONGO_URI`, sign-ups on, cookies that work over plain http (`SESSION_COOKIE_SECURE=false`), and a `librechat.yaml` in its app data folder with one endpoint, *Local models*, whose address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment. Images, uploads and logs go to its app data folder. |
@@ -405,7 +408,7 @@ servers, the models you picked), so every field above can be changed afterwards.
 | Speaches | one free GPU (elastic, maximum 1) | `speaches-ai/speaches` (CUDA) with a fresh `API_KEY`, its Hugging Face cache in the app data folder, and two models downloaded on first start: `Systran/faster-distil-whisper-large-v3` (speech to text) and `speaches-ai/Kokoro-82M-v1.0-ONNX` (text to speech). |
 | Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
 
-![Installing the LLM server: suggested models for each name, best fit first](screenshots/llm-install-models.png)
+![Installing the Llama Swap: suggested models for each name, best fit first](screenshots/llm-install-models.png)
 
 ![The App Center's chat and agent apps](screenshots/app-store-chat.png)
 
@@ -437,7 +440,7 @@ afterwards repeat:
 
 ### Logins
 
-The LLM server's own page asks for a user name and password when opened in a browser: type any
+The Llama Swap's own page asks for a user name and password when opened in a browser: type any
 user name and its API key as the password. **Logins** on its card shows that key (it is also on its
 Models page, Server settings, where *New API key* changes it).
 
@@ -455,10 +458,10 @@ The App Center doesn't offer LobeChat (its current version needs PostgreSQL, S3 
 auth key set and a fixed public address before it starts) or Odysseus (its model servers can only
 be added inside the app); install those with *Any Docker image* or Docker Compose.
 
-Open WebUI, LibreChat, AnythingLLM, Langflow and Hermes Agent can also install a new LLM server alongside themselves
-(*A new LLM server, installed with it*), with a chat model you pick from the models folder.
+Open WebUI, LibreChat, AnythingLLM, Langflow and Hermes Agent can also install a new Llama Swap alongside themselves
+(*A new Llama Swap, installed with it*), with a chat model you pick from the models folder.
 It is offered first when there is no model server yet, and the install page says so, with an
-*Install an LLM server first* button: that installs the LLM server and then comes back to the app,
+*Install a Llama Swap server first* button: that installs the Llama Swap and then comes back to the app,
 already connected to it.
 
 Automatic setup also picks a free ID and port. The GPU question can pin an instance to one GPU instead (a fixed

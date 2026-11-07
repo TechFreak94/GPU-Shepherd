@@ -67,7 +67,7 @@
       <label><input type="radio" name="embeddings" value="keep"> Keep the embeddings model Open WebUI uses now</label>
       <div class="hint">Switching makes documents added to Open WebUI before need Reindex (Admin Panel, Settings, Documents).</div>
     </fieldset>
-    {% else %}<p class="small muted">No model server has an embeddings model, so Open WebUI indexes documents on its CPU, slowly. Add one in the LLM server's Models page (Suggested models).</p>{% endif %}
+    {% else %}<p class="small muted">No model server has an embeddings model, so Open WebUI indexes documents on its CPU, slowly. Add one in the Llama Swap's Models page (Suggested models).</p>{% endif %}
     <div class="actions"><button type="submit"{% if not b.counts.get("ready") %} disabled title="Scan the documents folder first"{% endif %}>Send {{ b.counts.get("ready", 0) }} document{{ "s" if b.counts.get("ready", 0) != 1 }}</button></div>
   </form>
   <p class="small muted" style="margin-bottom:0">A big library takes hours to index (start it overnight); it carries on where it stopped. Then in a chat type # and pick the knowledge base, or attach it to a model in Workspace, Models.</p>
@@ -82,7 +82,7 @@
   {% if b.servers %}
   <div class="fields"><div><label for="skill-server">Written by</label>
     <select id="skill-server" name="server">{% for s in b.servers %}<option value="{{ s.id }}">{{ s.name }}{% if s.model %} ({{ s.model }}){% endif %}</option>{% endfor %}</select></div></div>
-  {% else %}<p class="small muted">Making a skill needs a model server: install the LLM server from the <a href="/apps">App Center</a>.</p>{% endif %}
+  {% else %}<p class="small muted">Making a skill needs a model server: install the Llama Swap from the <a href="/apps">App Center</a>.</p>{% endif %}
   {% if b.skills %}
   <table class="table books-table skills-list" style="margin-top:8px">
     <thead><tr><th>Skill</th><th>From</th><th>Installed in</th><th></th></tr></thead>

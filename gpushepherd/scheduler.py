@@ -10,8 +10,13 @@ Pure functions, no Docker - easy to test. Rules:
 4. Leftover GPUs go to elastic instances (highest priority first) up to their `max_gpus`,
    and no more than they can use (a model server whose models need fewer GPUs).
    Running instances keep the GPUs they already have where possible (no needless restarts).
-5. A running instance that can no longer get its minimum is stopped ("preempted").
-   A running instance whose GPU set changes is restarted with the new GPUs.
+5. A running instance that can no longer get its minimum is stopped ("preempted"), unless it
+   may fall back to the CPU (`cpu_fallback`): then it keeps running with no GPU, and moves back
+   onto one when a GPU is free again. A running instance whose GPU set changes is restarted.
+7. Instances with a video memory budget (`vram_gb`, one-GPU elastic only) share a GPU with each
+   other, as many as fit in its memory. Instances without one never share.
+8. At boot (`first`), model servers can be put ahead of everything but the target, so chat works
+   after a reboot on a machine whose GPUs can't hold every app.
 6. Starting an instance also starts the instances it `requires` (an app's database), first.
    Stopping it stops them too, after it, unless something else still running requires them.
 
@@ -37,6 +42,7 @@ class Plan:
     to_stop: list[str] = field(default_factory=list)
     to_restart: list[str] = field(default_factory=list)
     preempted: list[str] = field(default_factory=list)
+    on_cpu: list[str] = field(default_factory=list)                   # fell back to the CPU
     error: str = ""
 
     @property
@@ -65,10 +71,16 @@ class Plan:
             new, old = self.allocations[i], self.previous.get(i, [])
             if new == old:
                 lines.append(f"Restart {n(i)}")
+            elif i in self.on_cpu:
+                lines.append(f"Restart {n(i)} to move it from {gpu_text(old)} to the CPU - no GPU is free "
+                             "for it, so it runs slower until one is")
             else:
-                lines.append(f"Restart {n(i)} to move it from {gpu_text(old)} to {gpu_text(new)}")
+                lines.append(f"Restart {n(i)} to move it from {gpu_text(old) if old else 'the CPU'} to {gpu_text(new)}")
         for i in self.to_start:
-            lines.append(f"Start {n(i)}" + (f" on {gpu_text(self.allocations[i])}" if self.allocations[i] else ""))
+            if i in self.on_cpu:
+                lines.append(f"Start {n(i)} on the CPU - no GPU is free for it, so it runs slower until one is")
+            else:
+                lines.append(f"Start {n(i)}" + (f" on {gpu_text(self.allocations[i])}" if self.allocations[i] else ""))
         return lines
 
 
@@ -92,7 +104,8 @@ def gpu_list(gpus: list[int]) -> str:
 
 def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, list[int]],
          action: str, target: str | None = None, extra_wanted: set[str] | None = None,
-         usable: dict[str, int] | None = None) -> Plan:
+         usable: dict[str, int] | None = None, gpu_mem: dict[int, float] | None = None,
+         first: set[str] | None = None) -> Plan:
     """Work out what has to happen.
 
     gpus         GPU indices present on the machine
@@ -103,6 +116,10 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
     extra_wanted additional instances to bring up (used for autostart on boot)
     usable       instance -> the most GPUs it can put to use (a model server whose models are
                  small); an elastic instance grows no further than that, leaving the rest free
+    gpu_mem      GPU index -> its video memory in GB, for instances that share a GPU (vram_gb);
+                 without it they each need a GPU of their own
+    first        instances served right after the target, ahead of higher priorities (autostart
+                 puts model servers here)
     """
     if action not in ACTIONS:
         raise ValueError(f"unknown action {action}")
@@ -128,14 +145,15 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
     wanted = with_requirements(instances, wanted)
 
     gpu_set = set(gpus)
-    allocations, dropped, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target, previous,
-                                            usable or {})
+    allocations, dropped, on_cpu, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target,
+                                                    previous, usable or {}, gpu_mem or {}, first or set())
     if error:
         result.error = error
         return result
 
     result.allocations = allocations
     result.preempted = sorted(i for i in dropped if i in previous)
+    result.on_cpu = sorted(on_cpu)
     # apps before what they require (LibreChat before its database)
     result.to_stop = start_order(instances, [i for i in previous if i not in allocations], None)[::-1]
     result.to_start = [i for i in start_order(instances, allocations, target) if i not in previous]
@@ -172,25 +190,48 @@ def start_order(instances: dict[str, Instance], ids, target: str | None) -> list
     return out
 
 
-def _priority_order(instances: dict[str, Instance], ids, target: str | None) -> list[str]:
+def _priority_order(instances: dict[str, Instance], ids, target: str | None,
+                    first: set[str] | None = None) -> list[str]:
+    first = first or set()
+
     def key(i: str):
         pol = instances[i].gpu
         mode_rank = {"fixed": 0, "elastic": 1, "none": 2}[pol.mode]
-        return (0 if i == target else 1, -pol.priority, mode_rank, i)
+        return (0 if i == target else 1 if i in first else 2, -pol.priority, mode_rank, i)
     return sorted(ids, key=key)
 
 
 def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance], wanted: set[str],
-              target: str | None, current: dict[str, list[int]],
-              usable: dict[str, int]) -> tuple[dict[str, list[int]], list[str], str]:
+              target: str | None, current: dict[str, list[int]], usable: dict[str, int],
+              gpu_mem: dict[int, float], first: set[str]
+              ) -> tuple[dict[str, list[int]], list[str], list[str], str]:
     """Two phases: first decide HOW MANY GPUs every instance gets (and who does not fit),
-    then decide WHICH ones, keeping running instances on the GPUs they already have."""
-    order = _priority_order(instances, wanted, target)
+    then decide WHICH ones, keeping running instances on the GPUs they already have.
+    Instances that share a GPU are grouped into shared slots, which take one GPU each."""
+    order = _priority_order(instances, wanted, target, first)
     free = set(gpus)                 # GPUs not taken by a fixed instance yet
-    reserved = 0                     # GPUs promised to elastic instances (picked in phase 2)
+    reserved = 0                     # GPUs promised to elastic instances and shared slots (picked in phase 2)
     counts: dict[str, int] = {}
     fixed: dict[str, list[int]] = {}
     dropped: list[str] = []
+    on_cpu: list[str] = []
+    # shared slots: members and the video memory they have promised. Which GPU a slot gets is only
+    # known in phase 2, so it must fit the smallest GPU (all the same size on most machines).
+    slots: list[dict] = []
+    slot_cap = min((gpu_mem.get(g, 0) for g in gpus), default=0)
+
+    def no_gpu(i: str) -> str:
+        """Somewhere for an elastic instance that gets no GPU: the CPU, or stopped."""
+        if instances[i].gpu.cpu_fallback:
+            counts[i] = 0
+            on_cpu.append(i)
+            return ""
+        if i == target:
+            pol = instances[i].gpu
+            return (f"{instances[i].name} needs at least {pol.min_gpus} GPU(s); "
+                    f"only {max(len(free) - reserved, 0)} of this machine's {len(gpus)} are available to it")
+        dropped.append(i)
+        return ""
 
     # phase 1a: minimums in priority order (the target first)
     for i in order:
@@ -201,8 +242,8 @@ def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance]
             missing = [g for g in pol.gpus if g not in gpu_set]
             if missing:
                 if i == target:
-                    return {}, [], (f"{instances[i].name} is set to use GPU {','.join(map(str, missing))}, "
-                                    "which this machine does not have")
+                    return {}, [], [], (f"{instances[i].name} is set to use GPU {','.join(map(str, missing))}, "
+                                        "which this machine does not have")
                 dropped.append(i)
                 continue
             # its GPUs must be free, and taking them must still leave room for elastic promises
@@ -211,47 +252,71 @@ def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance]
                 free -= set(pol.gpus)
             else:
                 dropped.append(i)
+        elif pol.shares and pol.vram_gb <= slot_cap:
+            # join a shared slot it fits in (one it shares a GPU with now first), else open one on
+            # a free GPU. Without GPU memory sizes, or with a budget bigger than a GPU, it takes a
+            # GPU of its own like any other instance (the branch below).
+            mine = set(current.get(i, []))
+            fits = [s for s in slots if s["used"] + pol.vram_gb <= slot_cap]
+            fits.sort(key=lambda s: not any(set(current.get(m, [])) & mine for m in s["members"]))
+            if fits:
+                fits[0]["members"].append(i)
+                fits[0]["used"] += pol.vram_gb
+                counts[i] = 1
+            elif len(free) - reserved >= 1:
+                slots.append({"members": [i], "used": pol.vram_gb})
+                reserved += 1
+                counts[i] = 1
+            elif err := no_gpu(i):
+                return {}, [], [], err
         else:
             if len(free) - reserved >= pol.min_gpus:
                 counts[i] = pol.min_gpus
                 reserved += pol.min_gpus
-            elif i == target:
-                return {}, [], (f"{instances[i].name} needs at least {pol.min_gpus} GPU(s); "
-                                f"only {len(free) - reserved} of this machine's {len(gpus)} are available to it")
-            else:
-                dropped.append(i)
+            elif err := no_gpu(i):
+                return {}, [], [], err
 
     # phase 1b: elastic instances grow into what is left, highest priority first
+    sharing = {m for s in slots for m in s["members"]}
     spare = len(free) - reserved
     for i in order:
         pol = instances[i].gpu
-        if pol.mode != "elastic" or i not in counts:
+        if pol.mode != "elastic" or i not in counts or i in on_cpu or i in sharing:
             continue
         cap = min(pol.max_gpus or len(gpus), max(usable.get(i, len(gpus)), counts[i]))
         extra = min(spare, cap - counts[i])
         counts[i] += extra
         spare -= extra
 
-    # phase 2: pick concrete GPUs for elastic instances from what fixed ones left
+    # phase 2: pick concrete GPUs for elastic instances and shared slots from what fixed ones left.
+    # A unit is one elastic instance, or one shared slot (all its members get the same GPU).
     alloc: dict[str, list[int]] = {i: [] for i, c in counts.items() if instances[i].gpu.mode == "none"}
     alloc.update(fixed)
+    alloc.update({i: [] for i in on_cpu})
     pool = sorted(free)
-    elastic = [i for i in order if i in counts and instances[i].gpu.mode == "elastic"]
-    # 2a: everyone keeps the GPUs they already have (up to their new count)
-    for i in elastic:
-        keep = sorted(g for g in current.get(i, []) if g in pool)[:counts[i]]
-        alloc[i] = keep
+    rank_of = {i: n for n, i in enumerate(order)}
+    units = [([i], counts[i]) for i in order
+             if i in counts and instances[i].gpu.mode == "elastic" and i not in on_cpu and i not in sharing]
+    units += [(s["members"], 1) for s in slots]
+    units.sort(key=lambda u: min(rank_of[m] for m in u[0]))
+    got: list[list[int]] = []
+    # 2a: everyone keeps the GPUs they already have (up to their new count); a slot keeps the GPU
+    # most of its members are on
+    for members, n in units:
+        held = [g for m in members for g in current.get(m, []) if g in pool]
+        keep = sorted(sorted(set(held), key=lambda g: (-held.count(g), g))[:n])
+        got.append(keep)
         pool = [g for g in pool if g not in keep]
     # 2b: fill the rest in priority order: preferred GPUs first, then next to ones it has, then lowest
-    for i in elastic:
-        pref = instances[i].gpu.gpus
-        while len(alloc[i]) < counts[i] and pool:
-            have = alloc[i]
-
+    for (members, n), have in zip(units, got):
+        pref = instances[members[0]].gpu.gpus
+        while len(have) < n and pool:
             def rank(g, pref=pref, have=have):
                 near = min((abs(g - h) for h in have), default=0)
                 return (pref.index(g) if g in pref else len(pref), near, g)
             g = min(pool, key=rank)
-            alloc[i] = sorted(have + [g])
+            have[:] = sorted(have + [g])
             pool.remove(g)
-    return alloc, dropped, ""
+        for m in members:
+            alloc[m] = list(have)
+    return alloc, dropped, on_cpu, ""

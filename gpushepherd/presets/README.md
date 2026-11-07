@@ -7,7 +7,7 @@ folder and asks which one to use (or none); `--preset NAME` picks one up front, 
 
 | Preset | For | What it creates |
 |---|---|---|
-| [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | LLM server (Qwen3.5 9B, Qwen3 Embedding), ComfyUI (SDXL), Open WebUI |
+| [`starter`](starter) | any machine with one or more 8+ GB NVIDIA GPUs | Llama Swap (Qwen3.5 9B, Qwen3 Embedding), ComfyUI (SDXL), Open WebUI |
 
 Nothing in a preset starts by itself: the installer turns autostart off until you have tried it.
 
@@ -31,7 +31,7 @@ When the installer creates a preset it fills in these placeholders, in every tex
 |---|---|
 | `/srv/models` | the models folder chosen during the install |
 | `/opt/gpu-shepherd` | the settings folder |
-| `sk-demo-000...` and `REPLACE_WITH_LLM_API_KEY` | a new API key for the LLM server (the same everywhere) |
+| `sk-demo-000...` and `REPLACE_WITH_LLM_API_KEY` | a new API key for the Llama Swap (the same everywhere) |
 | `change-me-hermes-api-key`, `change-me-please` | a new API key and a new password |
 | `HERMES_UID/GID: "1000"` | the user who ran the installer |
 | `autostart: true` | `autostart: false` |

@@ -242,3 +242,4 @@ nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke
 .drop{border:2px dashed var(--btn-line);border-radius:10px;padding:14px;margin:4px 0 6px}
 .drop.over{border-color:var(--accent);background:var(--btn-hover)}
 .drop label.btn{cursor:pointer}
+.gpu-note{margin:4px 0 0;font-weight:normal}

@@ -67,15 +67,21 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             out["log"] = job.lines
         return out
 
-    def instance_json(inst: Instance, snap=None) -> dict:
+    def instance_json(inst: Instance, snap=None, notes: dict | None = None) -> dict:
         snap = snap or engine.snapshot()
         st = snap.states.get(inst.id)
         running = bool(st and st.running)
+        if notes is None:
+            try:
+                notes = engine.gpu_notes(snap) if inst.gpu.mode != "none" else {}
+            except Exception:  # noqa: BLE001 - only a hint
+                notes = {}
         return inst.model_dump(mode="json") | {"state": {
             "running": running, "status": st.status if st else "not created",
             "status_text": st.status_text if st else "", "gpus": snap.allocations.get(inst.id, []),
             "container": engine.container_name(inst.id),
-            "restart_needed": bool(running and st.config_hash and st.config_hash != engine.config_hash(inst))}}
+            "restart_needed": bool(running and st.config_hash and st.config_hash != engine.config_hash(inst)),
+            "gpu_note": notes.get(inst.id, "")}}
 
     # ------------------------------------------------------------------ state
     def state():
@@ -106,7 +112,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @r.get("/api/v1/instances")
     def list_instances():
         snap = engine.snapshot()
-        return [instance_json(i, snap) for i in sorted(snap.instances.values(), key=lambda i: i.id)]
+        try:
+            notes = engine.gpu_notes(snap)
+        except Exception:  # noqa: BLE001 - only a hint
+            notes = {}
+        return [instance_json(i, snap, notes) for i in sorted(snap.instances.values(), key=lambda i: i.id)]
 
     @r.get("/api/v1/instances/{iid}")
     @handle
@@ -207,7 +217,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         out["choices"] = {
             "gpu": tpl.gpu_choices(gpus, t),
             "offload": tpl.OFFLOAD_CHOICES if tpl.slots(t) else {},
-            "server": ({tpl.NEW_SERVER: "Install an LLM server with it"} | {k: v["name"] for k, v in m.servers.items()})
+            "server": ({tpl.NEW_SERVER: "Install a Llama Swap server with it"} | {k: v["name"] for k, v in m.servers.items()})
             if t.connects else {},
             "comfyui": {i.id: i.name for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"}
             if t.connects == "openwebui" else {},

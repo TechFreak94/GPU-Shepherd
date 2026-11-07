@@ -15,7 +15,7 @@ LABEL org.opencontainers.image.title="GPU Shepherd" \
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY gpushepherd ./gpushepherd
 RUN pip install --no-cache-dir . && rm -rf /src
 COPY --from=buildinfo /build.json /usr/share/gpu-shepherd/build.json

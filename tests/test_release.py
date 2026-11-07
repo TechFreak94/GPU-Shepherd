@@ -50,6 +50,9 @@ def test_entries_from_title_or_changelog_section():
     assert release.entries("Title", body, 12) == ["Faster starts (#12)", "Logs show the image, and the tag (#12)",
                                                   "Fixed a crash (#12)"]
     assert release.entries("Direct push", None, None) == ["Direct push"]
+    promotion = "## Changelog\n- Llama Swap name (#60)\n- One-GPU support (#61)\n- A fix made on testing\n"
+    assert release.entries("Promote testing", promotion, 62) == ["Llama Swap name (#60)", "One-GPU support (#61)",
+                                                                 "A fix made on testing (#62)"]
 
 
 def test_insert_goes_above_the_newest_version():

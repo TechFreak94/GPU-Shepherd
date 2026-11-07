@@ -1,7 +1,7 @@
 """App updates: bring instances installed from the App Center up to what the app sets up today.
 
 When an app's template changes (Open WebUI and AnythingLLM using the model server's embeddings
-model, the LLM server's embeddings slot, a suggested model's settings), instances installed before
+model, the Llama Swap's embeddings slot, a suggested model's settings), instances installed before
 the change don't get it by themselves. This module compares each installed instance with what its
 app would set up now and lists the differences as updates the user can apply or skip.
 
@@ -21,7 +21,7 @@ from pathlib import PurePosixPath
 from . import instance_templates as tpl, model_library
 from .config import Catalog, CatalogModel, Instance
 
-EMBED_MODEL = "qwen3-embedding-0.6b"           # the embeddings model an LLM server without one is offered
+EMBED_MODEL = "qwen3-embedding-0.6b"           # the embeddings model a Llama Swap server without one is offered
 ANYTHINGLLM_FILE = "server.env"
 
 

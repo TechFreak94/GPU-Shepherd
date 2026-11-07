@@ -65,7 +65,8 @@ how the code fits together, and every module starts with a docstring that says w
 
 ### Before you open one
 
-1. Fork the repository and branch from `main`.
+1. Fork the repository, branch from `testing` and open the pull request against `testing` (see
+   [Branches](#branches)).
 2. Make one focused change. Unrelated fixes go in separate pull requests; they are reviewed and
    released separately.
 3. Run `pytest -q`, and try the change in demo mode (`gpu-shepherd --demo`). Real GPUs are not
@@ -100,7 +101,7 @@ It says you wrote the change, or have the right to submit it, under the project'
 contributions are licensed under the [Apache License 2.0](LICENSE), as section 5 of that license
 says. There is no CLA to sign. Use a name you are happy to have in the public history. GitHub's
 `ID+username@users.noreply.github.com` address (Settings > Emails > *Keep my email addresses
-private*) works as the email. Forgot? `git rebase --signoff main` and force-push your branch.
+private*) works as the email. Forgot? `git rebase --signoff testing` and force-push your branch.
 
 Commits made by the maintainers and by automation are exempt.
 
@@ -111,10 +112,25 @@ author: you must understand what you submit, have run it, and be able to answer 
 Don't submit generated changes you haven't tested, and say so in the description if a tool wrote
 most of it. Never paste secrets or private data into a tool.
 
+### Branches
+
+- **`testing`** is where development happens. Every pull request targets it, and merging into it
+  does not release anything. People who want the newest changes early can follow it (Settings >
+  Updates > branch, or `sudo ./update.sh --branch testing`); it may break.
+- **`main`** only gets releases. A maintainer promotes `testing` to `main` with a pull request
+  from `testing` to `main`, merged with a **merge commit** (not squashed, so the two branches keep
+  the same history). That merge is one release: its `## Changelog` lists the changes it brings,
+  each ending in its own pull request number, e.g. `- Faster starts (#61)`.
+- After each release the Release workflow merges `main` back into `testing`, so `testing` has the
+  new version number.
+- Urgent fixes may go straight to `main` in their own pull request (squash-merged); the same step
+  brings them into `testing`.
+
 ### Review and merge rules
 
-- Every change reaches `main` through a pull request. Nobody, maintainers included, pushes
-  directly to `main` (the release bot's *Release X.Y.Z* commit is the one exception).
+- Every change reaches `testing` and `main` through a pull request. Nobody, maintainers included,
+  pushes directly to either (the release bot's *Release X.Y.Z* commit, and its merge of `main`
+  into `testing`, are the exceptions).
 - The **Tests** check must pass, and a maintainer must approve. Pull requests from first-time
   contributors need a maintainer to start the checks.
 - Code owners ([CODEOWNERS](.github/CODEOWNERS)) review changes to anything that touches how the
@@ -128,17 +144,18 @@ most of it. Never paste secrets or private data into a tool.
 - Resolve review comments by pushing fixes or answering them. Don't force-push over a review in
   progress unless asked; the pull request is squash-merged, so commit history within it doesn't
   matter.
-- Pull requests are **squash-merged**. The maintainer checks the `## Changelog` text before merge,
+- Pull requests into `testing` are **squash-merged** (promotions to `main` are merged, see
+  [Branches](#branches)). The maintainer checks the `## Changelog` text before merge,
   because it is published word for word in the changelog and the GitHub release. Links, images
   and promotional text are removed.
-- Merging releases: every merged pull request becomes its own version, tag, GitHub release and
-  container image.
+- Merging into `main` releases: every pull request merged there (normally a promotion) becomes
+  its own version, tag, GitHub release and container image.
 - Stale pull requests with no reply for 30 days may be closed; reopen them any time.
 
 ### For maintainers
 
-- Related changes may be batched on one shared branch and merged as a single pull request, so a
-  batch's `## Changelog` lists each change. Open it only once the maintainers have agreed it's
+- Related changes may be batched on one shared branch and merged into `testing` as a single pull
+  request, so a batch's `## Changelog` lists each change. Open it only once the maintainers have agreed it's
   ready.
 - Review for: scope, tests, the three front ends staying in step (dashboard, API, command), docs,
   secrets or personal data in the diff, and new network calls or dependencies.
@@ -149,7 +166,7 @@ most of it. Never paste secrets or private data into a tool.
 ## Releasing
 
 Maintainers don't release by hand. The [Release workflow](.github/workflows/release.yml) does it
-when a pull request merges. See [docs/updates.md](docs/updates.md#versions-and-releases).
+when a pull request merges into `main` (normally a promotion from `testing`). See [docs/updates.md](docs/updates.md#versions-and-releases).
 
 ## License
 

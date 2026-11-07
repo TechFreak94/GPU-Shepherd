@@ -75,7 +75,8 @@ def entries(title: str, body: str | None, number: int | None) -> list[str]:
     if not items:
         items = [title.strip().rstrip(".")]
     ref = f" (#{number})" if number else ""
-    return [i if not ref or i.endswith(ref) else i + ref for i in items]
+    # a promotion from testing lists the pull requests it brings, each already ending in its own (#N)
+    return [i if not ref or re.search(r"\(#\d+\)$", i) else i + ref for i in items]
 
 
 def insert(changelog: str, version: str, date: str, items: list[str]) -> str:

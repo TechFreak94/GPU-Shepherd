@@ -87,7 +87,7 @@ The questions:
 | Models folder | A folder of `.gguf` model files to pick from in the dashboard (mounted read-only). With a preset, its models go to `<data folder>/models` unless you pick another folder. Leave empty if you have none and no preset. |
 | Port | Where the dashboard listens. Default `8090`. |
 | Settings (data) folder | Where GPU Shepherd keeps its settings, instances and app data. Default `/opt/gpu-shepherd`. Use a folder without spaces; it is mounted at the same path inside the container. |
-| Preset | On the first run, a ready-made set of instances. `starter` is an LLM server, ComfyUI and Open WebUI for any 8+ GB GPU. Nothing starts until you press Start. |
+| Preset | On the first run, a ready-made set of instances. `starter` is a Llama Swap server, ComfyUI and Open WebUI for any 8+ GB GPU. Nothing starts until you press Start. |
 | Download the preset's models | About 15 GB for `starter`, in the background; safe to interrupt and resume. |
 | Dashboard updates | Lets the dashboard check for updates daily and update itself on a button (a small systemd service). Recommended. |
 | Docker group | Adds you to the `docker` group so `docker` works without `sudo` (takes effect at your next login). |
@@ -147,7 +147,7 @@ forward its port to the internet; see [step 7](#7-reach-it-from-other-devices) f
 
 ## 6. Start your first apps
 
-With the **starter** preset, the dashboard shows three cards: the LLM server, ComfyUI and Open WebUI.
+With the **starter** preset, the dashboard shows three cards: the Llama Swap, ComfyUI and Open WebUI.
 
 1. If the models are still downloading, wait for them. Progress shows in the dashboard.
 2. Press **Start** on each card. The first start of an app downloads its Docker image, so it takes

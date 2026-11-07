@@ -1,4 +1,4 @@
-# Open WebUI: chat with the LLM server's models, and make images through ComfyUI when it runs.
+# Open WebUI: chat with the Llama Swap's models, and make images through ComfyUI when it runs.
 id: webui
 name: Open WebUI
 description: Open WebUI for chat and ComfyUI images
