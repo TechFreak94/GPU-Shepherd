@@ -355,7 +355,8 @@ Apache-2.0 - see [LICENSE](LICENSE). Bundles [htmx](https://htmx.org) (Zero-Clau
 
 GPU Shepherd is an independent project. It isn't affiliated with or endorsed by NVIDIA, Docker or
 the projects it runs; their names are trademarks of their owners and are used only to say what
-GPU Shepherd works with. The Apache license doesn't grant rights to the GPU Shepherd name.
+GPU Shepherd works with. Copyright 2026 TechFreak94 and contributors ([NOTICE](NOTICE)). "GPU Shepherd"
+is a trademark of TechFreak94, and the Apache license doesn't grant rights to the name.
 
 ## Acknowledgements
 
