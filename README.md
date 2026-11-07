@@ -181,6 +181,14 @@ installer's output, `nvidia-smi` and your distro; leave out passwords and tokens
 
 Less may run, but isn't supported: with under 32 GB of RAM, plan on models that fit in GPU memory.
 
+**Low on RAM (16 to 32 GB)?** Take the `starter` preset in the installer: it needs only 16 GB of RAM and
+a GPU with 8+ GB, because its chat model (Qwen3.5 9B) fits entirely in GPU memory. Then:
+
+- Pick models that fit in GPU memory (the suggested models say whether each one fits) and don't turn on
+  RAM offload; offloading part of a model needs room for it plus the OS and your other containers.
+- Run one app at a time. Stopped apps use no RAM, and GPU Shepherd swaps them for you when you press Start.
+- On WSL2, check how much RAM Linux got (`free -h`); raise `memory=` in `%UserProfile%\.wslconfig`.
+
 ### Linux: guided install
 
 On Ubuntu, Debian, Fedora, RHEL-family (Rocky, Alma) or Arch with an NVIDIA GPU, and WSL2
