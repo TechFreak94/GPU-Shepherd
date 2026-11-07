@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.29 - 2026-11-07
+
+- README: quick install, common problems and low-RAM guidance (#61)
+
 ## 0.13.28 - 2026-11-07
 
 - The default chat server app is now called Llama Swap. (#59)
