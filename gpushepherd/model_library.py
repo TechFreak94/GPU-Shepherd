@@ -108,7 +108,6 @@ def _split(repo: str, stem: str, gbs: tuple[float, ...]) -> tuple[File, tuple[Fi
 _MINIMAX = _split("unsloth/MiniMax-M2.7-GGUF", "UD-IQ3_XXS/MiniMax-M2.7-UD-IQ3_XXS", (0.01, 49.98, 30.12))
 _DEVSTRAL_2 = _split("unsloth/Devstral-2-123B-Instruct-2512-GGUF", "IQ4_XS/Devstral-2-123B-Instruct-2512-IQ4_XS",
                      (49.98, 17.15))
-_ORNITH = _split("unsloth/Ornith-1.5-122B-GGUF", "UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL", (0.01, 49.97, 29.73))
 _NEMOTRON_SUPER = _split("unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF",
                          "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL", (0.01, 49.85, 37.05))
 
@@ -201,9 +200,9 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         key="ornith-1.5-122b", name="Ornith 1.5 122B",
         blurb="A reasoning model built on Qwen3.5 122B for terminal coding agents (OpenCode, Hermes): long, hard "
               "tasks with tools, and it reads images. Mixture of experts, so it stays quick with its experts in about "
-              "70 GB of RAM beside two 8 GB GPUs (128 GB machines).",
+              "40 GB of RAM beside two 8 GB GPUs (64 GB machines; a 3-bit build).",
         uses=("coder", "chat"), license="MIT", page=f"{HF}/unsloth/Ornith-1.5-122B-GGUF", moe=True, layers=48,
-        model=_ORNITH[0], shards=_ORNITH[1],
+        model=_hf("unsloth/Ornith-1.5-122B-GGUF", "Ornith-1.5-122B-UD-IQ3_XXS.gguf", 49.52),
         mmproj=_hf("unsloth/Ornith-1.5-122B-GGUF", "mmproj-F16.gguf", 0.91),
         sampling="--temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0", ctx_size=65536),
     Suggestion(
