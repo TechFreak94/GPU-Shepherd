@@ -81,10 +81,13 @@ The same list is in the dashboard: click the version number at the top, then **C
 | Gemma 4 E4B | Apache-2.0 | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) |
 | Gemma 4 12B | Apache-2.0 | [unsloth/gemma-4-12b-it-GGUF](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF) |
 | Qwen3 Coder 30B-A3B | Apache-2.0 | [unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) |
+| DeepSeek R1 0528 Qwen3 8B | MIT | [unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF](https://huggingface.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF) |
+| Devstral Small 2 24B | Apache-2.0 | [unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF) |
 | Qwen3.8 27B | Apache-2.0 | [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) |
 | Muse Glimmer 30B | Apache-2.0 | [unsloth/Muse-Glimmer-30B-GGUF](https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF) |
 | Qwen3.6 35B-A3B | Apache-2.0 | [unsloth/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) |
 | Qwen3 Coder Next 80B-A3B | Apache-2.0 | [unsloth/Qwen3-Coder-Next-GGUF](https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF) |
+| Qwen3.5 122B-A10B | Apache-2.0 | [unsloth/Qwen3.5-122B-A10B-GGUF](https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF) |
 | Qwen3 Embedding 0.6B | Apache-2.0 | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) |
 
 Spotted a missing credit or a wrong license? Please open an issue.

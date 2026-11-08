@@ -33,6 +33,8 @@ QWEN_INSTRUCT = "--temp 0.7 --top-p 0.8 --top-k 20 --min-p 0.0 --presence-penalt
 QWEN_CODER = "--temp 0.7 --top-p 0.8 --top-k 20 --repeat-penalty 1.05"
 QWEN_CODER_NEXT = "--temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01"
 GEMMA = "--temp 1.0 --top-p 0.95 --top-k 64"
+DEVSTRAL = "--temp 0.15"
+DEEPSEEK_R1 = "--temp 0.6 --top-p 0.95"
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,21 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         model=_hf("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf", 17.67),
         sampling=QWEN_CODER, ctx_size=65536),
     Suggestion(
+        key="deepseek-r1-0528-qwen3-8b", name="DeepSeek R1 0528 Qwen3 8B",
+        blurb="DeepSeek R1's reasoning in a small Qwen3 model: thinks before it answers, good for tricky code "
+              "and maths, slower for agents. Fits one 8 GB GPU. (DeepSeek's own V4 models are far too big for one machine.)",
+        uses=("coder", "chat"), license="MIT", page=f"{HF}/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF",
+        model=_hf("unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF", "DeepSeek-R1-0528-Qwen3-8B-UD-Q4_K_XL.gguf", 5.12),
+        sampling=DEEPSEEK_R1),
+    Suggestion(
+        key="devstral-small-2-24b", name="Devstral Small 2 24B",
+        blurb="Mistral's coding agent model, made for tools like OpenCode: edits across a codebase, runs commands, "
+              "reads screenshots; 256K context. Needs two 8 GB GPUs or one 16 GB GPU.",
+        uses=("coder",), license="Apache-2.0", page=f"{HF}/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF", layers=40,
+        model=_hf("unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF", "Devstral-Small-2-24B-Instruct-2512-IQ4_XS.gguf", 12.78),
+        mmproj=_hf("unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF", "mmproj-F16.gguf", 0.88),
+        sampling=DEVSTRAL, ctx_size=65536),
+    Suggestion(
         key="qwen3.8-27b", name="Qwen3.8 27B",
         blurb="Newest dense Qwen (August 2026): the best answers here for chat and coding, with images. "
               "Needs two 8 GB GPUs or one 16 GB GPU; slower than the A3B models.",
@@ -150,6 +167,14 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         uses=("coder",), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3-Coder-Next-GGUF", moe=True, layers=48,
         model=_hf("unsloth/Qwen3-Coder-Next-GGUF", "Qwen3-Coder-Next-UD-Q4_K_XL.gguf", 49.61),
         sampling=QWEN_CODER_NEXT, ctx_size=65536),
+    Suggestion(
+        key="qwen3.5-122b-a10b", name="Qwen3.5 122B-A10B",
+        blurb="Qwen's big mixture of experts for chat and long coding sessions, with images. Its experts live in "
+              "system RAM: needs about 35 GB of free RAM beside two 8 GB GPUs (64 GB machines).",
+        uses=("chat", "coder"), license="Apache-2.0", page=f"{HF}/unsloth/Qwen3.5-122B-A10B-GGUF", moe=True, layers=48,
+        model=_hf("unsloth/Qwen3.5-122B-A10B-GGUF", "Qwen3.5-122B-A10B-UD-IQ3_XXS.gguf", 44.75),
+        mmproj=_hf("unsloth/Qwen3.5-122B-A10B-GGUF", "mmproj-F16.gguf", 0.91),
+        sampling=QWEN_THINKING, ctx_size=65536),
     Suggestion(
         key="qwen3-embedding-0.6b", name="Qwen3 Embedding 0.6B",
         blurb="Turns documents into vectors for chat-with-your-files (RAG) in Open WebUI, AnythingLLM and "
