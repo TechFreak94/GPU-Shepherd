@@ -865,7 +865,9 @@ class Shepherd:
                                 "default_model": alias or (model.id if model else ""),
                                 "ctx": model.ctx_size if model else 0,
                                 "embed": ("embed" if "embed" in embed.aliases else embed.id) if embed else "",
-                                "embed_query_prefix": tpl.query_prefix(embed.file) if embed else ""}
+                                "embed_query_prefix": tpl.query_prefix(embed.file) if embed else "",
+                                # the name each chat model answers to (its first alias), and its context
+                                "models": {(x.aliases or [x.id])[0]: x.ctx_size for x in chat}}
         for inst in instances.values():           # vLLM servers: one model each, under the name chat
             info = tpl.vllm_server(inst)
             if info:
@@ -927,7 +929,7 @@ class Shepherd:
         slot_fields = [f"{x.key}_file" for x in tpl.slots(t)]
         if slot_fields and answers.get("models_dir"):
             m.model_sizes = {x["container_path"]: x["size_gb"] for x in self.model_files(str(answers["models_dir"]))[0]}
-        bundle = tpl.bundled_server(answers, m, self.appdata_root()) if t.connects else None
+        bundle = tpl.bundled_server(answers, m, self.appdata_root(), t.bundled_slot) if t.connects else None
         answers = answers | {"server": bundle[0].id} if bundle else answers
         inst, models = tpl.build(t, answers, m)
         seeds = tpl.seed_files(t, answers, m)

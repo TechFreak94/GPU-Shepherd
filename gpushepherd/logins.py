@@ -32,7 +32,7 @@ MIN_PASSWORD = 8
 SINGLE_USER = "(password only)"        # AnythingLLM without multi-user mode: no user name
 ANY_USER = "(any user name)"           # the Llama Swap: only the password, its API key, is checked
 # apps whose login is in the instance's environment (Template.login), read when they start
-ENV_LOGINS = ("hermes", "sillytavern", "open-notebook")
+ENV_LOGINS = ("hermes", "sillytavern", "open-notebook", "opencode")
 
 
 @dataclass

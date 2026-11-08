@@ -61,6 +61,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [vLLM](https://docs.vllm.ai) | Apache-2.0 | `vllm/vllm-openai:latest` |
 | [Open WebUI](https://docs.openwebui.com) | Open WebUI License (BSD-3-Clause plus branding terms) | `ghcr.io/open-webui/open-webui:main` |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/docker) | MIT | `nousresearch/hermes-agent:latest` |
+| [OpenCode](https://opencode.ai/docs) | MIT | `ghcr.io/anomalyco/opencode:latest` |
 | [LibreChat](https://www.librechat.ai/docs) | MIT | `librechat/librechat:latest` |
 | [AnythingLLM](https://docs.anythingllm.com/installation-docker/overview) | MIT | `mintplexlabs/anythingllm:latest` |
 | [Langflow](https://docs.langflow.org) | MIT | `langflowai/langflow:latest` |
