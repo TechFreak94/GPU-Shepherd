@@ -21,7 +21,7 @@
       {% set here = request.url.path %}
       <a href="/"{% if here == "/" %} aria-current="page"{% endif %}>Dashboard</a>
       <a href="/apps"{% if here.startswith("/apps") or here.startswith("/instances/new") %} aria-current="page"{% endif %}>App Center</a>
-      <a href="/knowledge"{% if here == "/knowledge" %} aria-current="page"{% endif %}>Knowledge <span class="tag warn" title="Knowledge is experimental: it may change or not work with every document">Experimental</span></a>
+      <a href="/knowledge"{% if here == "/knowledge" %} aria-current="page"{% endif %}><span class="navlabel"><span class="tag warn" title="Knowledge is experimental: it may change or not work with every document">Experimental</span>Knowledge</span></a>
       <a href="/storage"{% if here == "/storage" %} aria-current="page"{% endif %}>Storage</a>
       <a href="/settings"{% if here == "/settings" %} aria-current="page"{% endif %}>Settings</a>
       {% endif %}
@@ -31,8 +31,8 @@
         <svg class="t-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>
         <svg class="t-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></svg>
       </button>
-      {% if user %}<button class="link" hx-get="/ui/power" hx-target="#modal-body" title="Restart or shut down">Power</button>{% endif %}
       {% if user %}<button class="link" hx-post="/logout" title="Log out of GPU Shepherd">Log out</button>{% endif %}
+      {% if user %}<button class="link power" type="button" hx-get="/ui/power" hx-target="#modal-body" title="Power: restart or shut down" aria-label="Power: restart or shut down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8M6.6 6.6a8 8 0 1 0 10.8 0"/></svg></button>{% endif %}
     </nav>
   </div>
 </header>

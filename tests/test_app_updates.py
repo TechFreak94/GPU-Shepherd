@@ -86,3 +86,14 @@ def test_open_webui_book_settings_and_query_prefix():
     webui = Instance(id="webui", name="Open WebUI", image="ghcr.io/open-webui/open-webui:main", app="open-webui",
                      env={k: v for k, v in env.items() if k not in tpl.OPENWEBUI_DOCS})
     assert au.for_instance(webui, m) == []
+
+
+def test_apply_all_follows_on_to_the_updates_it_brings(stack):  # noqa: F811
+    app, client, _, _ = stack
+    from fastapi.testclient import TestClient
+    b = TestClient(app)
+    b.post("/login", data={"user": "admin", "password": "correct-horse"})
+    r = b.post("/ui/app-updates/apply-all", headers={"HX-Request": "true"})
+    assert r.status_code == 200 and "Applied" in r.headers["HX-Trigger"]
+    assert client.get("/api/v1/app-updates").json() == []         # the server's model, then the chat app's settings
+    assert "up to date" in client.post("/api/v1/app-updates/apply-all").json()["message"]
