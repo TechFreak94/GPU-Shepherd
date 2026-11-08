@@ -88,6 +88,9 @@ The same list is in the dashboard: click the version number at the top, then **C
 | Qwen3.6 35B-A3B | Apache-2.0 | [unsloth/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) |
 | Qwen3 Coder Next 80B-A3B | Apache-2.0 | [unsloth/Qwen3-Coder-Next-GGUF](https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF) |
 | Qwen3.5 122B-A10B | Apache-2.0 | [unsloth/Qwen3.5-122B-A10B-GGUF](https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF) |
+| gpt-oss 120B | Apache-2.0 | [unsloth/gpt-oss-120b-GGUF](https://huggingface.co/unsloth/gpt-oss-120b-GGUF) |
+| MiniMax M2.7 229B-A10B | Modified MIT | [unsloth/MiniMax-M2.7-GGUF](https://huggingface.co/unsloth/MiniMax-M2.7-GGUF) |
+| Nemotron 3.5 Super VL 120B-A12B | OpenMDW-1.1 | [unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF](https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF) |
 | Qwen3 Embedding 0.6B | Apache-2.0 | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) |
 
 Spotted a missing credit or a wrong license? Please open an issue.
