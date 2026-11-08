@@ -206,12 +206,19 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         mmproj=_hf("unsloth/Ornith-1.5-122B-GGUF", "mmproj-F16.gguf", 0.91),
         sampling="--temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0", ctx_size=65536),
     Suggestion(
-        key="devstral-2-123b", name="Devstral 2 123B",
+        key="devstral-2-123b", name="Devstral 2 123B (4-bit)",
         blurb="Mistral's big coding agent model: careful multi-file changes, 256K context. It is dense, so on 8 GB "
               "GPUs most of it runs from about 55 GB of RAM and answers slowly, a few words a second: best for "
               "jobs you leave running. Free for companies under Mistral's revenue limit (Modified MIT).",
         uses=("coder",), license="Modified MIT", page=f"{HF}/unsloth/Devstral-2-123B-Instruct-2512-GGUF", layers=88,
         slow_ok=True, model=_DEVSTRAL_2[0], shards=_DEVSTRAL_2[1], sampling=DEVSTRAL, ctx_size=65536),
+    Suggestion(
+        key="devstral-2-123b-iq3", name="Devstral 2 123B (3-bit)",
+        blurb="Mistral's big coding agent model: careful multi-file changes, 256K context. It is dense, so on 8 GB "
+              "GPUs most of it runs from about 38 GB of RAM: a little quicker and lighter than the 4-bit build, a little less accurate, still a few words a second: best for "
+              "jobs you leave running. Free for companies under Mistral's revenue limit (Modified MIT).",
+        uses=("coder",), license="Modified MIT", page=f"{HF}/unsloth/Devstral-2-123B-Instruct-2512-GGUF", layers=88,
+        slow_ok=True, model=_hf("unsloth/Devstral-2-123B-Instruct-2512-GGUF", "Devstral-2-123B-Instruct-2512-UD-IQ3_XXS.gguf", 48.96), sampling=DEVSTRAL, ctx_size=65536),
     Suggestion(
         key="gpt-oss-120b", name="gpt-oss 120B",
         blurb="OpenAI's open-weight reasoning model: strong at coding, tools and long agent sessions. Its experts "

@@ -259,6 +259,6 @@ def test_slow_dense_models_are_offered_last():
     assert not ml.fit(big, [8.0, 8.0], 64).ok                      # the RAM it needs isn't there
     assert not ml.fit(ml.get("qwen3.8-27b"), [8.0], 128).ok        # other dense models still don't spill
     order = [s.key for s, fit in ml.for_slot("coder", [8.0, 8.0], 128) if fit.ok]
-    assert order[-1] == "devstral-2-123b"
+    assert set(order[-2:]) == {"devstral-2-123b", "devstral-2-123b-iq3"}
     rules = ml.offload(big, [8.0, 8.0])
     assert [r.gpu_layers for r in rules] == [8, 17]
