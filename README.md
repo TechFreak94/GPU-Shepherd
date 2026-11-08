@@ -134,8 +134,7 @@ shows a plan, and changes nothing until you confirm.
 **Linux** (Ubuntu, Debian, Fedora, RHEL-family or Arch, with an NVIDIA GPU):
 
 ```bash
-git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
-sudo ./install.sh
+git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd && sudo ./install.sh
 ```
 
 Answer the questions (the defaults are fine), take the Starter preset, then open the address it
@@ -195,8 +194,7 @@ On Ubuntu, Debian, Fedora, RHEL-family (Rocky, Alma) or Arch with an NVIDIA GPU,
 (experimental, see [WSL2](docs/linux.md#wsl2)); [supported versions](docs/linux.md):
 
 ```bash
-git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd
-sudo ./install.sh
+git clone https://github.com/TechFreak94/GPU-Shepherd.git gpu-shepherd && cd gpu-shepherd && sudo ./install.sh
 ```
 
 The installer shows what the machine already has (driver, GPUs, Docker, NVIDIA Container Toolkit,

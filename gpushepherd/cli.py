@@ -684,6 +684,26 @@ def cmd_password(args, c: Client) -> int:
     return 0
 
 
+def cmd_power(args, c: Client) -> int:
+    a = args.action or "status"
+    if a == "status":
+        r = c.get("/api/v1/power")
+
+        def show(r):
+            print("Running: " + (", ".join(r["running"]) or "nothing"))
+            print("Restarting or shutting down the server from here: " + ("yes" if r["host"] else "no. " + r["hint"]))
+        out(args, r, show)
+        return 0
+    question = {"restart": "Restart GPU Shepherd? The apps keep running.",
+                "reboot": "Restart the whole server? Every app stops until it is back.",
+                "shutdown": "Shut down the server? Every app stops, and someone has to turn it back on."}[a]
+    if not (args.yes or ask(question)):
+        print("Nothing changed. Add -y to go ahead without asking.")
+        return 1
+    out(args, c.post(f"/api/v1/power/{a}"))
+    return 0
+
+
 def cmd_update(args, c: Client) -> int:
     a = args.action or "status"
     if a == "status":
@@ -876,7 +896,7 @@ COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": c
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
             "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash,
-            "password": cmd_password, "update": cmd_update, "changelog": cmd_changelog, "token": cmd_token}
+            "password": cmd_password, "update": cmd_update, "power": cmd_power, "changelog": cmd_changelog, "token": cmd_token}
 
 
 def add_commands(sub) -> None:
@@ -1017,6 +1037,9 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "branch", "set-token", "clear-token"))
     p.add_argument("user", nargs="?")
     p.add_argument("-y", "--yes", action="store_true", help="install without asking")
+    p = sub.add_parser("power", help="status; restart (GPU Shepherd only), reboot or shutdown (the server)")
+    p.add_argument("action", nargs="?", choices=("status", "restart", "reboot", "shutdown"))
+    p.add_argument("-y", "--yes", action="store_true", help="don't ask first")
     p = sub.add_parser("changelog", help="what changed in each version")
     p.add_argument("--limit", type=int, default=5, help="how many versions (default 5)")
     p = sub.add_parser("token", help="print the API token (on the server; reads the data folder)")

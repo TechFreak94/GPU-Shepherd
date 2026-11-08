@@ -1,0 +1,3 @@
+{% if p.change %}<div class="notice busy"><div>A change is running. Wait for it to finish (or cancel it) first.</div></div>
+{% elif p.knowledge %}<div class="notice busy"><div>Knowledge work is running. Wait for it to finish (or stop it) first.</div></div>
+{% elif p.busy %}<div class="notice busy"><div>An update is running. Wait for it to finish first.</div></div>{% endif %}

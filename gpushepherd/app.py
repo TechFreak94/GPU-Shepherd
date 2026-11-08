@@ -26,7 +26,7 @@ from .connectors import llamaswap
 from .engine import Engine
 from .jobs import JobRunner
 from .scheduler import gpu_text
-from .service import Problem, Shepherd, gb, message, parse_auto_rules
+from .service import POWER_ACTIONS, Problem, Shepherd, gb, message, parse_auto_rules
 
 log = logging.getLogger("gpushepherd")
 HERE = Path(__file__).parent
@@ -992,6 +992,32 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         resp = update_page(request)          # the dialog, now showing the progress
         resp.headers["HX-Trigger"] = json.dumps({"refresh": True})
         return resp
+
+    # ------------------------------------------------------------------ power (restart GPU Shepherd, restart / shut down the server)
+    boot_id = secrets.token_hex(4)          # changes when this process restarts: the waiting dialog reloads the page then
+
+    def power_page(request: Request, confirm: str = "", done: str = "", message: str = "") -> Response:
+        return page(request, "partials/power.html", p=svc.power_status(), confirm=confirm, done=done, message=message,
+                    boot=boot_id)
+
+    @app.get("/ui/power", response_class=HTMLResponse)
+    def power_dialog(request: Request, confirm: str = ""):
+        return power_page(request, confirm if confirm in POWER_ACTIONS else "")
+
+    @app.get("/ui/power/back")
+    def power_back(boot: str = ""):
+        # polled by the waiting dialog: once this is a different process, reload the page
+        return Response(status_code=204, headers={"HX-Refresh": "true"} if boot and boot != boot_id else {})
+
+    @app.post("/ui/power/{action}")
+    def power_request(request: Request, action: str):
+        if action not in POWER_ACTIONS:
+            return PlainTextResponse("unknown action", status_code=400)
+        try:
+            msg = svc.power(action)
+        except Problem as err:
+            return problem(err)
+        return toast(power_page(request, done=action, message=msg), msg)
 
     # ------------------------------------------------------------------ tensor unlock (gpu-unlock.sh on the host)
     def unlock_card_page(request: Request) -> Response:

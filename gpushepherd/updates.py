@@ -5,7 +5,8 @@ update.sh on the host. The two sides talk through files in <data dir>/update/, w
 path inside and outside the container:
 
   status.json  written by update.sh after every check or update (see write_status there)
-  request      written here: "check" or "update"; a systemd path unit installed by
+  request      written here: "check" or "update" (or "reboot" / "poweroff" for the top menu's
+               Power dialog); a systemd path unit installed by
                `update.sh --enable-dashboard-updates` runs update.sh when it appears
   log.txt      the output of the last run started from the dashboard
   changelog.md CHANGELOG.md of the newest version on the remote, saved at every check
@@ -29,6 +30,7 @@ from pathlib import Path
 from . import __version__, buildinfo, changelog
 
 ACTIONS = ("check", "update")             # what the dashboard's buttons can ask for
+POWER = ("reboot", "poweroff")            # restart or shut down the server (the top menu's Power dialog)
 BRANCH_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 GITHUB_USER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 GITHUB_TOKEN = re.compile(r"^[A-Za-z0-9_]{20,255}$")     # ghp_..., github_pat_..., same check as update.sh
@@ -209,7 +211,7 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
 def request(root: Path, action: str, arg: str = "") -> None:
     """Ask the host to check or update; update.sh deletes the file when it starts. `arg` is the
     second line (the branch for "branch")."""
-    if action not in ACTIONS + ("credentials", "branch"):
+    if action not in ACTIONS + POWER + ("credentials", "branch"):
         raise ValueError(f"unknown update action {action!r}")
     d = folder(root)
     d.mkdir(parents=True, exist_ok=True)

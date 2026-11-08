@@ -96,7 +96,8 @@
   {% if st.hidden %}
   <p class="small muted" style="margin-bottom:0">GPU Shepherd can't see {% for p in st.hidden %}<span class="mono">{{ p }}</span>{{ ", " if not loop.last }}{% endfor %},
     so it can't count or clean up what is in {{ "it" if st.hidden|length == 1 else "them" }}. Mount {{ "it" if st.hidden|length == 1 else "them" }} into the
-    GPU Shepherd container at the same path to include {{ "it" if st.hidden|length == 1 else "them" }} here.</p>
+    GPU Shepherd container at the same path to include {{ "it" if st.hidden|length == 1 else "them" }} here
+    (updating GPU Shepherd adds <span class="mono">/mnt</span>, where new disks and moved folders usually are).</p>
   {% endif %}
 </div>
 

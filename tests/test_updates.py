@@ -1,5 +1,6 @@
 """Build info, the update status update.sh writes, and the dashboard's update routes."""
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 import gpushepherd.gpu as gpu_mod
@@ -620,3 +622,18 @@ def test_pull_requests_fall_back_when_github_fails(monkeypatch):
     updates._prs["o/r"] = (0.0, {})
     updates._refresh_prs("o/r")
     assert updates.pull_requests("o/r")["b"]["number"] == 1
+
+
+def test_update_sh_adds_mnt_to_an_old_compose_file(tmp_path):
+    """Older compose files mount only the data folder: update.sh adds /mnt once, so folders moved to
+    another disk stay visible, and leaves the rest of the file alone."""
+    old = (ROOT / "compose.example.yaml").read_text().replace("/opt/gpu-shepherd", "/srv/gs")
+    old = "".join(line for line in old.splitlines(True) if "/mnt:/mnt" not in line)
+    (tmp_path / "compose.yaml").write_text(old)
+    body = re.search(r"^mount_mnt\(\) \{.*?^\}$", (ROOT / "update.sh").read_text(), re.S | re.M).group(0)
+    script = f'say() {{ echo "$*"; }}; warn() {{ echo "WARN $*"; }}\n{body}\nHERE={tmp_path} DATA_DIR=/srv/gs\nmount_mnt; mount_mnt\n'
+    p = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert p.returncode == 0 and "WARN" not in p.stdout and p.stdout.count("Added /mnt") == 1, p.stdout + p.stderr
+    vols = yaml.safe_load((tmp_path / "compose.yaml").read_text())["services"]["gpu-shepherd"]["volumes"]
+    assert vols[1:] == ["/srv/gs:/srv/gs", "/mnt:/mnt:rslave"]
+    assert (tmp_path / "compose.yaml.before-mnt").read_text() == old
