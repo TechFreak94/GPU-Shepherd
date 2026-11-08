@@ -18,6 +18,7 @@ import shutil
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -1059,6 +1060,26 @@ class Shepherd:
             msg += " Restart it to use them."
         return msg + (" " + " ".join(u.manual) if u.manual else "")
 
+    def apply_all_app_updates(self) -> str:
+        """Apply every app update. An embeddings model added to a model server brings the chat
+        apps' updates that use it, so this looks again until nothing new turns up."""
+        done: set[tuple[str, str]] = set()
+        names, restart = self.names(), set()
+        for _ in range(5):
+            todo = [u for u in self.app_updates() if (u.iid, u.key) not in done]
+            if not todo:
+                break
+            for u in todo:
+                done.add((u.iid, u.key))
+                msg = self.apply_app_update(u.iid, u.key)
+                if "Restart" in msg:
+                    restart.add(names.get(u.iid, u.iid))
+        if not done:
+            return "Every installed app is up to date with what its app sets up."
+        apps = sorted({names.get(i, i) for i, _ in done})
+        msg = f"Applied {len(done)} update{'s' if len(done) != 1 else ''} to {', '.join(apps)}."
+        return msg + (f" Restart {', '.join(sorted(restart))} to use them." if restart else "")
+
     @checked
     def skip_app_update(self, iid: str, key: str) -> str:
         """Don't offer this update again for this instance."""
@@ -1132,49 +1153,111 @@ class Shepherd:
     def update_image(self, iid: str) -> tuple[str, Job]:
         """Download an app's new version and restart it on it (only it: a restart that would move
         other instances is left to the user)."""
-        inst = self.instance(iid)
-        st = self.image_status().get(iid)
-        if not st or st.state not in ("available", "restart"):
-            raise Problem(f"{inst.name} already runs the newest version GPU Shepherd knows of. "
-                          "Check for updates first if a release just came out.", "info", 409)
+        return self.update_images([iid])
+
+    def image_updatable(self) -> list[str]:
+        """Instances with a new version to download, or downloaded and waiting for a restart."""
+        return [iid for iid, st in sorted(self.image_status().items()) if st.state in ("available", "restart")]
+
+    def update_images(self, iids: list[str] | None = None) -> tuple[str, Job]:
+        """Update several apps in one change (all that have a new version when `iids` is None).
+        The downloads run side by side, since they don't touch the GPUs; the restarts then go one
+        at a time, each waiting for its own running work, so no two of them swap GPUs at once."""
+        status = self.image_status()
+        if iids is None:
+            iids = self.image_updatable()
+            if not iids:
+                raise Problem("Every app already runs the newest version GPU Shepherd knows of. "
+                              "Check for updates first if a release just came out.", "info", 409)
+        todo = {}
+        for iid in dict.fromkeys(iids):
+            inst = self.instance(iid)
+            st = status.get(iid)
+            if not st or st.state not in ("available", "restart"):
+                raise Problem(f"{inst.name} already runs the newest version GPU Shepherd knows of. "
+                              "Check for updates first if a release just came out.", "info", 409)
+            todo[iid] = st.state == "available"
+        names = self.names()
+        title = (f"Updating {names[iids[0]]}" if len(todo) == 1
+                 else f"Updating {len(todo)} apps")
         try:
-            job = self.jobs.submit(f"Updating {inst.name}",
-                                   lambda job: self._update_image(iid, st.state == "available", job))
+            job = self.jobs.submit(title, lambda job: self._update_images(todo, job))
         except Busy as err:
             raise Problem(str(err), "warn", 409) from err
-        return f"Updating {inst.name}…", job
+        return f"{title}…", job
 
-    def _update_image(self, iid: str, pull: bool, job: Job) -> None:
-        inst = self.store.instance(iid)
-        state = self.backend.states().get(iid)
-        old = (state.image_id if state else "") or self.backend.image_info([inst.image]).get(inst.image, ("", []))[0]
-        new = old
-        if pull:
-            job(f"Downloading the new version of {inst.image}")
-            self.backend.pull(inst.image, job)
-            new, local = self.backend.image_info([inst.image]).get(inst.image, ("", []))
-            self.image_log.downloaded(inst.image, new, image_updates.digests(local))
-        if not (state and state.running):
-            job(f"{inst.name} is stopped: it runs the new version from its next start.")
-            self.image_log.updated(iid, old)
-            return
-        p = self.engine.plan("restart", iid)
-        if p.error or p.side_effects:
-            job(f"Not restarted: {p.error or 'that would also stop or move other instances'}. "
-                f"Restart {inst.name} when it suits you to use the new version.")
-            return
-        self.engine.execute(p, job, job)
-        self.image_log.updated(iid, old)
-        if old and new and old != new:        # the old version, unless something else still uses it
+    def _update_images(self, todo: dict[str, bool], job: Job) -> None:
+        """todo: instance -> whether its image needs downloading first."""
+        instances = self.store.instances()[0]
+        states = self.backend.states()
+        old = {}
+        for iid in todo:
+            st = states.get(iid)
+            image = instances[iid].image
+            old[iid] = (st.image_id if st else "") or self.backend.image_info([image]).get(image, ("", []))[0]
+        failed: dict[str, str] = {}
+        images = sorted({instances[iid].image for iid, pull in todo.items() if pull})
+
+        def pull(image: str) -> None:
+            job(f"Downloading the new version of {image}")
             try:
-                self.backend.remove_image(old)
-                job("Removed the old version")
-            except BackendError:
-                pass
+                self.backend.pull(image, job)
+                new, local = self.backend.image_info([image]).get(image, ("", []))
+                self.image_log.downloaded(image, new, image_updates.digests(local))
+                job(f"Downloaded {image}")
+            except BackendError as err:
+                job(f"Could not download {image}: {err}")
+                for iid, p in todo.items():
+                    if p and instances[iid].image == image:
+                        failed[iid] = f"could not download {image}"
+
+        if len(images) > 1:
+            with ThreadPoolExecutor(max_workers=min(3, len(images)), thread_name_prefix="pull") as pool:
+                list(pool.map(pull, images))
+        elif images:
+            pull(images[0])
+        names = self.names()
+        for iid in todo:
+            if iid in failed:
+                continue
+            inst = instances[iid]
+            if len(todo) > 1:
+                job(f"— {inst.name}")
+            state = self.backend.states().get(iid)
+            if not (state and state.running):
+                job(f"{inst.name} is stopped: it runs the new version from its next start.")
+                self.image_log.updated(iid, old[iid])
+                continue
+            p = self.engine.plan("restart", iid)
+            if p.error or p.side_effects:
+                job(f"Not restarted: {p.error or 'that would also stop or move other instances'}. "
+                    f"Restart {inst.name} when it suits you to use the new version.")
+                continue
+            try:
+                self.engine.execute(p, job, job)
+            except Cancelled:
+                raise
+            except Exception as err:  # noqa: BLE001 - the other apps still get their update
+                if len(todo) == 1:
+                    raise
+                job(f"Could not restart {inst.name}: {err}")
+                failed[iid] = f"could not restart: {err}"
+                continue
+            self.image_log.updated(iid, old[iid])
+            new = self.backend.states().get(iid)
+            new_id = new.image_id if new else ""
+            if old[iid] and new_id and old[iid] != new_id:   # the old version, unless something else still uses it
+                try:
+                    self.backend.remove_image(old[iid])
+                    job("Removed the old version")
+                except BackendError:
+                    pass
+        if failed:
+            raise RuntimeError("; ".join(f"{names.get(i, i)} {why}" for i, why in failed.items()))
 
     def auto_update(self) -> None:
-        """Check when it is time, then update one app that updates by itself (the next look takes
-        the next one: changes run one at a time)."""
+        """Check when it is time, then update every app that updates by itself in one change
+        (downloads side by side, restarts one at a time)."""
         hours = self.store.settings().image_check_hours
         if hours and time.time() - self.image_checked() >= hours * 3600:
             log.info("checking for new app versions: %s", self.check_images())
@@ -1182,6 +1265,7 @@ class Shepherd:
             return
         instances = self.store.instances()[0]
         data = self.image_log.read()["images"]
+        picked = []
         for iid, st in self.image_status().items():
             inst = instances.get(iid)
             if not (inst and inst.auto_update and st.state in ("available", "restart")):
@@ -1195,11 +1279,12 @@ class Shepherd:
                 if p.error or p.side_effects:
                     continue
             self._auto_tried.add(tried)
+            picked.append(iid)
+        if picked:
             try:
-                self.update_image(iid)
+                self.update_images(picked)
             except Problem as err:
-                log.info("automatic update of %s skipped: %s", iid, err.msg)
-            return
+                log.info("automatic update of %s skipped: %s", ", ".join(picked), err.msg)
 
     def watch_images(self, interval: float = 300.0, first: float = 10.0) -> None:
         def loop():

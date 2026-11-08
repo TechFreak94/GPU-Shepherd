@@ -395,11 +395,7 @@ def cmd_app_updates(args, c: Client) -> int:
         out(args, c.get("/api/v1/app-updates"), show)
         return 0
     if args.action == "apply" and args.all:
-        done: set[tuple[str, str]] = set()
-        while todo := [u for u in c.get("/api/v1/app-updates") if (u["instance"], u["key"]) not in done]:
-            for u in todo:               # an embeddings model on the server brings the chat apps' updates next
-                done.add((u["instance"], u["key"]))
-                out(args, c.post(f"/api/v1/app-updates/{u['instance']}/{u['key']}/apply"))
+        out(args, c.post("/api/v1/app-updates/apply-all"))
         return 0
     if not (args.instance and args.key):
         raise Failed(f"which update? e.g. gpu-shepherd app-updates {args.action} webui env-1a2b3c4d")
@@ -424,6 +420,15 @@ def cmd_app_versions(args, c: Client) -> int:
     if a == "check":
         out(args, c.post("/api/v1/image-updates/check"))
         return 0
+    if a == "update" and (args.all or not args.id):
+        if not args.all:
+            raise Failed("which instance? e.g. gpu-shepherd app-versions update webui (or --all)")
+        r = c.post("/api/v1/image-updates/update-all")
+        if args.json:
+            out(args, r)
+            return 0
+        print(r["message"])
+        return follow(c, r["job"])
     if not args.id:
         raise Failed(f"which instance? e.g. gpu-shepherd app-versions {a} webui")
     if a == "auto":
@@ -941,11 +946,12 @@ def add_commands(sub) -> None:
     p.add_argument("key", nargs="?")
     p.add_argument("--all", action="store_true", help="apply every update")
 
-    p = sub.add_parser("app-versions", help="new releases of the apps' images: list, check, update INSTANCE, "
+    p = sub.add_parser("app-versions", help="new releases of the apps' images: list, check, update INSTANCE (or --all), "
                                             "auto INSTANCE on|off")
     p.add_argument("action", nargs="?", choices=("list", "check", "update", "auto"))
     p.add_argument("id", nargs="?")
     p.add_argument("on", nargs="?")
+    p.add_argument("--all", action="store_true", help="update every app with a new version in one go")
 
     p = sub.add_parser("models", help="a model server's models, auto names and settings")
     msub = p.add_subparsers(dest="action", required=True, metavar="ACTION")

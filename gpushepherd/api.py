@@ -322,6 +322,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return [{"instance": u.iid, "key": u.key, "title": u.title, "changes": u.lines, "afterwards": u.manual}
                 for u in svc.app_updates()]
 
+    @r.post("/api/v1/app-updates/apply-all")
+    @handle
+    def apply_all_app_updates(request: Request):
+        return {"message": svc.apply_all_app_updates()}
+
     @r.post("/api/v1/app-updates/{iid}/{key}/{op}")
     @handle
     def app_update_op(request: Request, iid: str, key: str, op: str):
@@ -345,6 +350,18 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def check_image_updates(request: Request):
         return {"message": svc.check_images()}
+
+    @r.post("/api/v1/image-updates/update-all")
+    @handle
+    async def update_images(request: Request):
+        """Update several apps in one change: {"instances": [...]}, or every app with a new
+        version when there is no body."""
+        data = await body(request) if (await request.body()).strip() else {}
+        ids = data.get("instances")
+        if ids is not None and not (isinstance(ids, list) and ids and all(isinstance(i, str) for i in ids)):
+            raise Problem('send {"instances": ["webui", ...]} or no body for every app')
+        msg, job = svc.update_images(ids)
+        return JSONResponse({"message": msg, "job": job_json(job)}, status_code=202)
 
     @r.post("/api/v1/image-updates/{iid}/update")
     @handle

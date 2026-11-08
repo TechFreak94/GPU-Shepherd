@@ -9,6 +9,14 @@
   <button class="small" hx-get="/ui/app-updates" hx-target="#modal-body" title="See what each update changes, then apply or skip it">Review ›</button>
 </div>
 {% endif %}
+{% if image_updates|length > 1 %}
+<div class="notice update"><div><strong>{{ image_updates|length }} apps have a new version:</strong>
+  <span class="muted small">{{ image_updates|join(", ") }}</span></div>
+  <button class="small primary" hx-post="/ui/image-updates/update-all" hx-target="#dash" {{ "disabled" if job }}
+    hx-confirm="Update {{ image_updates|length }} apps? The downloads run together, then each running app restarts in turn after its running work finishes."
+    title="Download every new version at once, then restart the running apps one at a time">Update all</button>
+</div>
+{% endif %}
 {% for d in low_space %}
 <div class="notice error"><div><strong>Disk almost full:</strong> <span class="mono">{{ d.path }}</span> has {{ d.free_text }} free.</div>
   <a href="/storage">See Storage ›</a></div>
