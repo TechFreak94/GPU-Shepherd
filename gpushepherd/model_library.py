@@ -68,6 +68,7 @@ class Suggestion:
     preload: bool = False          # loaded as soon as the server starts
     gpu_layers: int | None = None  # set for models that should stay off the GPUs (embeddings: 0)
     extra_args: str = ""
+    slow_ok: bool = False          # dense, but offered with most of its layers in RAM anyway (slow; said so)
     shards: tuple[File, ...] = ()  # the other parts of a split model: llama.cpp loads them from beside the first
 
     @property
@@ -105,6 +106,9 @@ def _split(repo: str, stem: str, gbs: tuple[float, ...]) -> tuple[File, tuple[Fi
 
 # models split into several files (the first part only holds their metadata)
 _MINIMAX = _split("unsloth/MiniMax-M2.7-GGUF", "UD-IQ3_XXS/MiniMax-M2.7-UD-IQ3_XXS", (0.01, 49.98, 30.12))
+_DEVSTRAL_2 = _split("unsloth/Devstral-2-123B-Instruct-2512-GGUF", "IQ4_XS/Devstral-2-123B-Instruct-2512-IQ4_XS",
+                     (49.98, 17.15))
+_ORNITH = _split("unsloth/Ornith-1.5-122B-GGUF", "UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL", (0.01, 49.97, 29.73))
 _NEMOTRON_SUPER = _split("unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF",
                          "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL", (0.01, 49.85, 37.05))
 
@@ -193,6 +197,22 @@ SUGGESTIONS: tuple[Suggestion, ...] = (
         model=_hf("unsloth/Qwen3.5-122B-A10B-GGUF", "Qwen3.5-122B-A10B-UD-IQ3_XXS.gguf", 44.75),
         mmproj=_hf("unsloth/Qwen3.5-122B-A10B-GGUF", "mmproj-F16.gguf", 0.91),
         sampling=QWEN_THINKING, ctx_size=65536),
+    Suggestion(
+        key="ornith-1.5-122b", name="Ornith 1.5 122B",
+        blurb="A reasoning model built on Qwen3.5 122B for terminal coding agents (OpenCode, Hermes): long, hard "
+              "tasks with tools, and it reads images. Mixture of experts, so it stays quick with its experts in about "
+              "70 GB of RAM beside two 8 GB GPUs (128 GB machines).",
+        uses=("coder", "chat"), license="MIT", page=f"{HF}/unsloth/Ornith-1.5-122B-GGUF", moe=True, layers=48,
+        model=_ORNITH[0], shards=_ORNITH[1],
+        mmproj=_hf("unsloth/Ornith-1.5-122B-GGUF", "mmproj-F16.gguf", 0.91),
+        sampling="--temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0", ctx_size=65536),
+    Suggestion(
+        key="devstral-2-123b", name="Devstral 2 123B",
+        blurb="Mistral's big coding agent model: careful multi-file changes, 256K context. It is dense, so on 8 GB "
+              "GPUs most of it runs from about 55 GB of RAM and answers slowly, a few words a second: best for "
+              "jobs you leave running. Free for companies under Mistral's revenue limit (Modified MIT).",
+        uses=("coder",), license="Modified MIT", page=f"{HF}/unsloth/Devstral-2-123B-Instruct-2512-GGUF", layers=88,
+        slow_ok=True, model=_DEVSTRAL_2[0], shards=_DEVSTRAL_2[1], sampling=DEVSTRAL, ctx_size=65536),
     Suggestion(
         key="gpt-oss-120b", name="gpt-oss 120B",
         blurb="OpenAI's open-weight reasoning model: strong at coding, tools and long agent sessions. Its experts "
@@ -291,11 +311,12 @@ class Fit:
     gpus: int                # GPUs it needs (or uses, with RAM) - 0 when the machine has none
     ram_gb: float            # system RAM it needs beside them
     text: str                # what to tell the user
+    slow: bool = False       # runs, but mostly from RAM: listed after everything that runs well
 
     @property
     def rank(self) -> tuple:
         """Sort key: what runs best on this machine first."""
-        return (not self.ok, self.ram_gb > 0, self.gpus)
+        return (not self.ok, self.slow, self.ram_gb > 0, self.gpus)
 
 
 def _need(s: Suggestion) -> float:
@@ -332,13 +353,16 @@ def fit(s: Suggestion, gpu_mem_gb: list[float], ram_gb: float) -> Fit:
             return Fit(True, n, 0, f"Fits on {_gpus(n)}")
     if not s.moe:
         n, on_gpu = len(smallest), _dense_layers(s, sum(smallest)) if s.layers else 0
-        if not s.layers or on_gpu < s.layers * DENSE_ON_GPU:
+        if not s.layers or on_gpu < s.layers * DENSE_ON_GPU and not s.slow_ok:
             return Fit(False, n, 0, f"Too big for your GPUs (needs about {round(need)} GB)")
         ram = max(round(s.model_gb * (s.layers - on_gpu) / s.layers), 1)
         if ram_gb and ram > ram_gb * RAM_HEADROOM:
             return Fit(False, n, ram, f"Too big: needs about {ram} GB of RAM beside your GPUs")
         text = f"{_gpus(n)} with {on_gpu} of its {s.layers} layers, the rest (about {ram} GB) in RAM"
-        return Fit(True, n, ram, text[0].upper() + text[1:])
+        slow = on_gpu < s.layers * DENSE_ON_GPU
+        if slow:
+            text += ": slow, a few words a second"
+        return Fit(True, n, ram, text[0].upper() + text[1:], slow)
     n = len(smallest)
     ram = round(_in_ram(s, sum(smallest)))
     ok = not ram_gb or ram <= ram_gb * RAM_HEADROOM
