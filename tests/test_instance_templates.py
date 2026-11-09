@@ -179,7 +179,7 @@ def test_installed_counts_older_instances():
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
                    "librechat": [], "anythingllm": [], "langflow": [], "ollama": [], "invokeai": [],
-                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": []}
+                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": [], "opencode": []}
 
 
 def test_kind_tags():
@@ -324,6 +324,39 @@ def test_sillytavern():
     assert tpl.app_env(t, "llm", m)["LLM_API_KEY"] == "sk-abc"
 
 
+def test_opencode():
+    import json
+    m, t = server_machine(), tpl.get("opencode")
+    m.servers["llm"]["models"] = {"chat": 32768, "coder": 65536}
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["login_user"] == "admin" and [s.key for s in tpl.slots(t)] == ["coder"]
+    inst, _ = tpl.build(t, f, m)
+    env = inst.env
+    assert inst.command == ["web", "--hostname", "0.0.0.0", "--port", "4096"] and inst.gpu.mode == "none"
+    assert env["OPENCODE_SERVER_USERNAME"] == "admin" and env["OPENCODE_SERVER_PASSWORD"] == f["password"]
+    assert env["LLM_BASE_URL"] == "http://llm:8080/v1" and env["LLM_API_KEY"] == "sk-abc"
+    assert tpl.connected_server(inst, m) == "llm" and tpl.app_env(t, "llm", m)["LLM_API_KEY"] == "sk-abc"
+    assert {v.container: v.host for v in inst.volumes}["/workspace"] == "/a/opencode/workspace"
+    config = json.loads(tpl.seed_files(t, f, m)["config/opencode.json"])
+    local = config["provider"]["local"]
+    assert local["options"] == {"baseURL": "{env:LLM_BASE_URL}", "apiKey": "{env:LLM_API_KEY}"}
+    assert local["npm"] == "@ai-sdk/openai-compatible" and set(local["models"]) == {"chat", "coder"}
+    assert local["models"]["coder"]["limit"] == {"context": 65536, "output": 16384}
+    assert config["model"] == config["small_model"] == "local/coder" and config["autoupdate"] is False
+    del m.servers["llm"]["models"]                    # a server without a coding model: its chat model
+    assert json.loads(tpl.seed_files(t, f, m)["config/opencode.json"])["model"] == "local/chat"
+    assert tpl.seed_files(t, f | {"server": ""}, m) == {}
+
+
+def test_opencode_bundled_server_gets_the_coding_model():
+    m, t = machine(), tpl.get("opencode")
+    f = tpl.defaults(t, m, "/srv/models", "/a") | {"coder_file": "Qwen3-Coder.gguf"}
+    srv, cat = tpl.bundled_server(f, m, "/a", t.bundled_slot)
+    assert cat.models[0].aliases == ["coder"] and cat.models[0].ctx_size == 65536
+    assert m.servers[srv.id]["default_model"] == "coder"
+    assert tpl.build(t, f | {"server": srv.id}, m)[0].env["LLM_API_KEY"] == cat.api_key
+
+
 def test_open_notebook():
     m, t = server_machine(), tpl.get("open-notebook")
     f = tpl.defaults(t, m, "/m", "/a")
@@ -361,7 +394,8 @@ def test_vllm():
             tpl.build(t, f | bad, m)
     # chat apps can use it as a model server, under the name chat
     info = tpl.vllm_server(two)
-    assert info == {"api_key": two.env["VLLM_API_KEY"], "name": "vLLM", "default_model": "chat", "ctx": 4096, "embed": ""}
+    assert info == {"api_key": two.env["VLLM_API_KEY"], "name": "vLLM", "default_model": "chat", "ctx": 4096, "embed": "",
+                    "models": {"chat": 4096}}
     m2 = machine(instances={"vllm": two}, servers={"vllm": info})
     web = tpl.build(tpl.get("open-webui"), tpl.defaults(tpl.get("open-webui"), m2, "/m", "/a") | {"server": "vllm"}, m2)[0]
     assert web.env["OPENAI_API_BASE_URLS"] == "http://vllm:8000/v1" and web.env["DEFAULT_MODELS"] == "chat"

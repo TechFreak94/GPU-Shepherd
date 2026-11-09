@@ -112,3 +112,46 @@ def test_check_interval_setting(stack):  # noqa: F811
     app.state.svc.auto_update()           # 0 = never checks by itself
     assert app.state.svc.image_checked() == 0
     assert "Check now" in browser(app).get("/settings").text
+
+
+def test_update_all_downloads_together_then_restarts_in_turn(stack, run):  # noqa: F811
+    app, client, backend, _ = stack
+    svc = app.state.svc
+    client.post("/api/v1/instances/webui/start")
+    wait(app)
+    client.post("/api/v1/image-updates/check")
+    hermes = "nousresearch/hermes-agent:stable"
+    backend.remote[WEBUI] = NEW
+    backend.remote[hermes] = NEW
+    client.post("/api/v1/image-updates/check")
+    html = browser(app).get("/ui/dashboard", headers=HX).text
+    assert "2 apps have a new version" in html and "/ui/image-updates/update-all" in html
+
+    r = client.post("/api/v1/image-updates/update-all")
+    assert r.status_code == 202 and r.json()["job"]["title"] == "Updating 2 apps"
+    wait(app)
+    job = client.get(f"/api/v1/jobs/{r.json()['job']['id']}").json()
+    assert job["status"] == "done", job["log"]
+    assert f"pull {WEBUI}" in backend.calls and f"pull {hermes}" in backend.calls
+    assert any("next start" in x for x in job["log"])                      # hermes is stopped
+    assert svc.image_status()["webui"].state == "current" and svc.image_status()["hermes"].state == "current"
+    assert "apps have a new version" not in browser(app).get("/ui/dashboard", headers=HX).text
+    assert client.post("/api/v1/image-updates/update-all").status_code == 409       # nothing left
+    code, text = run("app-versions", "update", "--all")
+    assert code != 0 and "newest" in text
+    code, text = run("app-versions", "update")
+    assert code != 0 and "--all" in text
+
+
+def test_update_all_from_the_dashboard_and_a_named_list(stack):  # noqa: F811
+    app, client, backend, _ = stack
+    client.post("/api/v1/image-updates/check")
+    backend.remote[WEBUI] = NEW
+    backend.remote["nousresearch/hermes-agent:stable"] = NEW
+    client.post("/api/v1/image-updates/check")
+    assert client.post("/api/v1/image-updates/update-all", json={"instances": "webui"}).status_code == 400
+    assert client.post("/api/v1/image-updates/update-all", json={"instances": ["comfyui"]}).status_code == 409
+    r = browser(app).post("/ui/image-updates/update-all", headers=HX)
+    assert r.status_code == 200 and "Updating 2 apps" in r.headers.get("HX-Trigger", "")
+    wait(app)
+    assert app.state.svc.image_status()["webui"].state == "current"

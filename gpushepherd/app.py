@@ -297,6 +297,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "running_count": len(running), "instance_count": len(snap.instances),
                 "job": job, "last_job": (jobs.history[0] if jobs.history else None),
                 "now": time.time(), "u": updates.status(store.root), "app_updates": app_update_count(),
+                "image_updates": [c["inst"].name for c in cards
+                                  if c.get("image") and c["image"].state == "available"],
                 "low_space": low_space()}
 
     def app_update_count() -> int:
@@ -418,6 +420,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def instance_update_image(request: Request, iid: str):
         try:
             msg, _ = svc.update_image(iid)
+        except Problem as err:
+            return problem(err)
+        return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
+
+    @app.post("/ui/image-updates/update-all")
+    def update_all_images(request: Request):
+        try:
+            msg, _ = svc.update_images()
         except Problem as err:
             return problem(err)
         return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
@@ -925,6 +935,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/ui/app-updates", response_class=HTMLResponse)
     def app_updates_dialog(request: Request):
         return page(request, "partials/app_updates.html", updates=svc.app_updates(), names=svc.names())
+
+    @app.post("/ui/app-updates/apply-all")
+    def app_updates_apply_all(request: Request):
+        try:
+            msg = svc.apply_all_app_updates()
+        except Problem as err:
+            return toast(app_updates_dialog(request), err.msg, err.kind)
+        resp = app_updates_dialog(request)
+        resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": "info"}})
+        return resp
 
     @app.post("/ui/app-updates/{iid}/{key}/{op}")
     def app_update_op(request: Request, iid: str, key: str, op: str):

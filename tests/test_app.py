@@ -588,11 +588,11 @@ def test_dashboard_kind_tags(stack):
     login(client)
     dash = client.get("/ui/dashboard", headers=HX).text
     card = lambda iid: dash.split(f'id="inst-{iid}"')[1].split("</h2>")[0]
-    assert '<span class="tag kind server">Model Server</span>' in card("llm")
-    assert '<span class="tag kind ui">Chat UI</span>' in card("webui")
-    assert '<span class="tag kind server">Image Server</span>' in card("comfyui")
-    assert '<span class="tag kind ui">Image UI</span>' in card("comfyui")
-    assert '<span class="tag kind ui">Agent UI</span>' in card("hermes")
+    assert '<span class="tag kind server kind-model-server">Model Server</span>' in card("llm")
+    assert '<span class="tag kind ui kind-chat">Chat UI</span>' in card("webui")
+    assert '<span class="tag kind server kind-image-server">Image Server</span>' in card("comfyui")
+    assert '<span class="tag kind ui kind-image">Image UI</span>' in card("comfyui")
+    assert '<span class="tag kind ui kind-agent">Agent UI</span>' in card("hermes")
     assert "model server</span>" not in dash
 
 
@@ -607,7 +607,7 @@ def test_older_chat_ui_name_shows_as_open_webui(stack, monkeypatch):
         act(client, app, "webui", "start")
     dash = client.get("/ui/dashboard", headers=HX).text
     card = dash.split('id="inst-webui"')[1].split("</article>")[0]
-    assert '<h2>Open WebUI<span class="tag kind ui">Chat UI</span>' in card
+    assert '<h2>Open WebUI<span class="tag kind ui kind-chat">Chat UI</span>' in card
     assert "not applied" not in card
     assert client.get("/instances/webui/edit").text.count('value="Open WebUI"') == 1
 

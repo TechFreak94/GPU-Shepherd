@@ -1,6 +1,7 @@
 {# The app updates dialog. updates = [app_updates.Update], names = {iid: name} #}
 <div class="dlg-head"><strong id="modal-title">App updates</strong>
-  <span class="btns"><button data-close-modal>Close</button></span></div>
+  <span class="btns">{% if updates|length > 1 %}<button class="primary" hx-post="/ui/app-updates/apply-all" hx-target="#modal-body"
+    title="Apply every update below">Apply all {{ updates|length }}</button>{% endif %}<button data-close-modal>Close</button></span></div>
 <div class="dlg-body" id="app-updates">
   <p class="small muted" style="margin-top:0">Apps have new settings since these were installed. An update only adds what
     is missing, so settings you changed stay as they are. Nothing restarts: a running app shows when it needs a restart.</p>
