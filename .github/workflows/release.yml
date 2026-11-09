@@ -7,6 +7,9 @@ name: Release
 on:
   push:
     branches: [main]
+  # Actions > Release > Run workflow: publish the image of the version on main again (when its push
+  # to ghcr.io failed). Makes no new version.
+  workflow_dispatch:
 
 permissions:
   contents: write          # push the release commit and tag, create the release
@@ -21,7 +24,7 @@ jobs:
   release:
     # the release commit itself is pushed with GITHUB_TOKEN, which never starts another run;
     # this also skips it if someone pushes one by hand
-    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'Release ') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -34,6 +37,7 @@ jobs:
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
       - name: Find the pull request
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" > "$RUNNER_TEMP/pr.json"
@@ -43,6 +47,7 @@ jobs:
       # by the next one); their Changelog sections are its release notes when it has none of its own.
       # Empty for anything that isn't a merge commit.
       - name: Find the pull requests a promotion brings
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
@@ -57,6 +62,7 @@ jobs:
           jq -r '"Brings: " + (map("#\(.number)") | join(", "))' "$RUNNER_TEMP/included.json"
 
       - name: Bump the version and update the changelog
+        if: github.event_name == 'push'
         id: bump
         env:
           SUBJECT: ${{ github.event.head_commit.message }}
@@ -91,26 +97,31 @@ jobs:
 
       # Built from the release commit checked out above, .git included, so the image records
       # which commit it is (gpushepherd/buildinfo.py). GHCR names must be lower case.
-      - name: Image name
-        if: steps.bump.outputs.skip == 'false'
+      - name: Image name and version
+        if: steps.bump.outputs.skip == 'false' || github.event_name == 'workflow_dispatch'
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          [ -n "$VERSION" ] || VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' gpushepherd/__init__.py)
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v4
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.image.outputs.name != ''
 
       - uses: docker/setup-buildx-action@v4
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.image.outputs.name != ''
 
       - uses: docker/login-action@v4
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.image.outputs.name != ''
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - name: Publish the image
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.image.outputs.name != ''
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -118,11 +129,11 @@ jobs:
           build-args: SHEPHERD_INSTALL=image
           push: true
           tags: |
-            ${{ steps.image.outputs.name }}:${{ steps.bump.outputs.version }}
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}
             ${{ steps.image.outputs.name }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ steps.bump.outputs.version }}
+            org.opencontainers.image.version=${{ steps.image.outputs.version }}
 
       # Keep testing (where changes wait for the next release, see CONTRIBUTING.md) level with main:
       # the release commit, and any fix merged straight into main, go back into testing so the next
@@ -130,7 +141,7 @@ jobs:
       # be allowed to bypass its rule too; if it fails, merge main into testing by hand. Runs even
       # when an earlier step (such as the image push) failed, since the release commit is already on main.
       - name: Bring testing up to date
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event_name == 'push' }}
         continue-on-error: true
         env:
           VERSION: ${{ steps.bump.outputs.version }}
