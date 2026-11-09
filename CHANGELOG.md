@@ -4,6 +4,12 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.32 - 2026-11-09
+
+- Releases made from testing now list every change they bring, even when the promotion has no changelog of its own (#68)
+- The 0.13.31 changelog now lists its real changes (#68)
+- Releases no longer miss changes when an earlier promotion's release did not run (#70)
+
 ## 0.13.31 - 2026-11-09
 
 - Each kind of app now has its own tag color on the dashboard. (#65)
