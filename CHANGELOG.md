@@ -4,6 +4,10 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.33 - 2026-11-09
+
+- Maintainers can publish the container image again from the Release workflow's Run workflow button if a release's image push fails (#72)
+
 ## 0.13.32 - 2026-11-09
 
 - Releases made from testing now list every change they bring, even when the promotion has no changelog of its own (#68)
