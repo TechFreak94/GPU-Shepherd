@@ -37,7 +37,9 @@ jobs:
         run: |
           # read fresh: the event's copy may predate an edit
           gh api "repos/${{ github.repository }}/pulls/$NUMBER" > "$RUNNER_TEMP/pr.json"
-          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+          # everything since the last release, as release.yml counts it
+          since=$(git describe --tags --abbrev=0 --match 'v*' "$BASE" 2> /dev/null || echo "$BASE")
+          for c in $(git rev-list --no-merges "$since..$HEAD"); do
             gh api "repos/${{ github.repository }}/commits/$c/pulls"
           done | jq -s '[add // [] | .[] | select(.merged_at and .base.ref == "testing")] | unique_by(.number)' \
             > "$RUNNER_TEMP/included.json"
