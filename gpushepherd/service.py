@@ -868,8 +868,8 @@ class Shepherd:
                                 "embed_query_prefix": tpl.query_prefix(embed.file) if embed else "",
                                 # the name each chat model answers to (its first alias), and its context
                                 "models": {(x.aliases or [x.id])[0]: x.ctx_size for x in chat}}
-        for inst in instances.values():           # vLLM servers: one model each, under the name chat
-            info = tpl.vllm_server(inst)
+        for inst in instances.values():           # vLLM and Ollama servers: apps ask them for the model chat
+            info = tpl.vllm_server(inst) or tpl.ollama_server(inst)
             if info:
                 servers[inst.id] = info
         return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in self.engine.snapshot().gpus],
@@ -894,8 +894,10 @@ class Shepherd:
                          volumes=[VolumeMap(host=models_dir, container=tpl.MODELS_IN_CONTAINER)])
         return llamaswap.local_model_files(probe)
 
-    def has_llm_server(self) -> bool:
-        return any(i.kind == "llama-swap" for i in self.store.instances()[0].values())
+    def has_model_server(self) -> bool:
+        """Whether any model server an app can connect to is installed (Llama Swap, vLLM, Ollama)."""
+        return any(i.kind == "llama-swap" or tpl.vllm_server(i) or tpl.ollama_server(i)
+                   for i in self.store.instances()[0].values())
 
     def appdata_root(self) -> str:
         return str(self.engine.host_data_dir / "appdata")
