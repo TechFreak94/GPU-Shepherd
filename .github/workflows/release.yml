@@ -39,8 +39,9 @@ jobs:
         run: gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" > "$RUNNER_TEMP/pr.json"
 
       # A promotion (testing -> main, merged with a merge commit) releases the pull requests merged
-      # into testing since the last release; their Changelog sections are its release notes when it
-      # has none of its own. Empty for anything that isn't a merge commit.
+      # into testing since the last release tag (so a promotion whose release never ran is picked up
+      # by the next one); their Changelog sections are its release notes when it has none of its own.
+      # Empty for anything that isn't a merge commit.
       - name: Find the pull requests a promotion brings
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,7 +49,8 @@ jobs:
         run: |
           echo '[]' > "$RUNNER_TEMP/included.json"
           git rev-parse -q --verify "$SHA^2" > /dev/null || exit 0
-          for c in $(git rev-list --no-merges "$SHA^1..$SHA^2"); do
+          since=$(git describe --tags --abbrev=0 --match 'v*' "$SHA^1" 2> /dev/null || echo "$SHA^1")
+          for c in $(git rev-list --no-merges "$since..$SHA^2"); do
             gh api "repos/${{ github.repository }}/commits/$c/pulls"
           done | jq -s '[add // [] | .[] | select(.merged_at and .base.ref == "testing")] | unique_by(.number)' \
             > "$RUNNER_TEMP/included.json"
