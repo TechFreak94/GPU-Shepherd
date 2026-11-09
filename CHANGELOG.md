@@ -6,7 +6,15 @@ The dashboard shows this list under the version number at the top of every page.
 
 ## 0.13.31 - 2026-11-09
 
-- Testing (#67)
+- Each kind of app now has its own tag color on the dashboard. (#65)
+- Update notices and their buttons are now the same size and tidier. (#65)
+- You can update several apps at once with "Update all" on the dashboard, in Settings, through the API and with the command line. (#65)
+- The Power menu is now a power icon at the far right of the top menu, and the Experimental tag sits above Knowledge. (#65)
+- New app: OpenCode, an open-source AI coding agent in the browser, connected to your model server and starting on its coding model (#66)
+- New suggested coding models: Devstral Small 2 24B, Devstral 2 123B (4-bit and 3-bit, slow on small GPUs), DeepSeek R1 0528 Qwen3 8B, Ornith 1.5 122B and Qwen3.5 122B-A10B (#66)
+- New suggested models for machines with lots of RAM: gpt-oss 120B, MiniMax M2.7 and Nemotron 3.5 Super VL (#66)
+- Suggested models split into several files now download every part (#66)
+- The Knowledge menu link lines up with the other links again (#66)
 
 ## 0.13.30 - 2026-11-08
 
