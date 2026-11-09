@@ -160,3 +160,9 @@ def test_fill_promotion_mode(repo, capsys):
     assert (repo / "title.txt").read_text().startswith("Promote testing to main")
     assert release.changelog_items((repo / "body.md").read_text()) == EXPECTED
     assert '"0.7.0"' in (repo / "v.py").read_text()               # releases nothing
+
+
+def test_a_promotion_github_did_not_record_still_lists_what_it_brings(repo, capsys):
+    (repo / "inc.json").write_text(json.dumps(BROUGHT))
+    out = run(repo, capsys, [], "--included-json", str(repo / "inc.json"), "--subject", "Merge pull request #69")
+    assert out["version"] == "0.7.1" and changelog.read(repo / "CHANGELOG.md")[0].items == EXPECTED

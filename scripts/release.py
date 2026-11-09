@@ -196,7 +196,12 @@ def main(argv: list[str]) -> int:
     else:                                       # pushed straight to main
         number, title, body, level = None, a.subject, None, "patch"
     changelog = CHANGELOG.read_text()
-    items = promotion_items(pr, included) if pr and (included or is_promotion(pr)) else entries(title, body, number)
+    if pr and (included or is_promotion(pr)):
+        items = promotion_items(pr, included)
+    elif not pr and included:                   # a promotion GitHub didn't record as a merged pull request
+        items = included_entries(included)
+    else:
+        items = entries(title, body, number)
     released = {line[2:] for line in changelog.splitlines() if line.startswith("- ")}
     if (level is None or not title.strip() or (number and re.search(rf"\(#{number}\)$", changelog, flags=re.M))
             or (items and all(re.search(r"\(#\d+\)$", i) and i in released for i in items))):
