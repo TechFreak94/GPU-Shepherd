@@ -85,6 +85,9 @@ runs [`scripts/release.py`](../scripts/release.py), which:
 2. adds a section for it to the top of `CHANGELOG.md`. The entries are the bullet points under a
    `## Changelog` heading in the pull request's description, or its title when there is none.
    Write them for people who use GPU Shepherd: what they will notice, not how it was done.
+   A promotion from `testing` without bullets of its own lists those of every pull request it
+   brings, each with its own number; the [Promotion notes workflow](../.github/workflows/promotion.yml)
+   fills them, and a title, into the promotion pull request as soon as it is opened.
 3. commits both files to `main` as *Release X.Y.Z*, tags it `vX.Y.Z` and publishes a GitHub
    release with the same notes.
 4. merges `main` back into `testing`, so `testing` carries the new version too.
