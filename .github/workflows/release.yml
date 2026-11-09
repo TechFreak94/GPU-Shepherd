@@ -127,8 +127,10 @@ jobs:
       # Keep testing (where changes wait for the next release, see CONTRIBUTING.md) level with main:
       # the release commit, and any fix merged straight into main, go back into testing so the next
       # promotion starts from this release. Best effort: if testing is protected, RELEASE_TOKEN must
-      # be allowed to bypass its rule too; if it fails, merge main into testing by hand.
+      # be allowed to bypass its rule too; if it fails, merge main into testing by hand. Runs even
+      # when an earlier step (such as the image push) failed, since the release commit is already on main.
       - name: Bring testing up to date
+        if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           VERSION: ${{ steps.bump.outputs.version }}
