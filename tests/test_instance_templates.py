@@ -270,6 +270,7 @@ def test_ollama_and_invokeai():
     m = machine()
     ol = tpl.build(tpl.get("ollama"), tpl.defaults(tpl.get("ollama"), m, "/m", "/a"), m)[0]
     assert ol.kind == "container" and ol.gpu.max_gpus == 0 and ol.ports[0].container == 11434
+    assert ol.gpu.cpu_fallback and ol.env["OLLAMA_CONTEXT_LENGTH"] == "32768"
     assert {v.container: v.host for v in ol.volumes} == {"/root/.ollama/models": "/m/ollama"}
     inv = tpl.build(tpl.get("invokeai"), tpl.defaults(tpl.get("invokeai"), m, "/m", "/a"), m)[0]
     assert inv.gpu.max_gpus == 1 and inv.gpu.priority == 60
@@ -408,8 +409,8 @@ def test_every_client_app_can_use_ollama():
     m = machine()
     ollama, _ = tpl.build(tpl.get("ollama"), tpl.defaults(tpl.get("ollama"), m, "/srv/models", "/a"), m)
     info = tpl.ollama_server(ollama)
-    assert info == {"api_key": tpl.OLLAMA_KEY, "name": "Ollama", "default_model": "chat", "ctx": 0, "embed": "",
-                    "models": {"chat": 0}}
+    assert info == {"api_key": tpl.OLLAMA_KEY, "name": "Ollama", "default_model": "chat", "ctx": 32768, "embed": "",
+                    "models": {"chat": 32768}}
     assert tpl.ollama_server(Instance(id="x", name="x", image="x")) is None
     m = machine(instances={"ollama": ollama}, servers={"ollama": info})
     url = "http://ollama:11434/v1"

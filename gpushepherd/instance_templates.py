@@ -94,6 +94,8 @@ class Template:
     shm_size: str | None = None                # shared memory, for apps that split work across GPUs
     engine: str = ""                           # "vllm": a model server with its own install answers (see VLLM_*)
     bundled_slot: str = "chat"                 # the model slot a Llama Swap installed alongside it fills
+    cpu_ok: bool = False                       # a model server that keeps answering on the CPU (slower)
+                                               # while an image app has the only GPU, instead of stopping
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -104,7 +106,7 @@ TEMPLATES: tuple[Template, ...] = (
                 "Pick a chat model and a coding model now, or add models later"),
         default_id="llm", default_name="Llama Swap", description="llama-swap model server",
         kind="llama-swap", image=LLAMA_SWAP_IMAGE, container_port=8080, host_port=8080, gpu="all",
-        open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True),
+        open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True), cpu_ok=True,
         models=(ModelSlot(key="chat", label="Chat model", alias="chat", ctx_size=32768,
                           sampling="--temp 0.7 --top-p 0.95",
                           hint="For chat apps such as Open WebUI and Hermes Agent."),
@@ -120,16 +122,21 @@ TEMPLATES: tuple[Template, ...] = (
     Template(
         key="ollama", tag="Model Server", badge="OL", title="Ollama", group="Model servers",
         blurb="Ollama's model server: models from Ollama's library, for the chat apps here and apps that speak Ollama's API.",
-        points=("Uses every free GPU and gives them back when something else needs one",
+        points=("Uses every free GPU, gives them back when something else needs one, and keeps answering on "
+                "the CPU (slower) meanwhile",
                 "Models from Ollama's library, kept in the models folder's ollama/ subfolder",
                 "Chat apps here can use it like the Llama Swap, through its OpenAI-compatible API"),
         default_id="ollama", default_name="Ollama", description="Ollama model server",
         image="ollama/ollama:latest", container_port=11434, host_port=11434, gpu="all",
-        env={"OLLAMA_HOST": "0.0.0.0:11434"},
-        models_mount=("ollama", "/root/.ollama/models", False),
-        after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3:8b (CONTAINER is "
+        # Ollama's own default context is 4K on GPUs under 24 GB, too short for agents (Hermes,
+        # OpenCode) and documents: the same 32K as the Llama Swap's chat model, with its 8-bit cache
+        env={"OLLAMA_HOST": "0.0.0.0:11434", "OLLAMA_CONTEXT_LENGTH": "32768", "OLLAMA_FLASH_ATTENTION": "1",
+             "OLLAMA_KV_CACHE_TYPE": "q8_0"},
+        models_mount=("ollama", "/root/.ollama/models", False), cpu_ok=True,
+        after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3.5:9b (CONTAINER is "
                       "shown on its dashboard card), then give it the name chat, which the apps here ask for first: "
-                      "docker exec CONTAINER ollama cp qwen3:8b chat. Apps that list the server's models (Open WebUI, "
+                      "docker exec CONTAINER ollama cp qwen3.5:9b chat. Every model gets OLLAMA_CONTEXT_LENGTH "
+                      "tokens of context (under Edit). Apps that list the server's models (Open WebUI, "
                       "LibreChat) show every model you pull. It answers at http://this-machine:PORT, and has no login or "
                       "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
                       "Llama Swap through its llama.cpp integration instead.",
@@ -549,7 +556,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ConfigError("Port: enter a number from 1 to 65535")
     gpu = _gpu_policy(str(a.get("gpu") or t.gpu), t.priority)
-    if t.kind == "llama-swap" and gpu.mode == "elastic":
+    if t.cpu_ok and gpu.mode == "elastic":
         # a chat server keeps answering (on the CPU, slower) while an image app has the only GPU
         gpu.cpu_fallback = True
 
@@ -913,8 +920,10 @@ def ollama_server(inst: Instance) -> dict | None:
     steps say how to give a model that name) and the apps that list models show the rest."""
     if not matches(get("ollama"), inst):
         return None
-    return {"api_key": OLLAMA_KEY, "name": inst.name, "default_model": VLLM_ALIAS, "ctx": 0, "embed": "",
-            "models": {VLLM_ALIAS: 0}}
+    ctx = inst.env.get("OLLAMA_CONTEXT_LENGTH", "")
+    ctx = int(ctx) if ctx.isdigit() else 0
+    return {"api_key": OLLAMA_KEY, "name": inst.name, "default_model": VLLM_ALIAS, "ctx": ctx, "embed": "",
+            "models": {VLLM_ALIAS: ctx}}
 
 
 def vllm_server(inst: Instance) -> dict | None:
