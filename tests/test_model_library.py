@@ -241,3 +241,24 @@ def test_suggested_embeddings_model_loads_at_start_with_the_embeddings_flag():
     cfg = yaml.safe_load(render(Catalog(instance_id="llm", models=[m]), 1, 4))
     assert "--embeddings" in cfg["models"][m.id]["cmd"]
     assert cfg["hooks"]["on_startup"]["preload"] == [m.id]
+
+
+def test_split_models_download_every_part():
+    s = ml.get("minimax-m2.7")
+    assert [f.name for f in s.files] == [f"MiniMax-M2.7-UD-IQ3_XXS-0000{i}-of-00003.gguf" for i in (1, 2, 3)]
+    assert s.files[1].url.endswith("/resolve/main/UD-IQ3_XXS/MiniMax-M2.7-UD-IQ3_XXS-00002-of-00003.gguf")
+    assert round(s.model_gb, 1) == s.download_gb == 80.1          # sized by every part, not the first
+    assert ml.catalog_model(s, [8.0, 8.0]).file == "/models/minimax-m2.7/MiniMax-M2.7-UD-IQ3_XXS-00001-of-00003.gguf"
+    assert ml.fit(s, [8.0, 8.0], 128).ok and not ml.fit(s, [8.0, 8.0], 64).ok
+
+
+def test_slow_dense_models_are_offered_last():
+    big = ml.get("devstral-2-123b")
+    f = ml.fit(big, [8.0, 8.0], 128)
+    assert f.ok and f.slow and f.text.endswith("slow, a few words a second") and 50 < f.ram_gb < 60
+    assert not ml.fit(big, [8.0, 8.0], 64).ok                      # the RAM it needs isn't there
+    assert not ml.fit(ml.get("qwen3.8-27b"), [8.0], 128).ok        # other dense models still don't spill
+    order = [s.key for s, fit in ml.for_slot("coder", [8.0, 8.0], 128) if fit.ok]
+    assert set(order[-2:]) == {"devstral-2-123b", "devstral-2-123b-iq3"}
+    rules = ml.offload(big, [8.0, 8.0])
+    assert [r.gpu_layers for r in rules] == [8, 17]

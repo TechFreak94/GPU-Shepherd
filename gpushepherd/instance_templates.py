@@ -91,6 +91,7 @@ class Template:
     user: str | None = None                    # run as this user (uid:gid) instead of the image's own
     shm_size: str | None = None                # shared memory, for apps that split work across GPUs
     engine: str = ""                           # "vllm": a model server with its own install answers (see VLLM_*)
+    bundled_slot: str = "chat"                 # the model slot a Llama Swap installed alongside it fills
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -168,6 +169,26 @@ TEMPLATES: tuple[Template, ...] = (
         appdata=(("data", "/opt/data"),), data_owner=(10000, 10000), connects="hermes",
         needs="A model server whose model can call tools (Qwen3 models can)",
         license="MIT", docs="https://hermes-agent.nousresearch.com/docs/user-guide/docker"),
+    Template(
+        key="opencode", tag="Agent UI", badge="OC", title="OpenCode", group="Chat and agents",
+        blurb="An open-source AI coding agent in your browser: it reads, writes and runs code in a workspace folder, "
+              "thinking with your own model server.",
+        points=("No GPU needed", "Connects to a model server for you, API key included, preferring its coding model",
+                "Its own login; projects live in the app data folder's workspace/"),
+        default_id="opencode", default_name="OpenCode", description="AI coding agent",
+        image="ghcr.io/anomalyco/opencode:latest", command=("web", "--hostname", "0.0.0.0", "--port", "4096"),
+        container_port=4096, host_port=4096, gpu="none", bundled_slot="coder",
+        login=("OPENCODE_SERVER_USERNAME", "OPENCODE_SERVER_PASSWORD"),
+        appdata=(("config", "/root/.config/opencode"), ("data", "/root/.local/share/opencode"),
+                 ("workspace", "/workspace")),
+        connects="opencode",
+        after_install="Open it and log in with the user name and password you chose, then open the folder "
+                      "/workspace (the app data folder's workspace/ on this machine) or a project inside it. "
+                      "The model server is already set up as the provider Local models; its settings are in "
+                      "config/opencode.json in the app data folder. Its agent can run commands inside its "
+                      "container, so keep its port off the internet.",
+        needs="A model server whose model can call tools, ideally a coding model with a long context",
+        license="MIT", docs="https://opencode.ai/docs"),
     Template(
         key="librechat", tag="Chat UI", badge="LC", title="LibreChat", group="Chat and agents",
         blurb="A multi-user ChatGPT-style chat with agents, presets and conversation search, using your own model server.",
@@ -564,7 +585,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
         env.update(_librechat(a, m, requires))
     elif t.connects == "langflow":
         env.update(_langflow(a, m))
-    elif t.connects == "sillytavern":
+    elif t.connects in ("sillytavern", "opencode"):
         env.update(_server_env(a, m))
     elif t.connects == "opennotebook":
         env |= {"SURREAL_URL": f"ws://{requires[0]}:8000/rpc"} | _opennotebook(_server(a, m), m)
@@ -609,7 +630,8 @@ def companions(t: Template, inst: Instance) -> list[Instance]:
     return out
 
 
-def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Catalog] | None:
+def bundled_server(a: dict, m: Machine, appdata_root: str,
+                   slot: str = BUNDLED_SLOT) -> tuple[Instance, Catalog] | None:
     """The Llama Swap an app installs alongside itself when asked to (server = "new"),
     built from the answers' models folder and model file, with its catalogue (and API key). Adds it
     to the machine, so the app's own build connects to it."""
@@ -622,12 +644,13 @@ def bundled_server(a: dict, m: Machine, appdata_root: str) -> tuple[Instance, Ca
         d["port"] = free_port(d["port"], taken)
     if str(a.get("id", "")) == d["id"]:
         d["id"] = free_id(d["id"], set(m.instances) | {d["id"]})
-    d |= {f"{BUNDLED_SLOT}_file": str(a.get(f"{BUNDLED_SLOT}_file", "")), "gpu": t.gpu}
+    d |= {f"{slot}_file": str(a.get(f"{slot}_file", "")), "gpu": t.gpu}
     srv, models = build(t, d, m)
     cat = Catalog(instance_id=srv.id, models=models, fit_gpus=True)
     m.instances[srv.id] = srv
-    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": BUNDLED_SLOT if models else "",
-                         "ctx": models[0].ctx_size if models else 0}
+    m.servers[srv.id] = {"api_key": cat.api_key, "name": srv.name, "default_model": slot if models else "",
+                         "ctx": models[0].ctx_size if models else 0,
+                         "models": {slot: models[0].ctx_size} if models else {}}
     return srv, cat
 
 
@@ -651,6 +674,8 @@ def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
         out["librechat.yaml"] = LIBRECHAT_YAML
     elif t.connects == "sillytavern" and info:
         out |= _sillytavern_files(_server_url(server, m), info)
+    elif t.connects == "opencode" and info:
+        out["config/opencode.json"] = _opencode_config(info)
     for name, _ in t.files:
         out.setdefault(name, "")
     return out
@@ -715,7 +740,7 @@ def app_env(t: Template, server: str, m: Machine) -> dict[str, str]:
         env |= {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]}
     elif t.connects == "langflow" and a["server"]:
         env |= _langflow_server(server, m)
-    elif t.connects == "sillytavern" and a["server"]:
+    elif t.connects in ("sillytavern", "opencode") and a["server"]:
         env |= _server_env(a, m)
     elif t.connects == "opennotebook" and a["server"]:
         env |= _opennotebook(server, m)
@@ -809,6 +834,31 @@ def _sillytavern_files(url: str, info: dict) -> dict[str, str]:
             "data/default-user/secrets.json": json.dumps({"api_key_custom": info["api_key"]}, indent=4) + "\n"}
 
 
+OPENCODE_PROVIDER = "local"
+
+
+def _opencode_config(info: dict) -> str:
+    """OpenCode's own settings (its global opencode.json): the model server as an OpenAI-compatible
+    provider whose address and key come from the instance's environment (LLM_BASE_URL, LLM_API_KEY),
+    so pointing it at another server is an Edit away. It lists the server's chat models (OpenCode
+    doesn't ask the server for them) and starts on the coding one, which also writes the session
+    titles so the server never swaps models just for those."""
+    models = dict(info.get("models") or {})
+    default = info.get("default_model") or "chat"
+    models.setdefault(default, info.get("ctx") or 0)
+    pick = "coder" if "coder" in models else default
+    entries = {}
+    for name, ctx in models.items():
+        entries[name] = {"name": name} | ({"limit": {"context": ctx, "output": min(ctx // 4, 16384)}} if ctx else {})
+    config = {"$schema": "https://opencode.ai/config.json",
+              "provider": {OPENCODE_PROVIDER: {"npm": "@ai-sdk/openai-compatible", "name": "Local models",
+                                               "options": {"baseURL": "{env:LLM_BASE_URL}", "apiKey": "{env:LLM_API_KEY}"},
+                                               "models": entries}},
+              "model": f"{OPENCODE_PROVIDER}/{pick}", "small_model": f"{OPENCODE_PROVIDER}/{pick}",
+              "autoupdate": False, "share": "disabled"}
+    return json.dumps(config, indent=2) + "\n"
+
+
 def _opennotebook(server: str, m: Machine) -> dict[str, str]:
     """Open Notebook's OpenAI Compatible provider, which it reads from the environment."""
     if not server:
@@ -848,7 +898,8 @@ def vllm_server(inst: Instance) -> dict | None:
     args = inst.command
     ctx = next((int(args[i + 1]) for i, x in enumerate(args[:-1]) if x == "--max-model-len" and args[i + 1].isdigit()), 0)
     names = next((args[i + 1] for i, x in enumerate(args[:-1]) if x == "--served-model-name"), VLLM_ALIAS)
-    return {"api_key": inst.env["VLLM_API_KEY"], "name": inst.name, "default_model": names, "ctx": ctx, "embed": ""}
+    return {"api_key": inst.env["VLLM_API_KEY"], "name": inst.name, "default_model": names, "ctx": ctx, "embed": "",
+            "models": {names: ctx}}
 
 
 def _langflow(a: dict, m: Machine) -> dict[str, str]:
@@ -928,7 +979,7 @@ def slots(t: Template) -> tuple[ModelSlot, ...]:
     if t.models:
         return t.models
     if t.connects:
-        return tuple(x for x in get(BUNDLED_SERVER).models if x.key == BUNDLED_SLOT)
+        return tuple(x for x in get(BUNDLED_SERVER).models if x.key == t.bundled_slot)
     return ()
 
 

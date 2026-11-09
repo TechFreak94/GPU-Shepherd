@@ -61,6 +61,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [vLLM](https://docs.vllm.ai) | Apache-2.0 | `vllm/vllm-openai:latest` |
 | [Open WebUI](https://docs.openwebui.com) | Open WebUI License (BSD-3-Clause plus branding terms) | `ghcr.io/open-webui/open-webui:main` |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/docker) | MIT | `nousresearch/hermes-agent:latest` |
+| [OpenCode](https://opencode.ai/docs) | MIT | `ghcr.io/anomalyco/opencode:latest` |
 | [LibreChat](https://www.librechat.ai/docs) | MIT | `librechat/librechat:latest` |
 | [AnythingLLM](https://docs.anythingllm.com/installation-docker/overview) | MIT | `mintplexlabs/anythingllm:latest` |
 | [Langflow](https://docs.langflow.org) | MIT | `langflowai/langflow:latest` |
@@ -80,10 +81,19 @@ The same list is in the dashboard: click the version number at the top, then **C
 | Gemma 4 E4B | Apache-2.0 | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) |
 | Gemma 4 12B | Apache-2.0 | [unsloth/gemma-4-12b-it-GGUF](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF) |
 | Qwen3 Coder 30B-A3B | Apache-2.0 | [unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) |
+| DeepSeek R1 0528 Qwen3 8B | MIT | [unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF](https://huggingface.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF) |
+| Devstral Small 2 24B | Apache-2.0 | [unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF) |
 | Qwen3.8 27B | Apache-2.0 | [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) |
 | Muse Glimmer 30B | Apache-2.0 | [unsloth/Muse-Glimmer-30B-GGUF](https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF) |
 | Qwen3.6 35B-A3B | Apache-2.0 | [unsloth/Qwen3.6-35B-A3B-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) |
 | Qwen3 Coder Next 80B-A3B | Apache-2.0 | [unsloth/Qwen3-Coder-Next-GGUF](https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF) |
+| Qwen3.5 122B-A10B | Apache-2.0 | [unsloth/Qwen3.5-122B-A10B-GGUF](https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF) |
+| Ornith 1.5 122B | MIT | [unsloth/Ornith-1.5-122B-GGUF](https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF) |
+| Devstral 2 123B (4-bit) | Modified MIT | [unsloth/Devstral-2-123B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Devstral-2-123B-Instruct-2512-GGUF) |
+| Devstral 2 123B (3-bit) | Modified MIT | [unsloth/Devstral-2-123B-Instruct-2512-GGUF](https://huggingface.co/unsloth/Devstral-2-123B-Instruct-2512-GGUF) |
+| gpt-oss 120B | Apache-2.0 | [unsloth/gpt-oss-120b-GGUF](https://huggingface.co/unsloth/gpt-oss-120b-GGUF) |
+| MiniMax M2.7 229B-A10B | Modified MIT | [unsloth/MiniMax-M2.7-GGUF](https://huggingface.co/unsloth/MiniMax-M2.7-GGUF) |
+| Nemotron 3.5 Super VL 120B-A12B | OpenMDW-1.1 | [unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF](https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF) |
 | Qwen3 Embedding 0.6B | Apache-2.0 | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) |
 
 Spotted a missing credit or a wrong license? Please open an issue.
