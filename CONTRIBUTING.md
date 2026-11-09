@@ -120,7 +120,8 @@ most of it. Never paste secrets or private data into a tool.
 - **`main`** only gets releases. A maintainer promotes `testing` to `main` with a pull request
   from `testing` to `main`, merged with a **merge commit** (not squashed, so the two branches keep
   the same history). That merge is one release: its `## Changelog` lists the changes it brings,
-  each ending in its own pull request number, e.g. `- Faster starts (#61)`.
+  each ending in its own pull request number, e.g. `- Faster starts (#61)`. A workflow fills this in
+  (and replaces a placeholder title such as "testing") when the pull request is opened.
 - After each release the Release workflow merges `main` back into `testing`, so `testing` has the
   new version number.
 - Urgent fixes may go straight to `main` in their own pull request (squash-merged); the same step

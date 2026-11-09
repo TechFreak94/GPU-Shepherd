@@ -1,0 +1,50 @@
+# Fills in a promotion pull request (testing -> main) so it describes the release it makes: a
+# placeholder title such as "testing" becomes "Promote testing to main: #65, #66", and an empty
+# Changelog section gets the bullets of every pull request merged into testing that it brings.
+# Re-runs as more land on testing. A Changelog written by hand is left alone. The Release workflow
+# (release.yml) uses the same bullets when the promotion is merged, even if this didn't run.
+name: Promotion notes
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+  pull-requests: write     # edit the promotion's title and description
+
+concurrency:
+  group: promotion-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  notes:
+    # only the maintainers' own testing branch, not a fork's branch that happens to be called testing
+    if: github.event.pull_request.head.ref == 'testing' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fill in the title and changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # read fresh: the event's copy may predate an edit
+          gh api "repos/${{ github.repository }}/pulls/$NUMBER" > "$RUNNER_TEMP/pr.json"
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            gh api "repos/${{ github.repository }}/commits/$c/pulls"
+          done | jq -s '[add // [] | .[] | select(.merged_at and .base.ref == "testing")] | unique_by(.number)' \
+            > "$RUNNER_TEMP/included.json"
+          out=$(python3 scripts/release.py --pr-json "$RUNNER_TEMP/pr.json" \
+            --included-json "$RUNNER_TEMP/included.json" --fill-promotion "$RUNNER_TEMP")
+          echo "$out"
+          if [ "$out" = "changed=true" ]; then
+            gh pr edit "$NUMBER" -R "${{ github.repository }}" \
+              --title "$(cat "$RUNNER_TEMP/title.txt")" --body-file "$RUNNER_TEMP/body.md"
+          fi
