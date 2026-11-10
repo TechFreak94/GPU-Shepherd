@@ -27,6 +27,8 @@ from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, Of
                      MODEL_ID, SLUG)
 
 LLAMA_SWAP_IMAGE = "ghcr.io/mostlygeek/llama-swap:cuda"
+# what a client app needs: any of the App Center's model servers, which all speak the OpenAI API
+NEEDS_SERVER = "A model server to chat with (Llama Swap, vLLM or Ollama)"
 # what Speaches downloads first, and Open WebUI's voice uses
 STT_MODEL = "Systran/faster-distil-whisper-large-v3"
 TTS_MODEL = "speaches-ai/Kokoro-82M-v1.0-ONNX"
@@ -92,6 +94,8 @@ class Template:
     shm_size: str | None = None                # shared memory, for apps that split work across GPUs
     engine: str = ""                           # "vllm": a model server with its own install answers (see VLLM_*)
     bundled_slot: str = "chat"                 # the model slot a Llama Swap installed alongside it fills
+    cpu_ok: bool = False                       # a model server that keeps answering on the CPU (slower)
+                                               # while an image app has the only GPU, instead of stopping
 
 
 TEMPLATES: tuple[Template, ...] = (
@@ -102,7 +106,7 @@ TEMPLATES: tuple[Template, ...] = (
                 "Pick a chat model and a coding model now, or add models later"),
         default_id="llm", default_name="Llama Swap", description="llama-swap model server",
         kind="llama-swap", image=LLAMA_SWAP_IMAGE, container_port=8080, host_port=8080, gpu="all",
-        open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True),
+        open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True), cpu_ok=True,
         models=(ModelSlot(key="chat", label="Chat model", alias="chat", ctx_size=32768,
                           sampling="--temp 0.7 --top-p 0.95",
                           hint="For chat apps such as Open WebUI and Hermes Agent."),
@@ -117,16 +121,23 @@ TEMPLATES: tuple[Template, ...] = (
         license="MIT (llama-swap and llama.cpp)", docs="https://github.com/mostlygeek/llama-swap"),
     Template(
         key="ollama", tag="Model Server", badge="OL", title="Ollama", group="Model servers",
-        blurb="Ollama's model server, for apps that only speak Ollama's API.",
-        points=("Uses every free GPU and gives them back when something else needs one",
+        blurb="Ollama's model server: models from Ollama's library, for the chat apps here and apps that speak Ollama's API.",
+        points=("Uses every free GPU, gives them back when something else needs one, and keeps answering on "
+                "the CPU (slower) meanwhile",
                 "Models from Ollama's library, kept in the models folder's ollama/ subfolder",
-                "Most apps here use the Llama Swap instead"),
+                "Chat apps here can use it like the Llama Swap, through its OpenAI-compatible API"),
         default_id="ollama", default_name="Ollama", description="Ollama model server",
         image="ollama/ollama:latest", container_port=11434, host_port=11434, gpu="all",
-        env={"OLLAMA_HOST": "0.0.0.0:11434"},
-        models_mount=("ollama", "/root/.ollama/models", False),
-        after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3:8b (CONTAINER is "
-                      "shown on its dashboard card). It answers at http://this-machine:PORT, and has no login or "
+        # Ollama's own default context is 4K on GPUs under 24 GB, too short for agents (Hermes,
+        # OpenCode) and documents: the same 32K as the Llama Swap's chat model, with its 8-bit cache
+        env={"OLLAMA_HOST": "0.0.0.0:11434", "OLLAMA_CONTEXT_LENGTH": "32768", "OLLAMA_FLASH_ATTENTION": "1",
+             "OLLAMA_KV_CACHE_TYPE": "q8_0"},
+        models_mount=("ollama", "/root/.ollama/models", False), cpu_ok=True,
+        after_install="Download a model once it runs: docker exec CONTAINER ollama pull qwen3.5:9b (CONTAINER is "
+                      "shown on its dashboard card), then give it the name chat, which the apps here ask for first: "
+                      "docker exec CONTAINER ollama cp qwen3.5:9b chat. Every model gets OLLAMA_CONTEXT_LENGTH "
+                      "tokens of context (under Edit). Apps that list the server's models (Open WebUI, "
+                      "LibreChat) show every model you pull. It answers at http://this-machine:PORT, and has no login or "
                       "API key, so keep that port off the internet. Home Assistant 2026.8 or newer can use the "
                       "Llama Swap through its llama.cpp integration instead.",
         needs="An NVIDIA GPU", license="MIT", docs="https://docs.ollama.com"),
@@ -155,7 +166,7 @@ TEMPLATES: tuple[Template, ...] = (
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
         appdata=(("data", "/app/backend/data"),), connects="openwebui",
-        needs="A Llama Swap server to chat with", license="Open WebUI License (BSD-3-Clause plus branding terms)",
+        needs=NEEDS_SERVER, license="Open WebUI License (BSD-3-Clause plus branding terms)",
         docs="https://docs.openwebui.com"),
     Template(
         key="hermes", tag="Agent UI", badge="H", title="Hermes Agent", group="Chat and agents",
@@ -205,7 +216,7 @@ TEMPLATES: tuple[Template, ...] = (
         companions=("librechat-mongodb",), connects="librechat",
         after_install="Open it, sign up and log in: the first account becomes the admin. Then turn sign-ups "
                       "off by setting ALLOW_REGISTRATION=false under Edit, unless others should make accounts.",
-        needs="A Llama Swap server to chat with", license="MIT", docs="https://www.librechat.ai/docs"),
+        needs=NEEDS_SERVER, license="MIT", docs="https://www.librechat.ai/docs"),
     Template(
         key="anythingllm", tag="Chat UI", badge="ALL", title="AnythingLLM", group="Chat and agents",
         blurb="Chat with your documents: workspaces, built-in RAG and agents, thinking with your own model server.",
@@ -220,7 +231,7 @@ TEMPLATES: tuple[Template, ...] = (
         data_owner=(1000, 1000), connects="anythingllm",
         after_install="Open it and make a workspace to chat in; the model server is already set up. "
                       "It has no login until you set a password under Settings, Security.",
-        needs="A Llama Swap server to chat with", license="MIT",
+        needs=NEEDS_SERVER, license="MIT",
         docs="https://docs.anythingllm.com/installation-docker/overview"),
     Template(
         key="langflow", tag="Agent UI", badge="LF", title="Langflow", group="Chat and agents",
@@ -242,7 +253,7 @@ TEMPLATES: tuple[Template, ...] = (
                       "Edit on this instance), and type chat (or another name the server answers to) as the Model "
                       "Name. Its OpenAI API Key is already the server's key. For documents, the OpenAI Embeddings "
                       "block with the same address and the model embed, if the server has an embeddings model.",
-        needs="A Llama Swap server for its flows to use", license="MIT", docs="https://docs.langflow.org"),
+        needs="A model server for its flows to use (Llama Swap, vLLM or Ollama)", license="MIT", docs="https://docs.langflow.org"),
     Template(
         key="sillytavern", tag="Chat UI", badge="ST", title="SillyTavern", group="Chat and agents",
         blurb="Chat and role-play with characters you make or import, with group chats, lore books and extensions.",
@@ -258,7 +269,7 @@ TEMPLATES: tuple[Template, ...] = (
         connects="sillytavern",
         after_install="Open it and log in with the user name and password you chose. It is already connected to the "
                       "model server (API Connections: Chat Completion, Custom), so pick a character and chat.",
-        needs="A Llama Swap server to chat with", license="AGPL-3.0", docs="https://docs.sillytavern.app"),
+        needs=NEEDS_SERVER, license="AGPL-3.0", docs="https://docs.sillytavern.app"),
     Template(
         key="open-notebook", tag="Research UI", badge="ON", title="Open Notebook", group="Chat and agents",
         blurb="A private NotebookLM: add PDFs, web pages and videos, then chat with them, take notes and make podcasts.",
@@ -272,7 +283,7 @@ TEMPLATES: tuple[Template, ...] = (
         after_install="Open it and log in with the password you chose. Under Settings, Models, press Sync for "
                       "OpenAI Compatible, then pick chat as the default chat model (and embed as the embedding "
                       "model, if the server has one, to search your sources).",
-        needs="A Llama Swap server to chat with", license="MIT", docs="https://github.com/lfnovo/open-notebook"),
+        needs=NEEDS_SERVER, license="MIT", docs="https://github.com/lfnovo/open-notebook"),
     Template(
         key="invokeai", tag="Image UI", badge="INV", title="InvokeAI", group="Image and video",
         blurb="Image generation with a polished canvas: inpainting, layers and a model manager, in the browser.",
@@ -371,7 +382,7 @@ OFFLOAD_CHOICES = {
 def matches(t: Template, inst: Instance) -> bool:
     """Whether an instance was installed from this template (older ones by their image)."""
     if inst.kind == "llama-swap" or t.kind == "llama-swap":
-        return inst.kind == t.kind                 # every model server is a Llama Swap server
+        return inst.kind == t.kind                 # every llama-swap instance is a Llama Swap server
     if inst.app:
         return RENAMED.get(inst.app, inst.app) == t.key
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
@@ -488,7 +499,7 @@ class Machine:
     """What the app knows when building an instance from a template."""
     gpu_mem_gb: list[float]
     instances: dict[str, Instance]
-    servers: dict[str, dict]           # llama-swap instance id -> {"api_key", "default_model"}
+    servers: dict[str, dict]           # model server instance id -> {"api_key", "default_model"} (see model_servers)
     model_sizes: dict[str, float]      # container path of a .gguf file -> size in GB
     ram_gb: float = 0.0                # system RAM (0 = unknown)
 
@@ -545,7 +556,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ConfigError("Port: enter a number from 1 to 65535")
     gpu = _gpu_policy(str(a.get("gpu") or t.gpu), t.priority)
-    if t.kind == "llama-swap" and gpu.mode == "elastic":
+    if t.cpu_ok and gpu.mode == "elastic":
         # a chat server keeps answering (on the CPU, slower) while an image app has the only GPU
         gpu.cpu_fallback = True
 
@@ -889,6 +900,30 @@ def _vllm(a: dict, gpu: GpuPolicy) -> tuple[list[str], dict[str, str]]:
                "--tensor-parallel-size", str(count), "--max-model-len", length, "--gpu-memory-utilization", "0.90"]
     token = str(a.get("hf_token", "")).strip()
     return command, {"HF_TOKEN": token} if token else {}
+
+
+MODEL_SERVER_TAG = "Model Server"
+
+
+def is_model_server(t: Template) -> bool:
+    """An App Center app other apps can connect to (Llama Swap, vLLM, Ollama)."""
+    return t.tag == MODEL_SERVER_TAG
+
+
+# Ollama has no API keys; apps that insist on one send this, which it ignores
+OLLAMA_KEY = "ollama"
+
+
+def ollama_server(inst: Instance) -> dict | None:
+    """An Ollama instance as a model server apps can connect to (like Machine.servers' entries), or
+    None. Its models are whatever was pulled into it, so apps ask for the name chat (its install
+    steps say how to give a model that name) and the apps that list models show the rest."""
+    if not matches(get("ollama"), inst):
+        return None
+    ctx = inst.env.get("OLLAMA_CONTEXT_LENGTH", "")
+    ctx = int(ctx) if ctx.isdigit() else 0
+    return {"api_key": OLLAMA_KEY, "name": inst.name, "default_model": VLLM_ALIAS, "ctx": ctx, "embed": "",
+            "models": {VLLM_ALIAS: ctx}}
 
 
 def vllm_server(inst: Instance) -> dict | None:

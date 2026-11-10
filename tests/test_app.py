@@ -426,7 +426,7 @@ def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
     app, client, backend, data = stack
     login(client)
     assert "Add model server" not in client.get("/").text
-    assert "needs a Llama Swap server" not in client.get("/apps/open-webui").text       # the example has one
+    assert "needs a model server" not in client.get("/apps/open-webui").text       # the example has one
     for f in (data / "instances").glob("*.yaml"):
         f.unlink()
     assert "Add model server" not in client.get("/").text
@@ -436,8 +436,8 @@ def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
     assert "none is installed yet" not in store_page.split('id="app-comfyui"')[1].split("</article>")[0]
     for url in ("/apps/hermes", "/apps/hermes?mode=manual"):
         page = client.get(url).text
-        assert "Hermes Agent needs a Llama Swap server" in page and 'href="/apps/llm-server?then=hermes"' in page
-    assert "needs a Llama Swap server" not in client.get("/apps/comfyui").text
+        assert "Hermes Agent needs a model server" in page and 'href="/apps/llm-server?then=hermes"' in page
+    assert "needs a model server" not in client.get("/apps/comfyui").text
 
     # the Llama Swap installed "first" goes on to Hermes, which then picks it
     page = client.get("/apps/llm-server?then=hermes").text
@@ -449,8 +449,40 @@ def test_app_needs_an_llm_server_first(stack, tmp_path_factory):
         "models_dir": str(models), "offload": "auto", "action": "create"})
     assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/apps/hermes?msg=Installed Llama Swap")
     page = client.get(r.headers["HX-Redirect"]).text
-    assert "needs a Llama Swap server" not in page and '<option value="llm" selected>' in page
+    assert "needs a model server" not in page and '<option value="llm" selected>' in page
     assert "Now set up Hermes Agent" in page
+
+
+def test_apps_connect_to_any_model_server(stack, tmp_path_factory):
+    """Ollama (or vLLM) counts as a model server: installed first for an app, the app then picks it
+    and talks to its OpenAI-compatible API."""
+    app, client, backend, data = stack
+    login(client)
+    for f in (data / "instances").glob("*.yaml"):
+        f.unlink()
+    page = client.get("/apps/open-webui").text
+    assert 'href="/apps/ollama?then=open-webui"' in page and 'href="/apps/vllm?then=open-webui"' in page
+    page = client.get("/apps/ollama?then=open-webui").text
+    assert 'name="then" value="open-webui"' in page and "Once this Ollama is installed" in page
+    models = tmp_path_factory.mktemp("models")
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "ollama", "then": "open-webui", "name": "Ollama", "id": "ollama", "port": "11434",
+        "gpu": "all", "models_dir": str(models), "action": "create"})
+    assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/apps/open-webui?msg=Installed Ollama")
+    page = client.get(r.headers["HX-Redirect"]).text
+    assert "needs a model server" not in page and '<option value="ollama" selected>' in page
+    store_page = client.get("/apps").text
+    assert "none is installed yet" not in store_page.split('id="app-open-webui"')[1].split("</article>")[0]
+    for key in ("librechat", "anythingllm", "langflow", "sillytavern", "open-notebook"):
+        assert "needs a model server" not in client.get(f"/apps/{key}?mode=manual").text
+
+    r = client.post("/instances/guided", headers=HX, data={
+        "template": "open-webui", "name": "Open WebUI", "id": "webui", "port": "3000", "gpu": "none",
+        "appdata_dir": str(data / "appdata" / "webui"), "server": "ollama", "action": "create"})
+    assert r.status_code == 204
+    env = app.state.store.instance("webui").env
+    assert env["OPENAI_API_BASE_URLS"] == "http://ollama:11434/v1" and env["OPENAI_API_KEYS"] == "ollama"
+    assert env["DEFAULT_MODELS"] == "chat"
 
 
 def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):

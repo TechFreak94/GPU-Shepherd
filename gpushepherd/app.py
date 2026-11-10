@@ -531,16 +531,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             app_t = tpl.get(form.get("app") or "") if not editing else None
         except ConfigError:
             app_t = None
-        no_server = bool(app_t and app_t.connects) and not svc.has_llm_server()
+        no_server = bool(app_t and app_t.connects) and not svc.has_model_server()
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
-                    no_server=no_server,
+                    no_server=no_server, model_servers=[x for x in tpl.TEMPLATES if tpl.is_model_server(x)],
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
     # ------------------------------------------------------------------ automatic install (templates)
     machine, model_files = svc.machine, svc.model_files
 
     def next_app(key: str) -> tpl.Template | None:
-        """The app to go on to after installing a Llama Swap server for it (?then=)."""
+        """The app to go on to after installing a model server for it (?then=)."""
         try:
             t = tpl.get(key) if key else None
         except ConfigError:
@@ -569,7 +569,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
-                    no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
+                    no_server=bool(t.connects) and not m.servers, then_t=then if tpl.is_model_server(t) else None,
+                    model_servers=[x for x in tpl.TEMPLATES if tpl.is_model_server(x)])
 
     # ------------------------------------------------------------------ App Center
     @app.get("/apps", response_class=HTMLResponse)
@@ -577,7 +578,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         instances, _ = store.instances()
         return page(request, "apps.html", groups=tpl.groups(), gpu_choices=tpl.GPU_CHOICES,
                     installed=tpl.installed(instances),
-                    has_server=any(i.kind == "llama-swap" for i in instances.values()), server_app=tpl.BUNDLED_SERVER)
+                    has_server=svc.has_model_server(), server_app=tpl.BUNDLED_SERVER)
 
     @app.get("/apps/{key}", response_class=HTMLResponse)
     def install_app(request: Request, key: str, mode: str = "auto", then: str = ""):
@@ -619,7 +620,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                               "comfyui", "speech", "offload", "login_user", "password", "hass_url",
                                               "hass_token", "hf_model", "hf_token", "max_len", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
-        then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None
+        then = next_app(str(raw.get("then", ""))) if tpl.is_model_server(t) else None
         if raw.get("action") == "advanced":
             try:
                 inst = svc.app_instance(t.key, f)
