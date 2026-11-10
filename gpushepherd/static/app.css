@@ -247,6 +247,9 @@ nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke
 .picker-tree{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:8px 0}
 .drive-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}
 .drive-row:first-child{border-top:0}.drive-row>div:first-child{min-width:0;overflow-wrap:anywhere}
+.drive-group{border-top:1px solid var(--line);padding-top:8px}.drive-group:first-child{border-top:0;padding-top:0}.drive-disk{padding-bottom:2px}
+.drive-row.drive-part{margin-left:14px;padding-left:12px;border-left:2px solid var(--line)}
+.drive-disk+.drive-row{border-top:0}
 /* Books page: drop zone for uploads */
 .drop{border:2px dashed var(--btn-line);border-radius:10px;padding:14px;margin:4px 0 6px}
 .drop.over{border-color:var(--accent);background:var(--btn-hover)}

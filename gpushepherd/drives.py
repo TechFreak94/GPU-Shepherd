@@ -69,6 +69,8 @@ class Drive:
     note: str = ""
     system: bool = False                # holds the operating system: shown, but not for moving things to
     by_us: bool = False                 # GPU Shepherd mounted it
+    disk: str = ""                      # the physical drive it is on (/dev/sdb); partitions of one drive share it
+    disk_size: int = 0
 
 
 # --------------------------------------------------------------------------- looking at the disks
@@ -96,7 +98,9 @@ def parse_lsblk(text: str) -> list[Drive]:
         return []
     out: list[Drive] = []
 
-    def walk(dev: dict, parent_model: str, removable: bool) -> None:
+    def walk(dev: dict, parent_model: str, removable: bool, disk: tuple[str, int] | None = None) -> None:
+        if disk is None:
+            disk = ("/dev/" + str(dev.get("kname") or dev.get("name") or ""), _int(dev.get("size")) or 0)
         kids = dev.get("children") or []
         model = (dev.get("model") or parent_model or "").strip()
         removable = removable or _flag(dev.get("rm"))
@@ -106,13 +110,15 @@ def parse_lsblk(text: str) -> list[Drive]:
         has_fs = bool(dev.get("fstype"))
         if kids and not has_fs:
             for k in kids:
-                walk(k, model, removable)
+                walk(k, model, removable, disk)
             return
         if kind not in ("part", "disk", "lvm", "crypt", "md", "dm"):
             return
-        out.append(_drive(dev, model, removable))
+        d = _drive(dev, model, removable)
+        d.disk, d.disk_size = disk
+        out.append(d)
         for k in kids:
-            walk(k, model, removable)
+            walk(k, model, removable, disk)
 
     for d in tree:
         walk(d, "", False)
@@ -147,6 +153,21 @@ def _drive(dev: dict, model: str, removable: bool) -> Drive:
     elif not d.uuid:
         d.state, d.note = "unsupported", "has no ID to find it by"
     return d
+
+
+def group_by_disk(found: list[Drive]) -> list[dict]:
+    """The drives grouped by physical drive, in the order first seen. A group with more than one
+    entry is shown as the drive with its partitions under it; `disk` is its name (the model)."""
+    groups: dict[str, dict] = {}
+    for d in found:
+        g = groups.setdefault(d.disk or d.device, {"device": d.disk or d.device, "size": d.disk_size or d.size,
+                                                   "name": d.model, "removable": False, "parts": []})
+        g["parts"].append(d)
+        g["removable"] = g["removable"] or d.removable
+        g["name"] = g["name"] or d.model
+    for g in groups.values():
+        g["name"] = g["name"] or g["parts"][0].name
+    return list(groups.values())
 
 
 def mount_name(drive: Drive, taken: set[str]) -> str:
@@ -384,8 +405,11 @@ def demo_drives() -> list[Drive]:
     """Disks for demo mode: a system disk, a data drive nobody has mounted, and an empty new one."""
     gb = 10**9
     return [Drive("/dev/nvme0n1p2", "System SSD", 500 * gb, "ext4", "", "demo-0001", "Demo NVMe", "/", 310 * gb,
-                  state="mounted", system=True),
-            Drive("/dev/sdb1", "Data SSD", 1000 * gb, "ext4", "Data SSD", "demo-0002", "Demo SATA SSD", "", None),
+                  state="mounted", system=True, disk="/dev/nvme0n1", disk_size=500 * gb),
+            Drive("/dev/sdb1", "Data SSD", 1000 * gb, "ext4", "Data SSD", "demo-0002", "Demo SATA SSD", "", None,
+                  disk="/dev/sdb", disk_size=1000 * gb),
+            Drive("/dev/sdb2", "Scratch", 200 * gb, "ext4", "Scratch", "demo-0004", "Demo SATA SSD", "", None,
+                  disk="/dev/sdb", disk_size=1000 * gb),
             Drive("/dev/sdc", "Demo USB disk", 2000 * gb, "", "", "", "Demo USB disk", "", None, removable=True,
-                  state="empty", note="Nothing on it yet. GPU Shepherd never formats a drive: set it up with your "
+                  disk="/dev/sdc", disk_size=2000 * gb, state="empty", note="Nothing on it yet. GPU Shepherd never formats a drive: set it up with your "
                   "system's disk tool, then it shows here.")]

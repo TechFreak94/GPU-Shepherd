@@ -123,6 +123,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                  gpu_text=gpu_text, demo=demo, level=meter_level)
     templates.env.filters["gib"] = gib
     templates.env.filters["gb"] = gb
+    templates.env.filters["by_disk"] = drives.group_by_disk
     templates.env.filters["md"] = changelog.inline
     templates.env.filters["ago"] = image_updates.ago
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
