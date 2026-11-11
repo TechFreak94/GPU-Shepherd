@@ -122,7 +122,7 @@ def test_create_edit_and_validation(stack):
     assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/?msg=Saved Whisper")
     saved = yaml.safe_load((data / "instances" / "whisper.yaml").read_text())
     assert saved["gpu"] == {"mode": "fixed", "gpus": [1], "min_gpus": 1, "max_gpus": 0, "priority": 60,
-                            "cpu_fallback": False, "vram_gb": 0}
+                            "cpu_fallback": False, "vram_gb": 0, "vendor": "nvidia"}
     assert saved["command"] == ["serve", "--fast"]
 
     bad = dict(form, id="other", ports="3000:8080")         # webui already uses 3000
@@ -649,7 +649,7 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     page = client.get("/apps").text
     assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
     assert "librechat-mongodb" not in page                     # companions are not in the App Center
-    assert page.count(">Experimental</span>") == 2 and "Experimental." in client.get("/apps/langflow").text  # the app + the Knowledge nav tag
+    assert page.count(">Experimental</span>") == 3 and "Experimental." in client.get("/apps/langflow").text  # Langflow, the Vulkan Llama Swap + the Knowledge nav tag
     assert "License: MIT" in client.get("/apps/langflow").text and "License: Apache-2.0" in page
     assert ">Credits</button>" in client.get("/ui/update").text
     cr = client.get("/ui/credits").text

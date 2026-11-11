@@ -895,8 +895,10 @@ class Shepherd:
             if info:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.query()[0]],
-                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb())
+        gpus = gpu_mod.query()[0]
+        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"],
+                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb(),
+                           amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"])
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common
@@ -1487,7 +1489,7 @@ class Shepherd:
 
     def _suggestions(self, iid: str) -> tuple[Instance, Catalog, list[tuning.Suggestion]]:
         inst, cat = self.server(iid)
-        gpus = sorted(gpu_mod.query()[0], key=lambda g: g.index)       # the most it may get
+        gpus = sorted((g for g in gpu_mod.query()[0] if g.vendor == inst.gpu.vendor), key=lambda g: g.index)
         if inst.gpu.mode == "fixed":
             gpus = [g for g in gpus if g.index in inst.gpu.gpus]
         elif inst.gpu.max_gpus:

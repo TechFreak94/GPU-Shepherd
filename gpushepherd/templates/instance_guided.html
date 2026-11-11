@@ -70,7 +70,7 @@
       <label class="check"><input type="radio" name="gpu" value="{{ value }}" {{ "checked" if f.gpu == value }}> {{ label }}{% if value == t.gpu %} <span class="tag accent">recommended</span>{% endif %}</label>
       {% endfor %}
     </fieldset>
-    <div class="hint">{% if gpus %}This machine has {{ gpus|length }} GPU{{ "s" if gpus|length != 1 }}. {% endif %}When two apps want the same GPU, {{ "this app wins over model servers" if t.priority > 50 else "the more important app keeps its GPU" }}. You are asked before anything is stopped. You can change this later under Edit.</div>
+    <div class="hint">{% if gpus %}This machine has {{ gpus|length }} {{ "AMD " if t.vendor == "amd" }}GPU{{ "s" if gpus|length != 1 }}{% if t.vendor == "amd" %} ({% for g in gpus %}{{ g.name }}, {{ "%.0f"|format(g.mem_total / 1024) }} GB{{ "; " if not loop.last }}{% endfor %}){% endif %}. {% elif t.vendor == "amd" %}No AMD GPU was found (it needs the amdgpu driver), so it would run on the CPU. {% endif %}When two apps want the same GPU, {{ "this app wins over model servers" if t.priority > 50 else "the more important app keeps its GPU" }}. You are asked before anything is stopped. You can change this later under Edit.</div>
   </div>
 
   {% if t.models_mount or t.appdata %}

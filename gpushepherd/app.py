@@ -22,6 +22,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
+                     gpu_label, gpu_vendor,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
                      parse_volumes)
 from .connectors import llamaswap
@@ -594,11 +595,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
                 "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
                 "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app,
-                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update}
+                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update,
+                "devices": ", ".join(inst.devices), "gpu_vendor": inst.gpu.vendor}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
-        gpus, _ = engine.snapshot().gpus, None
-        gpu_count = max(len(gpus), 1)
+        gpus = engine.snapshot().gpus
+        listed = list(form.get("gpu_list") or [])
+        # NVIDIA GPUs 0..n (at least GPU 0), then the AMD ones, plus any the form lists that aren't here now
+        nvidia = [g.index for g in gpus if g.vendor == "nvidia"] + [x for x in listed if gpu_vendor(x) == "nvidia"]
+        indices = sorted(set(range(max(nvidia, default=0) + 1)) | {g.index for g in gpus} | set(listed))
         try:
             app_t = tpl.get(form.get("app") or "") if not editing else None
         except ConfigError:
@@ -606,7 +611,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         no_server = bool(app_t and app_t.connects) and not svc.has_model_server()
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
                     no_server=no_server, model_servers=[x for x in tpl.TEMPLATES if tpl.is_model_server(x)],
-                    gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
+                    gpu_indices=[(n, gpu_label(n)) for n in indices])
 
     # ------------------------------------------------------------------ automatic install (templates)
     machine, model_files = svc.machine, svc.model_files
@@ -631,13 +636,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         keys = {sl.key for sl in tpl.slots(t)}
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
                       f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in have)
-                     for s, fit in sorted(((s, model_library.fit(s, m.gpu_mem_gb, m.ram_gb))
+                     for s, fit in sorted(((s, model_library.fit(s, tpl.gpu_mem_gb(t, m), m.ram_gb))
                                            for s in model_library.SUGGESTIONS if keys & set(s.uses)),
                                           key=lambda x: x[1].rank)] if wants_files else []
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
-                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
+                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy,
+                    gpus=[g for g in gpus if g.vendor == t.vendor],
                     speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
@@ -741,7 +747,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
                                           "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
-                                          "drain_path", "drain_key", "app", "requires", "vram_gb")}
+                                          "drain_path", "drain_key", "app", "requires", "vram_gb", "devices",
+                                          "gpu_vendor")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
         f["cpu_fallback"] = raw.get("cpu_fallback") == "on"
@@ -756,7 +763,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                               min_gpus=int(f["min_gpus"] or 1), max_gpus=int(f["max_gpus"] or 0),
                               priority=int(f["priority"] or 50),
                               vram_gb=float(f["vram_gb"]) if str(f["vram_gb"]).strip() and f["gpu_mode"] == "elastic" else 0,
-                              cpu_fallback=f["cpu_fallback"] and (f["gpu_mode"] == "elastic")),
+                              cpu_fallback=f["cpu_fallback"] and (f["gpu_mode"] == "elastic"),
+                              vendor=f["gpu_vendor"] or "nvidia"),
                 autostart=f["autostart"], open_port=int(f["open_port"]) if str(f["open_port"]).strip() else None,
                 open_path=f["open_path"] or "/", shm_size=f["shm_size"] or None, user=f["user_spec"] or None,
                 memory_limit=f["memory_limit"] or None,
@@ -766,7 +774,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
                                   path=f["drain_path"], key=f["drain_key"]),
                 app=str(f["app"]).strip(), requires=re.split(r"[\s,]+", str(f["requires"]).strip()),
-                auto_update=f["auto_update"])
+                auto_update=f["auto_update"], devices=re.split(r"[\s,]+", str(f["devices"]).strip()))
             msg = svc.save_instance(inst, editing)
         except (Problem, ConfigError, ValueError) as err:
             resp = editor(request, f, editing, error=err.msg if isinstance(err, Problem) else message(err))
@@ -791,7 +799,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         gpu_count = len(st.gpus) if running else 0
         loaded, err = svc.loaded(iid, cat)
         files, notes = llamaswap.local_model_files(inst)
-        preview_gpus = gpu_count or max(len(engine.snapshot().gpus), 1)
+        preview_gpus = gpu_count or max(len([g for g in engine.snapshot().gpus if g.vendor == inst.gpu.vendor]), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
@@ -859,14 +867,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         files, notes = llamaswap.local_model_files(inst)
         f = m.model_dump() if m else CatalogModel(id="new", file="/models/new.gguf").model_dump() | {"id": "", "file": ""}
         f["aliases_text"] = ", ".join(f.get("aliases") or [])
-        f["offload_rows"] = offload_rows({r.min_gpus: r for r in (m.offload if m else [])})
+        f["offload_rows"] = offload_rows({r.min_gpus: r for r in (m.offload if m else [])}, inst.gpu.vendor)
         return page(request, "model_form.html", inst=inst, f=f, editing=bool(m), files=files, file_notes=notes,
                     error="")
 
-    def offload_rows(rules: dict) -> list[dict]:
-        """One form row per GPU count this machine can give a model server (1..number of GPUs),
-        plus any count a saved rule mentions. Values are strings, as the form posts them."""
-        top = max([len(engine.snapshot().gpus), 1] + [int(k) for k in rules])
+    def offload_rows(rules: dict, vendor: str = "nvidia") -> list[dict]:
+        """One form row per GPU count this machine can give a model server (1..number of its kind of
+        GPUs), plus any count a saved rule mentions. Values are strings, as the form posts them."""
+        top = max([len([g for g in engine.snapshot().gpus if g.vendor == vendor]), 1] + [int(k) for k in rules])
         rows = []
         for n in range(1, top + 1):
             r = rules.get(n)
@@ -909,7 +917,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                                "ttl", "gpus")}
         f |= {k: raw.get(k) == "on" for k in ("keep_loaded", "preload")}
         posted = posted_offload(raw)
-        f["offload_rows"] = offload_rows(posted)
+        f["offload_rows"] = offload_rows(posted, inst.gpu.vendor)
         try:
             model = CatalogModel(id=f["id"].strip(), name=f["name"].strip(), description=f["description"].strip(),
                                  file=f["file"], ctx_size=int(f["ctx_size"] or 32768),
