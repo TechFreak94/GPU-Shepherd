@@ -436,3 +436,10 @@ def test_drive_scripts_and_listing_parse(stack):
 def test_check_warns_when_gpu_shepherd_cant_see_the_new_place():
     assert any("can't see the new place" in w for w in moves.Check(hidden=True).warnings)
     assert moves.Check().warnings == []
+
+
+def test_partitions_are_grouped_under_their_drive():
+    groups = {g["device"]: g for g in drives.group_by_disk(drives.parse_lsblk(LSBLK))}
+    assert [d.device for d in groups["/dev/sdb"]["parts"]] == ["/dev/sdb1", "/dev/sdb2"]
+    assert groups["/dev/sdb"]["name"] == "Fast SSD" and groups["/dev/sdb"]["size"] == 1000204886016
+    assert len(groups["/dev/sda"]["parts"]) == 2 and len(groups["/dev/sdc"]["parts"]) == 1
