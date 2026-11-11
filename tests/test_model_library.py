@@ -295,3 +295,15 @@ def test_gguf_link_keeps_folders_and_revisions():
 def test_gguf_link_still_refuses_what_it_cannot_download(link):
     with pytest.raises(ValueError):
         ml.gguf_link(link)
+
+
+def test_models_added_from_a_link_say_how_much_ram_they_need():
+    hf = "https://huggingface.co/someone"
+    dense = ml.from_link(f"{hf}/Big-GGUF/resolve/main/Big-70B-Q4_K_M.gguf", gb=40)
+    f = ml.fit(dense, [8.0, 8.0], 64)
+    assert f.ok and f.slow and f.ram_gb == 32 and f.text.startswith("2 GPUs + about 32 GB of RAM: slow")
+    assert not ml.fit(dense, [8.0, 8.0], 32).ok and "GB of RAM beside your GPUs" in ml.fit(dense, [8.0, 8.0], 32).text
+    assert ml.fit(dense, [24.0, 24.0], 64).text == "Fits on 2 GPUs"
+    moe = ml.from_link(f"{hf}/Coder-GGUF/resolve/main/Coder-30B-A3B-Q4_K_M.gguf", gb=18)
+    f = ml.fit(moe, [8.0], 64)
+    assert moe.moe and f.ok and not f.slow and f.text.startswith("One GPU + about")

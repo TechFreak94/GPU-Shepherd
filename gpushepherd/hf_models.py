@@ -44,7 +44,7 @@ SKIP = re.compile(r"abliterat|uncensor|heretic|nsfw|embed|rerank|whisper|tts|dra
                   r"flux|stable-diffusion|sdxl|wan2|hunyuanvideo|qwen-image", re.I)
 MOE_ARCHS = re.compile(r"moe|gpt-?oss|deepseek2|deepseek3|llama4|qwen3next|minimax|dots1|grok|arctic|dbrx|"
                        r"mixtral|jamba|bailing|ernie4_5-moe|glm4moe|hunyuan-moe|kimi", re.I)
-ACTIVE = re.compile(r"(?:^|[-_])A\d+(?:\.\d+)?B(?:$|[-_])", re.I)     # "30B-A3B": active parameters
+ACTIVE = ml.ACTIVE
 SAFE_PATH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.+/-]*\.gguf$", re.I)   # plain file names only
 QUANT = re.compile(r"((?:UD-)?(?:I?Q\d(?:_[A-Z0-9]+)*|MXFP4(?:_MOE)?|BF16|F16|F32))"
                    r"(?:-\d{5}-of-\d{5})?\.gguf$", re.I)
