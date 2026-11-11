@@ -9,6 +9,7 @@ from gpushepherd import auth, storage
 from gpushepherd.app import create_app
 from gpushepherd.backend import FakeBackend
 from gpushepherd.config import Instance, Store, VolumeMap
+from gpushepherd.downloads import IMAGE as HELPER_IMAGE
 from gpushepherd.service import HelperFileOps
 
 
@@ -84,10 +85,10 @@ def test_files_and_folders_go_to_the_trash_and_come_back(stack):
 
 def test_unused_images_and_orphan_containers(stack):
     app, client, backend, data, models = stack
-    backend.present = {"ghcr.io/mostlygeek/llama-swap:cuda": 5 * 10**9, "curlimages/curl:8.11.1": 20 * 10**6,
+    backend.present = {"ghcr.io/mostlygeek/llama-swap:cuda": 5 * 10**9, HELPER_IMAGE: 20 * 10**6,
                        "someone/else:1": 10**9}
     rows = {i["image"]: i["used_by"] for i in client.get("/api/v1/storage").json()["images"]}
-    assert rows == {"ghcr.io/mostlygeek/llama-swap:cuda": ["LLM"], "curlimages/curl:8.11.1": []}   # not other images
+    assert rows == {"ghcr.io/mostlygeek/llama-swap:cuda": ["LLM"], HELPER_IMAGE: []}   # not other images
     msg = client.post("/api/v1/storage/images").json()["message"]
     assert "Removed 1 unused image(s), freeing 20 MB" in msg
     assert set(backend.present) == {"ghcr.io/mostlygeek/llama-swap:cuda", "someone/else:1"}

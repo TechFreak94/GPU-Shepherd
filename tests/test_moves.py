@@ -88,7 +88,7 @@ def test_move_models_to_another_disk_and_back(stack):
     body = {"source": str(models), "dest": str(new)}
     r = client.post("/api/v1/storage/move", json=body)
     assert r.status_code == 409 and r.json()["needs_confirm"]
-    assert r.json()["stops"] == ["LLM"] and r.json()["size"] >= 4100 and not r.json()["same_disk"] is None
+    assert r.json()["stops"] == ["LLM"] and r.json()["size"] >= 4100 and r.json()["same_disk"] is not None
     assert not any("can't see" in w for w in r.json()["warnings"])     # GPU Shepherd sees disk2
     r = client.post("/api/v1/storage/move", json=body | {"confirm": True})
     assert r.status_code == 202, r.text

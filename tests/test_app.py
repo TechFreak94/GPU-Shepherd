@@ -9,7 +9,6 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-import gpushepherd
 import gpushepherd.gpu as gpu_mod
 from gpushepherd import instance_templates as tpl
 from gpushepherd.app import DemoLlamaClient, create_app

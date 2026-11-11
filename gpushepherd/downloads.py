@@ -25,7 +25,10 @@ from .backend import Backend
 from .model_library import Suggestion
 
 log = logging.getLogger("gpushepherd")
-IMAGE = "curlimages/curl:8.11.1"
+# Pinned by digest: this image also does the root file work (moves, trash) and looks at the host's
+# drives, so it must be exactly the one that was reviewed, whatever a tag points at later.
+# This digest is curlimages/curl 8.11.1 (every platform).
+IMAGE = "curlimages/curl@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
 KIND = "download"
 FOLDER = "/models"           # the models folder inside the helper
 SPARE_GB = 2.0               # free space a download must leave on the disk

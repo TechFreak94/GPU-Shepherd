@@ -4,7 +4,10 @@ import stat
 from gpushepherd import auth
 from gpushepherd.config import Store
 
-from test_app import HX, login, stack  # noqa: F401 - the fixture
+import test_app
+from test_app import HX, login
+
+stack = test_app.stack          # the same app fixture
 
 
 def test_a_password_change_ends_other_logins_but_not_this_one(stack):
