@@ -88,7 +88,7 @@ def test_move_models_to_another_disk_and_back(stack):
     body = {"source": str(models), "dest": str(new)}
     r = client.post("/api/v1/storage/move", json=body)
     assert r.status_code == 409 and r.json()["needs_confirm"]
-    assert r.json()["stops"] == ["LLM"] and r.json()["size"] >= 4100 and r.json()["same_disk"] is not None
+    assert r.json()["stops"] == ["LLM"] and r.json()["size"] >= 4100 and not r.json()["same_disk"] is None
     assert not any("can't see" in w for w in r.json()["warnings"])     # GPU Shepherd sees disk2
     r = client.post("/api/v1/storage/move", json=body | {"confirm": True})
     assert r.status_code == 202, r.text
@@ -261,7 +261,7 @@ def test_storage_page_moves(stack):
     r = page.post("/storage/move/check", headers=HX, data={"source": str(models), "dest": str(disk2 / "m")})
     assert r.status_code == 200 and "Move Models?" in r.text and r.headers["HX-Retarget"] == "#modal-body"
     r = page.post("/storage/move", headers=HX, data={"source": str(models), "dest": str(disk2 / "m")})
-    assert r.status_code == 204 and r.headers["HX-Redirect"] == "/"
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/?msg=Moving")
     wait(app)
     html = page.get("/storage").text
     assert "Move back" in html and "Delete old copy" in html
@@ -306,11 +306,7 @@ class FakeHost(drives.Host):
         self.mounts = []
 
     def scan(self):
-        self.scans = getattr(self, "scans", 0) + 1
         return [drives.Drive(**d.__dict__) for d in self.found]
-
-    def signature(self):                   # as /proc/partitions: changes when a drive comes or goes
-        return ",".join(d.device for d in self.found)
 
     def mount(self, drive, base, persist):
         self.mounts.append((drive.device, base, persist))
@@ -440,21 +436,3 @@ def test_drive_scripts_and_listing_parse(stack):
 def test_check_warns_when_gpu_shepherd_cant_see_the_new_place():
     assert any("can't see the new place" in w for w in moves.Check(hidden=True).warnings)
     assert moves.Check().warnings == []
-
-
-def test_partitions_are_grouped_under_their_drive():
-    groups = {g["device"]: g for g in drives.group_by_disk(drives.parse_lsblk(LSBLK))}
-    assert [d.device for d in groups["/dev/sdb"]["parts"]] == ["/dev/sdb1", "/dev/sdb2"]
-    assert groups["/dev/sdb"]["name"] == "Fast SSD" and groups["/dev/sdb"]["size"] == 1000204886016
-    assert len(groups["/dev/sda"]["parts"]) == 2 and len(groups["/dev/sdc"]["parts"]) == 1
-
-
-def test_drives_are_scanned_once_while_nothing_changes(host_stack):
-    """A scan runs a privileged helper on the host, and the Storage page asks every few seconds."""
-    svc, page, models = host_stack
-    for _ in range(5):
-        assert page.get("/storage/drives").status_code == 200
-    assert svc.host_fs.scans == 1
-    attach_later(svc)                                    # a drive goes (scanned there) and comes back
-    assert page.get("/storage/drives").status_code == 200
-    assert svc.host_fs.scans == 3

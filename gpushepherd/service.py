@@ -40,8 +40,6 @@ from .trash import FileOps, Trash
 
 log = logging.getLogger("gpushepherd")
 POWER_ACTIONS = ("restart", "reboot", "shutdown")   # the top menu's Power dialog
-_LOADING = threading.Lock()   # guards Shepherd.loading (routes run in worker threads)
-DRIVE_SCAN_SECONDS = 30       # how long a look at the machine's drives is reused while no drive came or went
 
 
 def restart_process(delay: float = 1.0) -> None:
@@ -164,9 +162,6 @@ class Shepherd:
         self._auto_tried: set[tuple[str, str]] = set()     # (instance, version) automatic updates tried
         self._drive_lock = threading.Lock()
         self._drives_seen: set[str] | None = None   # drive IDs at the last scan (None: no scan yet)
-        # the last scan, kept while the kernel's list of drives is the same and it is fresh: a scan
-        # runs a privileged helper on the host, and the Storage page asks every few seconds
-        self._drive_scan: tuple[str, float, list[drives.Drive]] | None = None
 
     @property
     def backend(self):
@@ -193,16 +188,6 @@ class Shepherd:
         p = self.engine.plan(action, iid)
         if p.error:
             raise Problem(p.error, status=409)
-        if action == "stop" and p.is_noop:
-            # a helper (a database) that a running app starts with is kept running by the planner:
-            # say so, rather than "already stopped" while it runs on
-            states = self.backend.states()
-            if states.get(iid) and states[iid].running:
-                users = [i.name for i in self.store.instances()[0].values()
-                         if iid in i.requires and states.get(i.id) and states[i.id].running]
-                if users:
-                    raise Problem(f"{names[iid]} is needed by {' and '.join(users)}, which {'is' if len(users) == 1 else 'are'} "
-                                  f"running: stop {'it' if len(users) == 1 else 'them'} first.", "warn", 409)
         c = Change(action, iid, names[iid], p, p.describe(names), noop=p.is_noop)
         if not c.noop:
             c.warnings = self.memory_warnings(p)
@@ -452,15 +437,11 @@ class Shepherd:
         point is mounted now when Settings say so (and it has not failed before): GPU Shepherd never
         formats or writes to one."""
         with self._drive_lock:
-            sig, kept = self.host_fs.signature(), self._drive_scan
-            if kept and kept[0] == sig and time.monotonic() - kept[1] < DRIVE_SCAN_SECONDS:
-                return kept[2]
             try:
                 found = self.host_fs.scan()
             except (BackendError, OSError, ValueError) as err:
                 self.drive_error = f"The machine's drives can't be looked at from here: {err}"
                 log.debug("drive scan failed: %s", err)
-                self._drive_scan = None
                 return []
             self.drive_error = ""
             memory = self.drive_log.read()
@@ -479,9 +460,7 @@ class Shepherd:
                 for d in found:
                     if d.state == "ready" and d.uuid in attached:
                         self._mount(d, found, persist=True)
-            found = sorted(found, key=lambda d: (d.system, d.device))
-            self._drive_scan = (sig, time.monotonic(), found)
-            return found
+            return sorted(found, key=lambda d: (d.system, d.device))
 
     def _mount(self, d: drives.Drive, known: list[drives.Drive], persist: bool) -> None:
         taken = {x.mountpoint for x in known if x.mountpoint}
@@ -522,7 +501,6 @@ class Shepherd:
             if d.state in ("empty", "unsupported"):
                 raise Problem(f"{d.name} can't be mounted: {d.note or 'it has no filesystem'}", status=409)
             self._mount(d, found, persist=True)
-            self._drive_scan = None               # the next look shows it mounted
             if d.state == "failed":
                 raise Problem(d.note, status=500)
             return f"Mounted {d.name} at {d.mountpoint}." + (f" {d.note}" if d.note else "")
@@ -711,7 +689,7 @@ class Shepherd:
                 raise RuntimeError("the copy did not finish" if code is None else
                                    "the copy is not the same as the folder" if code == 5 else
                                    f"the copy failed (exit code {code}); is there room on the new disk?")
-            job("Copied: every file is there, with the same size as in the old copy")
+            job("Copied, and every file matches the old copy")
             self._switch(rec.source, rec.dest, job)
             rec.status, rec.leftover = "done", rec.source
             if not Path(rec.dest).is_dir():
@@ -890,12 +868,11 @@ class Shepherd:
                                 "embed_query_prefix": tpl.query_prefix(embed.file) if embed else "",
                                 # the name each chat model answers to (its first alias), and its context
                                 "models": {(x.aliases or [x.id])[0]: x.ctx_size for x in chat}}
-        for inst in instances.values():           # vLLM and Ollama servers: apps ask them for the model chat
-            info = tpl.vllm_server(inst) or tpl.ollama_server(inst)
+        for inst in instances.values():           # vLLM servers: one model each, under the name chat
+            info = tpl.vllm_server(inst)
             if info:
                 servers[inst.id] = info
-        # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.query()[0]],
+        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in self.engine.snapshot().gpus],
                            instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb())
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
@@ -917,10 +894,8 @@ class Shepherd:
                          volumes=[VolumeMap(host=models_dir, container=tpl.MODELS_IN_CONTAINER)])
         return llamaswap.local_model_files(probe)
 
-    def has_model_server(self) -> bool:
-        """Whether any model server an app can connect to is installed (Llama Swap, vLLM, Ollama)."""
-        return any(i.kind == "llama-swap" or tpl.vllm_server(i) or tpl.ollama_server(i)
-                   for i in self.store.instances()[0].values())
+    def has_llm_server(self) -> bool:
+        return any(i.kind == "llama-swap" for i in self.store.instances()[0].values())
 
     def appdata_root(self) -> str:
         return str(self.engine.host_data_dir / "appdata")
@@ -1586,7 +1561,7 @@ class Shepherd:
         if refusal and new_file:
             raise Problem(refusal, "warn", 422)
         if not budget.file_size(inst, model.file) and _volume_visible(inst, model.file) \
-                and str(budget.host_path(inst, model.file)) not in self._downloading({inst.id: inst}):
+                and model.file not in self._downloading({inst.id: inst}):
             notes.insert(0, f"{model.file} isn't in the models folder yet, so {model.id} can't load until it is.")
         return notes
 
@@ -1616,10 +1591,9 @@ class Shepherd:
         files = {x.file for x in cat.models}
         out = []
         linked = self._linked()
-        helpers = self.downloads.helpers()        # one Docker listing for the whole list
         for s in model_library.SUGGESTIONS + linked:
             f = model_library.fit(s, m.gpu_mem_gb, m.ram_gb)
-            st = self.downloads.status(s, folder, helpers)
+            st = self.downloads.status(s, folder)
             out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
                         "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
                         "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
@@ -1747,7 +1721,7 @@ class Shepherd:
         for m in cat.models:
             for f in (m.file, m.mmproj, m.mtp_draft):
                 p = budget.host_path(inst, f) if f else None
-                if p is None or str(p) in downloading or not _volume_visible(inst, f):   # both are paths on this machine
+                if p is None or f in downloading or not _volume_visible(inst, f):
                     continue
                 if not p.is_file():
                     missing.setdefault(m.id, []).append(f)
@@ -1762,13 +1736,12 @@ class Shepherd:
             raise Problem(f"{mid} can't load: {', '.join(gone)} is not in the models folder. Download it, "
                           "or fix the path with Edit.", "warn", 409)
         client = self.llama_client(iid)
-        with _LOADING:                        # two clicks at once start one load, not two
-            busy = self.loading.setdefault(iid, set())
-            if mid in busy:
-                raise Problem(f"{mid} is already loading.", "info", 409)
-            busy.add(mid)
+        busy = self.loading.setdefault(iid, set())
+        if mid in busy:
+            raise Problem(f"{mid} is already loading.", "info", 409)
 
         def worker():
+            busy.add(mid)
             try:
                 client.load(mid)
             except Exception as err:  # noqa: BLE001

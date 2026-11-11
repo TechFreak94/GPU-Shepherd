@@ -49,9 +49,7 @@ Knowing the design helps decide what is and isn't a vulnerability.
   to them). They carry the `gpushepherd.helper` label.
 - **The update service.** `update.sh` runs on the host as root, fast-forwards the clone you
   installed from, rebuilds the image and restarts GPU Shepherd. An optional systemd unit lets the
-  dashboard ask for it; that unit runs `update.sh` from the clone as root, so whoever owns the
-  clone (or can change files in it) can run commands as root: keep it owned by root or by an
-  account you trust like root. A GitHub token saved for a private repository is kept in the clone's
+  dashboard ask for it. A GitHub token saved for a private repository is kept in the clone's
   `.git` folder, mode 0600, and is never logged. So whoever controls the repository you update
   from controls the code that runs as root on your machine: install from the official repository
   or your own fork, and treat who has write access to it accordingly.

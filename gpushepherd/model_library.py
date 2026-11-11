@@ -273,7 +273,7 @@ def gguf_link(url: str) -> str:
     becomes its download link (/resolve/), and ?download=true and the like are dropped."""
     parts = urlsplit(url.strip())
     if parts.scheme not in ("https", "http") or not parts.netloc:
-        raise ValueError("The link must start with https:// (or http://)")
+        raise ValueError("The link must start with https://")
     path = parts.path
     if parts.netloc in ("huggingface.co", "www.huggingface.co"):
         path = re.sub(r"^(/[^/]+/[^/]+)/blob/", r"\1/resolve/", path)

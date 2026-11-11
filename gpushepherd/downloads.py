@@ -25,10 +25,7 @@ from .backend import Backend
 from .model_library import Suggestion
 
 log = logging.getLogger("gpushepherd")
-# Pinned by digest: this image also does the root file work (moves, trash) and looks at the host's
-# drives, so it must be exactly the one that was reviewed, whatever a tag points at later.
-# This digest is curlimages/curl 8.11.1 (every platform).
-IMAGE = "curlimages/curl@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
+IMAGE = "curlimages/curl:8.11.1"
 KIND = "download"
 FOLDER = "/models"           # the models folder inside the helper
 SPARE_GB = 2.0               # free space a download must leave on the disk
@@ -89,18 +86,13 @@ class Downloads:
     def name(self, s: Suggestion) -> str:
         return f"{self.prefix}download-{s.key}"
 
-    def helpers(self) -> dict:
-        """The download helpers Docker has now. A page that shows many models asks once and hands
-        the answer to status() for each, instead of one Docker listing per model."""
-        return self.backend.helpers(KIND)
-
-    def status(self, s: Suggestion, models_dir: str, helpers: dict | None = None) -> Status:
+    def status(self, s: Suggestion, models_dir: str) -> Status:
         total = sum(f.gb for f in s.files)
         root = Path(models_dir) if models_dir else None
         visible = bool(root and root.is_dir())
         name = self.name(s)
         if visible and all(_size(root / s.path(f)) for f in s.files):
-            self._tidy(name, helpers)
+            self._tidy(name)
             return Status("ready", total, total)
         with self._lock:
             starting = self._starting.get(name)
@@ -108,7 +100,7 @@ class Downloads:
             return Status("starting", 0, total)
         if starting:
             return Status("failed", 0, total, starting)
-        helper = (self.helpers() if helpers is None else helpers).get(name)
+        helper = self.backend.helpers(KIND).get(name)
         done = sum(_size(root / s.path(f)) or _size(root / (s.path(f) + ".part")) for f in s.files) / 1e9 \
             if visible else 0.0
         if helper and helper.running:
@@ -174,10 +166,10 @@ class Downloads:
                                   [(models_dir, FOLDER, False)], _owner(models_dir))
         return f"Threw away the partial download of {s.name}."
 
-    def _tidy(self, name: str, helpers: dict | None = None) -> None:
+    def _tidy(self, name: str) -> None:
         """Remove a finished download's helper: once the files are there, it has nothing to tell."""
         try:
-            if name in (self.helpers() if helpers is None else helpers):
+            if name in self.backend.helpers(KIND):
                 self.backend.remove(name)
         except Exception as err:  # noqa: BLE001 - tidying up is not worth failing the page for
             log.debug("could not remove %s: %s", name, err)

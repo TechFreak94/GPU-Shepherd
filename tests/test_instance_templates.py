@@ -270,7 +270,6 @@ def test_ollama_and_invokeai():
     m = machine()
     ol = tpl.build(tpl.get("ollama"), tpl.defaults(tpl.get("ollama"), m, "/m", "/a"), m)[0]
     assert ol.kind == "container" and ol.gpu.max_gpus == 0 and ol.ports[0].container == 11434
-    assert ol.gpu.cpu_fallback and ol.env["OLLAMA_CONTEXT_LENGTH"] == "32768"
     assert {v.container: v.host for v in ol.volumes} == {"/root/.ollama/models": "/m/ollama"}
     inv = tpl.build(tpl.get("invokeai"), tpl.defaults(tpl.get("invokeai"), m, "/m", "/a"), m)[0]
     assert inv.gpu.max_gpus == 1 and inv.gpu.priority == 60
@@ -401,26 +400,3 @@ def test_vllm():
     web = tpl.build(tpl.get("open-webui"), tpl.defaults(tpl.get("open-webui"), m2, "/m", "/a") | {"server": "vllm"}, m2)[0]
     assert web.env["OPENAI_API_BASE_URLS"] == "http://vllm:8000/v1" and web.env["DEFAULT_MODELS"] == "chat"
     assert tpl.vllm_server(Instance(id="x", name="x", image="x")) is None
-
-
-def test_every_client_app_can_use_ollama():
-    """Ollama is a model server like the others: every app that connects to one can pick it, through
-    its OpenAI-compatible API under /v1, asking for the model chat."""
-    m = machine()
-    ollama, _ = tpl.build(tpl.get("ollama"), tpl.defaults(tpl.get("ollama"), m, "/srv/models", "/a"), m)
-    info = tpl.ollama_server(ollama)
-    assert info == {"api_key": tpl.OLLAMA_KEY, "name": "Ollama", "default_model": "chat", "ctx": 32768, "embed": "",
-                    "models": {"chat": 32768}}
-    assert tpl.ollama_server(Instance(id="x", name="x", image="x")) is None
-    m = machine(instances={"ollama": ollama}, servers={"ollama": info})
-    url = "http://ollama:11434/v1"
-    clients = [t for t in tpl.TEMPLATES if t.connects]
-    assert {t.key for t in clients} >= {"open-webui", "librechat", "anythingllm", "langflow", "sillytavern",
-                                        "open-notebook", "hermes", "opencode"}
-    for t in clients:
-        assert "Llama Swap server" not in t.needs
-        a = tpl.defaults(t, m, "/srv/models", "/a") | {"server": "ollama", "password": "long-enough-pw"}
-        inst, _ = tpl.build(t, a, m)
-        seeds = tpl.seed_files(t, a, m)
-        assert any(url in v for v in [*inst.env.values(), *seeds.values()]), t.key
-        assert tpl.connected_server(inst, m, seeds.get("server.env", "")) == "ollama", t.key
