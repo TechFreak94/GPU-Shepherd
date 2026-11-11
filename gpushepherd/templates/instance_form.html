@@ -38,6 +38,12 @@
           <option value="elastic" {{ "selected" if f.gpu_mode == "elastic" }}>Flexible - uses spare GPUs, gives them up when another app needs them</option>
         </select>
         <div class="hint">Pick "No GPU" for apps that don't need one (chat screens, databases). Image apps like ComfyUI work best with fixed GPUs. Chat model servers can be flexible: they use whatever GPUs are free.</div></div>
+      <div data-gpu-mode="fixed elastic"><label for="gpu_vendor">Kind of GPU</label>
+        <select id="gpu_vendor" name="gpu_vendor">
+          <option value="nvidia" {{ "selected" if (f.gpu_vendor or "nvidia") == "nvidia" }}>NVIDIA (CUDA)</option>
+          <option value="amd" {{ "selected" if f.gpu_vendor == "amd" }}>AMD (Vulkan or ROCm)</option>
+        </select>
+        <div class="hint">The app only ever gets GPUs of this kind. An AMD GPU comes with its /dev/dri render node, which Vulkan needs; ROCm images also need /dev/kfd under Advanced, Devices.</div></div>
       <div data-gpu-mode="fixed elastic"><label for="priority">Importance (0-100)</label>
         <input type="number" id="priority" name="priority" min="0" max="100" value="{{ f.priority }}">
         <div class="hint">When two apps want the same GPU, the higher number keeps it. If you start an app yourself, it always gets its GPUs.</div></div>
@@ -45,7 +51,7 @@
     <div data-gpu-mode="fixed elastic" style="margin-top:12px">
       <label><span data-gpu-mode="fixed">Use GPUs</span><span data-gpu-mode="elastic">Preferred GPUs (optional, leave empty to let GPU Shepherd choose)</span></label>
       <div class="checks">
-        {% for n in gpu_indices %}<label class="check"><input type="checkbox" name="gpu_list" value="{{ n }}" {{ "checked" if n in (f.gpu_list or []) }}> GPU {{ n }}</label>{% endfor %}
+        {% for n, label in gpu_indices %}<label class="check"><input type="checkbox" name="gpu_list" value="{{ n }}" {{ "checked" if n in (f.gpu_list or []) }}> {{ label }}</label>{% endfor %}
       </div>
     </div>
     <div class="fields" data-gpu-mode="elastic" style="margin-top:12px">
@@ -103,10 +109,8 @@
           <div class="hint">Which user (id:group) owns the files the app writes. Empty = the image's default.</div></div>
         <div><label for="memory_limit">Memory limit</label><input type="text" id="memory_limit" name="memory_limit" value="{{ f.memory_limit or '' }}" placeholder="4g">
           <div class="hint">The most system RAM the app may use, like 8g. Empty = no limit.</div></div>
-        <div><label for="devices">Devices</label><input type="text" id="devices" name="devices" value="{{ f.devices or '' }}" placeholder="/dev/dri">
-          <div class="hint">Host devices passed in as they are, separated by commas: /dev/dri gives the app the AMD (or Intel) GPUs, for Vulkan. GPU Shepherd doesn't share those GPUs between apps.</div></div>
-        <div><label for="device_gpus">GPUs those devices give it</label><input type="number" id="device_gpus" name="device_gpus" min="0" max="64" value="{{ f.device_gpus or '' }}" placeholder="0">
-          <div class="hint">For a model server: how many GPUs to split its models across when it has no NVIDIA GPU.</div></div>
+        <div><label for="devices">Devices</label><input type="text" id="devices" name="devices" value="{{ f.devices or '' }}" placeholder="/dev/kfd">
+          <div class="hint">Host devices passed in as they are, separated by commas, such as /dev/kfd for ROCm images. GPUs don't go here: pick them under GPUs, so they are shared fairly.</div></div>
       </div>
     </details>
   </div>

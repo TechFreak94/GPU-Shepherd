@@ -66,6 +66,7 @@ services:
       - /mnt:/mnt:rslave
       # Optional: more folders whose model files you want to pick from in the UI - same path too.
       # - /srv/more-models:/srv/more-models:ro
+    # On a machine with AMD GPUs only (no NVIDIA), delete this deploy: section; install.sh does.
     deploy:
       resources:
         reservations:

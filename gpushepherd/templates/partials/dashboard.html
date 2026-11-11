@@ -83,12 +83,12 @@
   </div>
 {% for row in gpus %}{% set g = row.gpu %}
   <div class="card stat">
-    <div class="row"><strong>GPU {{ g.index }}</strong><span class="figure">{{ g.mem_pct }}%</span></div>
+    <div class="row"><strong>{{ g.label }}</strong><span class="figure">{{ g.mem_pct }}%</span></div>
     <div class="small muted">{{ g.name }}{% if row.unlock %}{% set x = row.unlock %}
       <span class="tag {{ 'accent' if x.unlocked else 'warn' }}" title="{% if x.unlocked %}Full-speed FP16/BF16 tensor math (gpu-unlock).{% endif %}{% if x.reboot_needed %} Changes at the next reboot.{% endif %} Settings &gt; Experimental">{{ x.badge }}</span>{% endif %}</div>
     <div class="meter" role="img" aria-label="{{ g.mem_pct }}% video memory used"><i class="{{ level(g.mem_pct) }}" style="width: {{ g.mem_pct }}%"></i></div>
     <div class="small muted">VRAM {{ "%.1f"|format(g.mem_used / 1024) }} of {{ "%.1f"|format(g.mem_total / 1024) }} GB · {{ g.util|int }}% busy</div>
-    <ul class="usage" aria-label="Instances on GPU {{ g.index }}">
+    <ul class="usage" aria-label="Instances on {{ g.label }}">
       {% for iid, name in row.users %}<li><a href="#inst-{{ iid }}" title="Go to {{ name }}">{{ name }}</a><span class="on">assigned</span></li>
       {% else %}<li class="muted"><span>Free - nothing is using this GPU</span></li>{% endfor %}
     </ul>
@@ -126,9 +126,8 @@
       <div class="fact">
         <dt>GPU {% call info(i.id ~ "-gpu", "GPU") -%}
           {% if c.running and c.assigned %}<span class="tl"><strong>{{ c.assigned|map(attribute="name")|unique|join(", ") }}</strong>{% if c.vram_total %}: {{ "%.1f"|format(c.vram_used / 1024) }} GB of video memory in use{% endif %}</span>{% endif %}
-          <span class="tl">{% if g.mode == "fixed" %}Always uses GPU {{ g.gpus|join(", ") }}.
-            {%- elif g.mode == "elastic" %}Uses {% if not g.max_gpus %}{{ g.min_gpus }} or more GPUs{% elif g.max_gpus == g.min_gpus %}exactly {{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }} to {{ g.max_gpus }} GPUs{% endif %}, and gives extra ones up when another instance needs them.
-            {%- elif i.devices %}Uses the GPUs behind {{ i.devices|join(", ") }} directly; GPU Shepherd doesn't share those out.
+          <span class="tl">{% if g.mode == "fixed" %}Always uses {{ gpu_text(g.gpus) }}.
+            {%- elif g.mode == "elastic" %}Uses {% if g.vendor == "amd" %}AMD GPUs: {% endif %}{% if not g.max_gpus %}{{ g.min_gpus }} or more GPUs{% elif g.max_gpus == g.min_gpus %}exactly {{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }} to {{ g.max_gpus }} GPUs{% endif %}, and gives extra ones up when another instance needs them.
             {%- else %}Does not use a GPU.{% endif %}
             {%- if g.vram_gb %} Shares its GPU with other apps that have a video memory budget: it may use up to {{ "%g"|format(g.vram_gb) }} GB.{% endif %}
             {%- if g.cpu_fallback %} When no GPU is free it runs on the CPU instead of stopping, and moves back onto a GPU when one is.{% endif %}</span>
@@ -137,7 +136,6 @@
         <dd>{% if c.running and c.gpus %}<strong>{{ gpu_text(c.gpus) }}</strong>
             {%- if c.vram_total %}{% set pct = (100 * c.vram_used / c.vram_total)|round|int %} · {{ "%.1f"|format(c.vram_used / 1024) }} of {{ "%.1f"|format(c.vram_total / 1024) }} GB
             <div class="meter thin" role="img" aria-label="{{ pct }}% video memory used"><i class="{{ level(pct) }}" style="width: {{ pct }}%"></i></div>{% endif %}
-          {% elif c.running and i.devices %}<strong>{{ i.device_gpus or "" }} through {{ i.devices|join(", ") }}</strong>
           {% elif c.running %}{% if g.mode != "none" %}<strong>CPU</strong> <span class="muted">· no GPU free</span>{% else %}none{% endif %}
           {% else %}<span class="muted">none while stopped</span>{% endif %}
           {% if c.gpu_note %}<p class="small muted gpu-note">{{ c.gpu_note }}</p>{% endif %}</dd>

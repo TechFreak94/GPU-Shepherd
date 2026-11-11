@@ -21,7 +21,7 @@ modules a task touches: each one starts with a docstring that says what it owns.
 | `model_library.py`, `downloads.py` | Suggested GGUF models and downloading them |
 | `connectors/llamaswap.py` | Renders llama-swap's config from the model catalogue |
 | `updates.py`, `changelog.py`, `buildinfo.py` | Self-update (with `update.sh` on the host), versions, changelog |
-| `gpu.py`, `host.py`, `auth.py` | nvidia-smi, /proc CPU and RAM, passwords |
+| `gpu.py`, `host.py`, `auth.py` | GPUs (nvidia-smi; AMD from /sys, numbered from 100), /proc CPU and RAM, passwords |
 | `gpu_unlock.py` | Experimental tensor unlock: talks to `gpu-unlock.sh` on the host (Settings > Experimental) |
 | `logins.py`, `credits.py` | Apps' accounts and password resets; open-source credits (keep `ACKNOWLEDGEMENTS.md` in step) |
 | `presets/starter/` | The default example setup offered on first run |

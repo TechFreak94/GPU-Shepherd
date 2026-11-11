@@ -230,17 +230,13 @@ class Shepherd:
                 vram = sum(vram_of.get(g, 0) for g in gpus)
                 if inst.gpu.shares:            # a shared GPU: only its budget is its own
                     vram = min(vram, int(inst.gpu.vram_gb * 2**30))
-                count = len(gpus)
-                if not gpus and inst.devices and inst.device_gpus:   # GPUs it reaches through devices
-                    count = inst.device_gpus
-                    vram = int(sum(gpu_mod.device_gpu_mem_gb(count)) * 2**30)
                 cat = self.store.catalog(iid) if inst.kind == "llama-swap" else None
-                n = budget.ram_needed(inst, cat, count, vram, peaks.get(iid, 0))
+                n = budget.ram_needed(inst, cat, len(gpus), vram, peaks.get(iid, 0))
                 if n:
                     need += n
                     starting.append(inst.name)
-                if cat and count:
-                    out += budget.too_big(inst, cat, count, vram)
+                if cat and gpus:
+                    out += budget.too_big(inst, cat, len(gpus), vram)
             total, available = host.mem_available()
             if need and total:
                 leaving = [self.engine.container_name(i) for i in p.to_stop + p.to_restart
@@ -899,9 +895,10 @@ class Shepherd:
             if info:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.query()[0]],
+        gpus = gpu_mod.query()[0]
+        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"],
                            instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb(),
-                           device_gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.amd_gpus()])
+                           amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"])
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common
@@ -1492,7 +1489,7 @@ class Shepherd:
 
     def _suggestions(self, iid: str) -> tuple[Instance, Catalog, list[tuning.Suggestion]]:
         inst, cat = self.server(iid)
-        gpus = sorted(gpu_mod.query()[0], key=lambda g: g.index)       # the most it may get
+        gpus = sorted((g for g in gpu_mod.query()[0] if g.vendor == inst.gpu.vendor), key=lambda g: g.index)
         if inst.gpu.mode == "fixed":
             gpus = [g for g in gpus if g.index in inst.gpu.gpus]
         elif inst.gpu.max_gpus:

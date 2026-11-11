@@ -122,7 +122,7 @@ def test_create_edit_and_validation(stack):
     assert r.status_code == 204 and unquote(r.headers["HX-Redirect"]).startswith("/?msg=Saved Whisper")
     saved = yaml.safe_load((data / "instances" / "whisper.yaml").read_text())
     assert saved["gpu"] == {"mode": "fixed", "gpus": [1], "min_gpus": 1, "max_gpus": 0, "priority": 60,
-                            "cpu_fallback": False, "vram_gb": 0}
+                            "cpu_fallback": False, "vram_gb": 0, "vendor": "nvidia"}
     assert saved["command"] == ["serve", "--fast"]
 
     bad = dict(form, id="other", ports="3000:8080")         # webui already uses 3000

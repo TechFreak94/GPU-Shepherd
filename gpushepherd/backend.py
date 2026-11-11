@@ -24,6 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .config import gpu_vendor
+
 LABEL_INSTANCE = "gpushepherd.instance"
 LABEL_GPUS = "gpushepherd.gpus"
 LABEL_CONFIG = "gpushepherd.config"
@@ -47,7 +49,7 @@ class ContainerSpec:
     shm_size: str | None = None
     user: str | None = None
     mem_limit: str | None = None
-    devices: list[str] = field(default_factory=list)   # host device paths passed in as they are (/dev/dri)
+    devices: list[str] = field(default_factory=list)   # host device paths passed in (an AMD GPU's render node)
 
 
 @dataclass
@@ -258,8 +260,9 @@ class DockerBackend:
         self.remove(spec.name)
         from docker.types import DeviceRequest
         device_requests = []
-        if spec.gpus:
-            device_requests = [DeviceRequest(device_ids=[str(g) for g in spec.gpus], capabilities=[["gpu"]])]
+        nvidia = [g for g in spec.gpus if gpu_vendor(g) == "nvidia"]   # AMD ones come as devices (engine)
+        if nvidia:
+            device_requests = [DeviceRequest(device_ids=[str(g) for g in nvidia], capabilities=[["gpu"]])]
         port_bindings = {f"{c}/{proto}": (ip, h) for ip, h, c, proto in spec.ports}
         binds = [bind_spec(h, c, ro, self.selinux) for h, c, ro in spec.volumes]
         host_config = self.api.create_host_config(

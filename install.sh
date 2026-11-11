@@ -321,20 +321,37 @@ if [ "$HAS_DOCKER" -eq 1 ] && docker info 2>/dev/null | grep -qi 'runtimes:.*nvi
 if [ "$HAS_DOCKER" -eq 1 ] && docker_desktop; then HAS_CTK=1; HAS_RUNTIME=1; fi
 if have curl; then HAS_CURL=1; fi
 if [ -f "$HERE/compose.yaml" ]; then HAS_COMPOSE_FILE=1; fi
+# AMD GPUs the amdgpu driver runs (GPU Shepherd gives them to apps through Vulkan; experimental),
+# and whether there is any NVIDIA GPU at all. A machine with AMD GPUs only needs nothing from NVIDIA.
+AMD_GPUS=0; HAS_NVIDIA_HW=0; AMD_ONLY=0
+for d in /sys/class/drm/card[0-9]*; do
+    if [ "$(cat "$d/device/vendor" 2>/dev/null)" = 0x1002 ] && [ -r "$d/device/mem_info_vram_total" ]; then
+        AMD_GPUS=$((AMD_GPUS + 1))
+    fi
+done
+for d in /sys/bus/pci/devices/*; do
+    if [ "$(cat "$d/vendor" 2>/dev/null)" = 0x10de ]; then
+        case "$(cat "$d/class" 2>/dev/null)" in 0x03*) HAS_NVIDIA_HW=1 ;; esac
+    fi
+done
+if [ "$AMD_GPUS" -gt 0 ] && [ "$HAS_NVIDIA_HW" -eq 0 ] && [ "$HAS_DRIVER" -eq 0 ] && [ "$WSL" -eq 0 ]; then
+    AMD_ONLY=1
+fi
 
 say "This machine has:"
 if [ "$HAS_DRIVER" -eq 1 ]; then
     item "$OK" "NVIDIA driver, with:"
     nvidia-smi -L | sed 's/ (UUID.*//; s/^/        /'
-else
+elif [ "$AMD_ONLY" -eq 0 ]; then
     item "$NO" "no working NVIDIA driver"
 fi
+[ "$AMD_GPUS" -eq 0 ] || item "$OK" "$AMD_GPUS AMD GPU(s) with the amdgpu driver (used through Vulkan; experimental)"
 status() { if [ "$1" -eq 1 ]; then item "$OK" "$2"; else item "$NO" "no $2"; fi; }
 status "$HAS_DOCKER" "Docker"
 [ "$DOCKER_IS_PODMAN" -eq 0 ] || item "$NO" "a docker command from Podman (podman-docker), not Docker"
 status "$HAS_COMPOSE" "Docker Compose"
 if [ "$HAS_DOCKER" -eq 1 ] && docker_desktop; then item "$OK" "GPU support from Docker Desktop"
-else status "$HAS_CTK" "NVIDIA Container Toolkit"; fi
+elif [ "$AMD_ONLY" -eq 0 ]; then status "$HAS_CTK" "NVIDIA Container Toolkit"; fi
 [ "$HAS_COMPOSE_FILE" -eq 1 ] && item "$OK" "a compose.yaml from an earlier run (it will be kept)"
 echo
 
@@ -431,7 +448,7 @@ install_driver() {
     esac
 }
 
-if [ "$SKIP_DEPS" -eq 0 ] && [ "$HAS_DRIVER" -eq 0 ]; then
+if [ "$SKIP_DEPS" -eq 0 ] && [ "$HAS_DRIVER" -eq 0 ] && [ "$AMD_ONLY" -eq 0 ]; then
     if [ -z "$driver_cmd" ]; then
         die "no working NVIDIA driver (nvidia-smi failed). $no_driver_help"
     fi
@@ -718,7 +735,7 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
         missing=()
         [ "$HAS_DOCKER" -eq 1 ] || missing+=("Docker")
         [ "$HAS_DOCKER" -eq 0 ] || [ "$HAS_COMPOSE" -eq 1 ] || missing+=("the Docker Compose plugin")
-        [ "$HAS_CTK" -eq 1 ] || missing+=("the NVIDIA Container Toolkit")
+        [ "$HAS_CTK" -eq 1 ] || [ "$AMD_ONLY" -eq 1 ] || missing+=("the NVIDIA Container Toolkit")
         [ "$HAS_CURL" -eq 1 ] || missing+=("curl")
         if [ ${#missing[@]} -gt 0 ]; then
             die "this script can't install packages on ${PRETTY_NAME:-this distro}. Install these yourself:
@@ -729,13 +746,15 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     [ "$DOCKER_IS_PODMAN" -eq 0 ] || plan+=("Remove podman-docker (Podman's stand-in docker command), to make way for Docker")
     [ "$HAS_DOCKER" -eq 1 ] || plan+=("Install Docker Engine and Docker Compose ($DOCKER_FROM)")
     [ "$HAS_DOCKER" -eq 0 ] || [ "$HAS_COMPOSE" -eq 1 ] || plan+=("Install the Docker Compose plugin")
-    [ "$HAS_CTK" -eq 1 ] || plan+=("Install the NVIDIA Container Toolkit ($CTK_FROM)")
-    [ "$HAS_RUNTIME" -eq 1 ] || plan+=("Connect the NVIDIA runtime to Docker and restart Docker")
+    if [ "$AMD_ONLY" -eq 0 ]; then
+        [ "$HAS_CTK" -eq 1 ] || plan+=("Install the NVIDIA Container Toolkit ($CTK_FROM)")
+        [ "$HAS_RUNTIME" -eq 1 ] || plan+=("Connect the NVIDIA runtime to Docker and restart Docker")
+    fi
     [ "$HAS_CURL" -eq 1 ] || plan+=("Install curl")
     if [ "$SELINUX_ON" -eq 1 ]; then
         plan+=("If Docker uses SELinux: let containers use the GPUs (container_use_devices) and let GPU Shepherd reach Docker")
     fi
-    plan+=("Check that a test container ($GPU_TEST_IMAGE) can see the GPUs")
+    [ "$AMD_ONLY" -eq 1 ] || plan+=("Check that a test container ($GPU_TEST_IMAGE) can see the GPUs")
 fi
 if [ -n "$DOCKER_USER" ]; then
     plan+=("Add $DOCKER_USER to the docker group, so docker works without sudo (from your next login)")
@@ -872,13 +891,15 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     fi
     say "Docker OK: $(docker --version)"
 
-    if docker_desktop; then
+    if [ "$AMD_ONLY" -eq 1 ]; then
+        say "AMD GPUs only: nothing from NVIDIA is needed (apps get the GPUs' /dev/dri render nodes)"
+    elif docker_desktop; then
         say "Docker Desktop gives containers the GPUs itself; skipping the NVIDIA Container Toolkit"
     elif ! have nvidia-ctk; then
         say "Installing the NVIDIA Container Toolkit ($CTK_FROM)"
         install_ctk
     fi
-    if ! docker_desktop && ! docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then
+    if [ "$AMD_ONLY" -eq 0 ] && ! docker_desktop && ! docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then
         say "Connecting the NVIDIA runtime to Docker"
         nvidia-ctk runtime configure --runtime=docker
         systemctl restart docker
@@ -904,8 +925,9 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
         fi
     fi
 
-    say "Checking that containers can see the GPUs"
-    if ! docker run --rm --gpus all "$GPU_TEST_IMAGE" nvidia-smi -L; then
+    if [ "$AMD_ONLY" -eq 1 ]; then
+        :   # no NVIDIA GPU to test; AMD ones are plain device files
+    elif say "Checking that containers can see the GPUs" && ! docker run --rm --gpus all "$GPU_TEST_IMAGE" nvidia-smi -L; then
         hint=""
         if [ -n "$IN_CONTAINER" ]; then
             hint="
@@ -948,6 +970,12 @@ else
         sed -i "s|# - /srv/models:/srv/models:ro|- $MODELS_DIR:$MODELS_DIR:ro|" compose.yaml
         grep -q -- "- $MODELS_DIR:$MODELS_DIR:ro" compose.yaml \
             || warn "could not add the models folder to compose.yaml; add it under volumes by hand"
+    fi
+    if [ "$AMD_ONLY" -eq 1 ]; then
+        # no NVIDIA GPU to read stats from: Docker would refuse to start GPU Shepherd with the request
+        sed -i '/^    deploy:$/,/capabilities: \[gpu, utility\]/d' compose.yaml
+        ! grep -q 'driver: nvidia' compose.yaml \
+            || warn "could not remove the NVIDIA GPU request from compose.yaml; delete its deploy: section by hand"
     fi
     if [ "$DOCKER_SELINUX" -eq 1 ]; then
         sed -i 's|# security_opt: \[label=disable\]|security_opt: [label=disable]|' compose.yaml

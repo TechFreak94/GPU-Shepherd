@@ -1,8 +1,10 @@
-"""GPU discovery through nvidia-smi (the NVIDIA container runtime provides it inside the app's
-container when the 'utility' capability is requested).
+"""GPU discovery: NVIDIA GPUs through nvidia-smi (the NVIDIA container runtime provides it inside
+the app's container when the 'utility' capability is requested), AMD GPUs from the amdgpu driver's
+files in /sys (no AMD tool needed; /sys shows the host's devices inside a container too).
 
-AMD GPUs are only looked up (amd_gpus(), from the amdgpu driver's files in /sys): GPU Shepherd
-doesn't plan or share them out. An app reaches them through passed-in devices (Instance.devices).
+NVIDIA GPUs keep nvidia-smi's numbers; AMD GPUs are numbered from config.AMD_BASE (100, 101...) in
+the order of their PCI addresses, which don't change between boots. An app given an AMD GPU gets
+its render node (/dev/dri/renderD128...), which is all Vulkan and ROCm need from /dev/dri.
 
 For development and demos, SHEPHERD_FAKE_GPUS="2x8192:NVIDIA GeForce RTX 3070" fakes the GPUs,
 and SHEPHERD_FAKE_AMD_GPUS="2x8192:AMD Radeon RX 580" the AMD ones.
@@ -16,6 +18,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from .config import AMD_BASE, gpu_label, gpu_vendor
+
 
 @dataclass
 class Gpu:
@@ -26,6 +30,15 @@ class Gpu:
     util: float          # percent
     bus_id: str = ""     # PCI address as lspci -D prints it, e.g. 0000:01:00.0
     uuid: str = ""       # GPU-xxxxxxxx-..., which CUDA_VISIBLE_DEVICES also accepts
+    render: str = ""     # AMD: its render node, e.g. /dev/dri/renderD128
+
+    @property
+    def vendor(self) -> str:
+        return gpu_vendor(self.index)
+
+    @property
+    def label(self) -> str:
+        return gpu_label(self.index)
 
     @property
     def mem_pct(self) -> int:
@@ -48,6 +61,15 @@ def query(max_age: float = 2.0) -> tuple[list[Gpu], str]:
 
 
 def _query() -> tuple[list[Gpu], str]:
+    """NVIDIA GPUs, then AMD ones. A machine with AMD GPUs only needs no nvidia-smi."""
+    nvidia, err = _nvidia()
+    amd = amd_gpus()
+    if amd and not nvidia and err.startswith("nvidia-smi not found"):
+        err = ""
+    return nvidia + amd, err
+
+
+def _nvidia() -> tuple[list[Gpu], str]:
     fake = os.environ.get("SHEPHERD_FAKE_GPUS", "")
     if fake:
         return _fake(fake), ""
@@ -103,11 +125,21 @@ def _bus(text: str) -> str:
     return b[4:] if len(b) == 16 and b[8] == ":" else b
 
 
-def _fake(spec: str) -> list[Gpu]:
+def _fake(spec: str, base: int = 0) -> list[Gpu]:
     count, _, rest = spec.partition("x")
     mem, _, name = rest.partition(":")
-    return [Gpu(i, name or "Fake GPU", round(random.uniform(0.05, 0.2) * float(mem or 8192)),
-                float(mem or 8192), 0.0, f"0000:{i + 1:02x}:00.0", f"GPU-fake-{i}") for i in range(int(count or 1))]
+    amd = base >= AMD_BASE
+    return [Gpu(base + i, name or "Fake GPU", round(random.uniform(0.05, 0.2) * float(mem or 8192)),
+                float(mem or 8192), 0.0, f"0000:{i + (0x41 if amd else 1):02x}:00.0",
+                "" if amd else f"GPU-fake-{i}", render=f"/dev/dri/renderD{128 + i}" if amd else "")
+            for i in range(int(count or 1))]
+
+
+def render_nodes(indices: list[int]) -> list[str] | None:
+    """The AMD GPUs' render nodes, in the same order; None if any is unknown."""
+    by_index = {g.index: g.render for g in query()[0]}
+    nodes = [by_index.get(i, "") for i in indices]
+    return nodes if all(nodes) else None
 
 
 DRM = "/sys/class/drm"
@@ -115,14 +147,16 @@ AMD_VENDOR = "0x1002"
 
 
 def amd_gpus(drm: str = DRM) -> list[Gpu]:
-    """The machine's AMD GPUs, as the amdgpu driver describes them in /sys (no AMD tool needed),
-    numbered from 0 in the order of their cards. Empty if there are none or /sys can't be read."""
+    """The machine's AMD GPUs that the amdgpu driver runs, numbered from AMD_BASE in the order of
+    their PCI addresses. Empty if there are none or /sys can't be read."""
     fake = os.environ.get("SHEPHERD_FAKE_AMD_GPUS", "")
     if fake:
-        return _fake(fake)
-    out = []
+        return _fake(fake, AMD_BASE)
+    if os.environ.get("SHEPHERD_FAKE_GPUS"):      # faked GPUs: none of the real ones
+        return []
+    found = []
     try:
-        cards = sorted((p for p in os.listdir(drm) if p.startswith("card") and p[4:].isdigit()), key=lambda p: int(p[4:]))
+        cards = [p for p in os.listdir(drm) if p.startswith("card") and p[4:].isdigit()]
     except OSError:
         return []
     for card in cards:
@@ -132,26 +166,20 @@ def amd_gpus(drm: str = DRM) -> list[Gpu]:
         total = _read(os.path.join(dev, "mem_info_vram_total"))
         if not total.isdigit():                  # not driven by amdgpu (radeon, or no driver)
             continue
+        try:
+            render = next((f"/dev/dri/{x}" for x in sorted(os.listdir(os.path.join(dev, "drm")))
+                           if x.startswith("renderD")), "")
+        except OSError:
+            render = ""
         used = _read(os.path.join(dev, "mem_info_vram_used"))
         busy = _read(os.path.join(dev, "gpu_busy_percent"))
         name = _read(os.path.join(dev, "product_name")) or f"AMD GPU {_read(os.path.join(dev, 'device'))}"
         bus = os.path.basename(os.path.realpath(dev))
-        out.append(Gpu(len(out), name, int(used) / 2**20 if used.isdigit() else 0.0, int(total) / 2**20,
-                       float(busy) if busy.isdigit() else 0.0, bus if bus.count(":") == 2 else ""))
-    return out
-
-
-# what a passed-in GPU is taken to have when /sys doesn't say (the 8 GB of the cards the Vulkan
-# Llama Swap is tuned for)
-ASSUMED_GPU_GB = 8.0
-
-
-def device_gpu_mem_gb(count: int, found: list[float] | None = None) -> list[float]:
-    """Video memory (GB) of each of the `count` GPUs an app reaches through passed-in devices: the
-    AMD GPUs found (`found`, or looked up), else ASSUMED_GPU_GB each."""
-    if found is None:
-        found = [g.mem_total / 1024 for g in amd_gpus()]
-    return found[:count] if len(found) >= count else [ASSUMED_GPU_GB] * count
+        found.append((bus if bus.count(":") == 2 else "", int(card[4:]), name, used, total, busy, render))
+    found.sort(key=lambda x: (x[0] or "~", x[1]))
+    return [Gpu(AMD_BASE + n, name, int(used) / 2**20 if used.isdigit() else 0.0, int(total) / 2**20,
+                float(busy) if busy.isdigit() else 0.0, bus, render=render)
+            for n, (bus, _, name, used, total, busy, render) in enumerate(found)]
 
 
 def _read(path: str) -> str:

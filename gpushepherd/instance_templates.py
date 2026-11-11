@@ -23,9 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import model_library
-from .gpu import device_gpu_mem_gb
 from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule, PortMap, VolumeMap,
-                     MODEL_ID, SLUG)
+                     MODEL_ID, SLUG, gpu_label, gpu_vendor)
 
 LLAMA_SWAP_IMAGE = "ghcr.io/mostlygeek/llama-swap:cuda"
 LLAMA_SWAP_VULKAN_IMAGE = "ghcr.io/mostlygeek/llama-swap:vulkan"
@@ -98,8 +97,7 @@ class Template:
     bundled_slot: str = "chat"                 # the model slot a Llama Swap installed alongside it fills
     cpu_ok: bool = False                       # a model server that keeps answering on the CPU (slower)
                                                # while an image app has the only GPU, instead of stopping
-    devices: tuple[str, ...] = ()              # host devices passed in (/dev/dri): GPUs GPU Shepherd doesn't
-                                               # share out; the install asks how many there are instead
+    vendor: str = "nvidia"                     # the kind of GPU it runs on: nvidia or amd (GpuPolicy.vendor)
     kv_cache: str = ""                         # every model's KV cache type, whatever a suggested model's own is
 
 
@@ -132,11 +130,12 @@ TEMPLATES: tuple[Template, ...] = (
         key="llm-server-vulkan", tag="Model Server", badge="VK", title="Llama Swap (Vulkan)", group="Model servers",
         blurb="The Llama Swap model server on AMD GPUs through Vulkan, tuned for several 8 GB cards such as the RX 580.",
         points=("llama-swap + llama.cpp's Vulkan build: no ROCm needed, so older Polaris cards work",
-                "Splits each model across every AMD GPU, layer by layer",
+                "Uses every free AMD GPU, splitting models across them layer by layer, and gives them back "
+                "when another AMD app needs one",
                 "Pick a chat model and a coding model now, or add models later"),
         default_id="llm-vulkan", default_name="Llama Swap (Vulkan)", description="llama-swap model server (Vulkan)",
-        kind="llama-swap", image=LLAMA_SWAP_VULKAN_IMAGE, container_port=8080, host_port=8080, gpu="none",
-        devices=("/dev/dri",), kv_cache="f16", open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True),
+        kind="llama-swap", image=LLAMA_SWAP_VULKAN_IMAGE, container_port=8080, host_port=8080, gpu="all",
+        vendor="amd", kv_cache="f16", open_path="/ui", models_mount=("", MODELS_IN_CONTAINER, True), cpu_ok=True,
         models=(ModelSlot(key="chat", label="Chat model", alias="chat", ctx_size=16384, kv_cache="f16",
                           sampling="--temp 0.7 --top-p 0.95",
                           hint="For chat apps such as Open WebUI and Hermes Agent. 16K tokens of context "
@@ -148,13 +147,9 @@ TEMPLATES: tuple[Template, ...] = (
                           role="embed",
                           hint="For chatting with your documents (RAG) in Open WebUI, AnythingLLM and LibreChat. "
                                "It stays loaded beside the other models, on the CPU.")),
-        after_install="It gets every GPU behind /dev/dri while it runs; GPU Shepherd doesn't share AMD GPUs "
-                      "between apps, so run one Vulkan app at a time. If the machine also has a built-in "
-                      "(integrated) GPU, llama.cpp may split models onto it too: list the cards to use in "
-                      "GGML_VK_VISIBLE_DEVICES under Edit (for example 0,1; its log lists them as "
-                      "ggml_vulkan: 0 = ...). The model server answers apps here like the other Llama Swap.",
-        experimental="Not yet tried on real AMD GPUs. GPU Shepherd doesn't see or share out AMD GPUs: this server "
-                     "gets all of them while it runs.",
+        after_install="It gets only the AMD GPUs GPU Shepherd gives it (each one's /dev/dri render node), so a "
+                      "built-in graphics chip is left alone. Apps here can use it like the other Llama Swap.",
+        experimental="Not yet tried on real AMD GPUs.",
         needs="AMD GPUs with the amdgpu driver (Vulkan: RX 400/500 series or newer); models larger than their "
               "memory can use system RAM",
         license="MIT (llama-swap and llama.cpp)", docs="https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md#vulkan"),
@@ -401,7 +396,8 @@ def gpu_choices(gpus: list, t: Template | None = None) -> dict[str, str]:
     "up:N" for each in-between count when there are 3 or more GPUs, and "pin:I" per GPU when there
     are 2 or more. vLLM splits its model across a fixed number of GPUs, so it gets "gpus:N"
     (2, 4 or 8: counts a model's layers split evenly into) instead of "up to" counts."""
-    pins = {f"pin:{g.index}": f"Always GPU {g.index} ({g.name}, {g.mem_total / 1024:.0f} GB)" for g in gpus} \
+    gpus = [g for g in gpus if gpu_vendor(g.index) == (t.vendor if t else "nvidia")]   # the kind it runs on
+    pins = {f"pin:{g.index}": f"Always {gpu_label(g.index)} ({g.name}, {g.mem_total / 1024:.0f} GB)" for g in gpus} \
         if len(gpus) > 1 else {}
     if t is not None and t.engine == "vllm":
         out = {"one": GPU_CHOICES["one"]}
@@ -547,7 +543,7 @@ class Machine:
     servers: dict[str, dict]           # model server instance id -> {"api_key", "default_model"} (see model_servers)
     model_sizes: dict[str, float]      # container path of a .gguf file -> size in GB
     ram_gb: float = 0.0                # system RAM (0 = unknown)
-    device_gpu_mem_gb: list[float] = field(default_factory=list)   # AMD GPUs (gpu.amd_gpus), for apps with devices
+    amd_gpu_mem_gb: list[float] = field(default_factory=list)   # the AMD GPUs, for apps that run on them
 
 
 def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dict:
@@ -561,7 +557,7 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
             "models_dir": models_dir, "appdata_dir": str(Path(appdata_root) / iid),
             "server": next(iter(m.servers), NEW_SERVER if t.connects else ""), "comfyui": comfy, "speech": speech,
             **{f"{s.key}_file": "" for s in slots(t)}, **{f"{s.key}_ctx": s.ctx_size for s in slots(t)},
-            "offload": "auto", "autostart": False, "device_gpus": len(m.device_gpu_mem_gb) or 1,
+            "offload": "auto", "autostart": False,
             "login_user": "admin" if t.login and t.login[0] else "",
             "password": secrets.token_urlsafe(12) if t.login else "",
             "hass_url": "", "hass_token": "", "hf_model": VLLM_MODEL, "hf_token": "", "max_len": VLLM_MAX_LEN}
@@ -569,7 +565,7 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
 
 def answer_keys(t: Template) -> list[str]:
     """The install answers that matter for an app (defaults() returns every possible one)."""
-    keys = ["name", "id", "port", "device_gpus" if t.devices else "gpu"]
+    keys = ["name", "id", "port", "gpu"]
     if t.models_mount or slots(t):
         keys.append("models_dir")
     if t.appdata:
@@ -601,8 +597,7 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
     port = str(a.get("port", "")).strip()
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ConfigError("Port: enter a number from 1 to 65535")
-    gpu = _gpu_policy("none" if t.devices else str(a.get("gpu") or t.gpu), t.priority)
-    device_gpus = _device_gpus(t, a)
+    gpu = _gpu_policy(str(a.get("gpu") or t.gpu), t.priority, t.vendor)
     if t.cpu_ok and gpu.mode == "elastic":
         # a chat server keeps answering (on the CPU, slower) while an image app has the only GPU
         gpu.cpu_fallback = True
@@ -656,29 +651,13 @@ def build(t: Template, a: dict, m: Machine) -> tuple[Instance, list[CatalogModel
                     image=t.image, command=command, env=env,
                     ports=[PortMap(host=int(port), container=t.container_port)], volumes=volumes, gpu=gpu,
                     autostart=bool(a.get("autostart")), open_path=t.open_path, app=t.key, requires=requires,
-                    shm_size=t.shm_size, user=t.user, devices=list(t.devices), device_gpus=device_gpus)
+                    shm_size=t.shm_size, user=t.user)
     return inst, _models(t, a, m)
 
 
-def _device_gpus(t: Template, a: dict) -> int:
-    """How many GPUs an app with passed-in devices gets (0 for any other app)."""
-    if not t.devices:
-        return 0
-    n = str(a.get("device_gpus", "")).strip()
-    if not n.isdigit() or not 1 <= int(n) <= 64:
-        raise ConfigError("GPUs: enter how many GPUs it gets, from 1 to 64")
-    return int(n)
-
-
-def gpu_mem_gb(t: Template, m: Machine, a: dict | None = None) -> list[float]:
-    """The video memory (GB) of each GPU the app's models can use, for fitting and offloading them:
-    the GPUs GPU Shepherd shares out, or for an app with devices the AMD GPUs it gets (gpu.ASSUMED_GPU_GB
-    each when they can't be read)."""
-    if not t.devices:
-        return m.gpu_mem_gb
-    n = str((a or {}).get("device_gpus", "")).strip()
-    count = int(n) if n.isdigit() and int(n) else len(m.device_gpu_mem_gb) or 1
-    return device_gpu_mem_gb(count, m.device_gpu_mem_gb)
+def gpu_mem_gb(t: Template, m: Machine) -> list[float]:
+    """The video memory (GB) of each GPU of the kind the app runs on, for fitting and offloading models."""
+    return m.amd_gpu_mem_gb if t.vendor == "amd" else m.gpu_mem_gb
 
 
 def appdata_dir(t: Template, inst: Instance) -> str:
@@ -835,19 +814,23 @@ def connected_server(inst: Instance, m: Machine, settings: str = "") -> str:
     return ""
 
 
-def _gpu_policy(choice: str, priority: int) -> GpuPolicy:
+def _gpu_policy(choice: str, priority: int, vendor: str = "nvidia") -> GpuPolicy:
     if choice == "none":
         return GpuPolicy(mode="none", priority=priority)
     if choice == "one":
-        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=1, priority=priority)
+        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=1, priority=priority, vendor=vendor)
     if choice == "all":
-        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=0, priority=priority)
+        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=0, priority=priority, vendor=vendor)
     if choice.startswith("gpus:") and choice[5:].isdigit() and int(choice[5:]) >= 1:
-        return GpuPolicy(mode="elastic", min_gpus=int(choice[5:]), max_gpus=int(choice[5:]), priority=priority)
+        return GpuPolicy(mode="elastic", min_gpus=int(choice[5:]), max_gpus=int(choice[5:]), priority=priority,
+                         vendor=vendor)
     if choice.startswith("up:") and choice[3:].isdigit() and int(choice[3:]) >= 1:
-        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=int(choice[3:]), priority=priority)
+        return GpuPolicy(mode="elastic", min_gpus=1, max_gpus=int(choice[3:]), priority=priority, vendor=vendor)
     if choice.startswith("pin:") and choice[4:].isdigit():
-        return GpuPolicy(mode="fixed", gpus=[int(choice[4:])], priority=priority)
+        try:
+            return GpuPolicy(mode="fixed", gpus=[int(choice[4:])], priority=priority, vendor=vendor)
+        except ValueError as err:
+            raise ConfigError(f"GPU: {err}") from err
     raise ConfigError(f"unknown GPU choice '{choice}'")
 
 
@@ -1090,7 +1073,7 @@ def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
     """The catalogue entries for the model files picked in the form. The same file picked for two
     slots becomes one model that answers to both names."""
     choice = str(a.get("offload") or "auto")
-    mem = gpu_mem_gb(t, m, a)
+    mem = gpu_mem_gb(t, m)
     out: list[CatalogModel] = []
     for slot in t.models:
         file = str(a.get(f"{slot.key}_file", "")).strip()

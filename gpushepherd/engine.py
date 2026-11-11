@@ -9,9 +9,9 @@ from pathlib import Path
 
 from . import budget, drain, gpu as gpu_mod, host, placement
 from .backend import Backend, ContainerSpec, ContainerState
-from .config import Catalog, ConfigError, Instance, Store
+from .config import Catalog, ConfigError, Instance, Store, gpu_vendor
 from .connectors import llamaswap
-from .scheduler import Plan, plan as make_plan, start_order
+from .scheduler import Plan, gpu_text, plan as make_plan, start_order
 
 
 @dataclass
@@ -54,10 +54,12 @@ class Engine:
     def config_hash(self, inst: Instance) -> str:
         # the drain policy, the app it came from, what starts with it, skipped app updates and how
         # its image is updated only matter to GPU Shepherd: no restart for those
-        # (nor the CPU fallback and video memory budget, which only steer the GPU planner)
+        # (nor the CPU fallback, video memory budget and kind of GPU, which only steer the GPU planner)
         data = inst.model_dump(mode="json", exclude={"drain": True, "app": True, "requires": True,
                                                      "skipped_updates": True, "auto_update": True,
-                                                     "gpu": {"cpu_fallback", "vram_gb"}})
+                                                     "gpu": {"cpu_fallback", "vram_gb", "vendor"}})
+        if not data["devices"]:                    # added later: no restart for apps that pass none
+            del data["devices"]
         if inst._file_name is not None:            # renamed only on screen (see config._named)
             data["name"] = inst._file_name
         if inst.kind == "llama-swap":
@@ -73,9 +75,12 @@ class Engine:
         if snap.gpu_error:
             # GPUs that can't be read are not gone: plan with the ones running containers hold, so a
             # passing nvidia-smi failure never stops or moves what is running (and apps sharing
-            # one keep sharing it: its size is unknown, so nothing limits them)
-            gpu_ids = sorted({g for held in snap.allocations.values() for g in held})
-            gpu_mem = {g: 1e9 for g in gpu_ids}
+            # one keep sharing it: its size is unknown, so nothing limits them). AMD GPUs are
+            # read without nvidia-smi, so they stay as they are.
+            amd = {g.index: g.mem_total / 1024 for g in snap.gpus if g.vendor == "amd"}
+            held = {g for gs in snap.allocations.values() for g in gs if g not in amd}
+            gpu_ids = sorted(held | set(amd))
+            gpu_mem = {g: 1e9 for g in held} | amd
         p = make_plan(gpu_ids, snap.instances, snap.allocations, action, target, extra_wanted,
                       self.usable(snap), gpu_mem, first)
         if snap.gpu_error and not p.error and action != "stop" and (p.side_effects or p.to_stop):
@@ -90,11 +95,12 @@ class Engine:
 
     def usable(self, snap: Snapshot) -> dict[str, int]:
         """Elastic model servers -> the most GPUs their models can use (placement.wants)."""
-        mem = [int(g.mem_total * 2**20) for g in sorted(snap.gpus, key=lambda g: g.index)]
         out = {}
         for iid, inst in snap.instances.items():
             if inst.kind != "llama-swap" or inst.gpu.mode != "elastic":
                 continue
+            mem = [int(g.mem_total * 2**20) for g in sorted(snap.gpus, key=lambda g: g.index)
+                   if g.vendor == inst.gpu.vendor]
             try:
                 cat = self.store.catalog(iid)
             except ConfigError:
@@ -136,7 +142,8 @@ class Engine:
             if st and st.running:
                 if not snap.allocations.get(iid):
                     out[iid] = (f"No GPU was free ({joined(holders)} {'has' if len(holders) == 1 else 'have'} "
-                                f"{'it' if len(gpu_ids) == 1 else 'them'}), so it runs on the CPU, slower. "
+                                f"{'it' if len([g for g in gpu_ids if gpu_vendor(g) == inst.gpu.vendor]) == 1 else 'them'}), "
+                                "so it runs on the CPU, slower. "
                                 "It moves back onto a GPU when one is free; Restart takes one now."
                                 if holders else "It runs on the CPU: this machine has no GPU it can use.")
                 continue
@@ -150,7 +157,8 @@ class Engine:
             cpu = [names[i] for i in p.on_cpu if i != iid and i in p.to_restart]
             parts = ([f"stops {joined(stops)}"] if stops else []) + ([f"moves {joined(cpu)} to the CPU"] if cpu else [])
             if parts:
-                taken = "The GPU is" if len(gpu_ids) == 1 else "The GPUs are"
+                kind = [g for g in gpu_ids if gpu_vendor(g) == inst.gpu.vendor]
+                taken = "The GPU is" if len(kind) == 1 else "The GPUs are"
                 out[iid] = f"{taken} in use. Starting it {' and '.join(parts)} (you are asked first)."
             elif iid in p.on_cpu:
                 out[iid] = "No GPU is free for it, so it would start on the CPU, slower."
@@ -211,7 +219,7 @@ class Engine:
             gpus = p.allocations[iid]
             try:
                 spec = self.build_spec(inst, gpus, log)
-                log(f"Starting {inst.name}" + (f" on GPU {','.join(map(str, gpus))}" if gpus else ""))
+                log(f"Starting {inst.name}" + (f" on {gpu_text(gpus)}" if gpus else ""))
                 self.backend.create_and_start(spec)
             except Exception as err:  # noqa: BLE001 - reported below
                 log(f"Could not start {inst.name}: {err}")
@@ -224,7 +232,15 @@ class Engine:
         settings = self.store.settings()
         env = dict(inst.env)
         names = None
-        if gpus:
+        devices = list(inst.devices)
+        amd = [g for g in gpus if gpu_vendor(g) == "amd"]
+        if amd:
+            # an AMD GPU is its render node: Vulkan and ROCm find it there, and see no other GPU
+            nodes = gpu_mod.render_nodes(amd)
+            if nodes is None:
+                raise RuntimeError(f"can't find the render node (/dev/dri/renderD...) of {gpu_text(amd)}")
+            devices += [n for n in nodes if n not in devices]
+        if gpus and not amd:
             env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
             # On WSL2 every GPU reaches Linux through one device (/dev/dxg), so Docker can't hide
             # the ones a container wasn't given: CUDA is told which ones are its own, by UUID
@@ -239,9 +255,8 @@ class Engine:
         if inst.kind == "llama-swap":
             catalog = self._ensure_llama_server(inst, self.store.catalog(inst.id), log)
             threads = catalog.threads or gpu_mod.physical_cores()
-            # GPUs it reaches through passed-in devices (AMD through Vulkan) count when it has no others
-            count = len(gpus) or (inst.device_gpus if inst.devices else 0)
-            text = llamaswap.render(catalog, count, threads, self.placement(inst, catalog, gpus), names)
+            text = llamaswap.render(catalog, len(gpus), threads, self.placement(inst, catalog, gpus), names,
+                                    "GGML_VK_VISIBLE_DEVICES" if amd else "CUDA_VISIBLE_DEVICES")
             out = self.store.generated_dir(inst.id) / "llama-swap.yaml"
             out.write_text(text, encoding="utf-8")
             host_file = str(self.host_data_dir / "generated" / inst.id / "llama-swap.yaml")
@@ -252,7 +267,7 @@ class Engine:
             network=settings.network, alias=inst.id, command=list(inst.command), env=env,
             ports=[(settings.bind_address, p.host, p.container, p.protocol) for p in inst.ports],
             volumes=volumes, gpus=list(gpus), config_hash=self.config_hash(inst),
-            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=list(inst.devices))
+            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=devices)
 
     def _ensure_llama_server(self, inst: Instance, catalog: Catalog, log) -> Catalog:
         if catalog.llama_server:

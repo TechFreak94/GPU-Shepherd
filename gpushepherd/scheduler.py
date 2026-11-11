@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .config import Instance
+from .config import AMD_BASE, VENDORS, Instance, gpu_vendor
 
 ACTIONS = ("start", "stop", "restart", "rebalance")
 
@@ -85,13 +85,24 @@ class Plan:
 
 
 def gpu_text(gpus: list[int]) -> str:
+    """"GPU 0", "GPUs 0-3,6", "AMD GPUs 0,1" (AMD numbers count from config.AMD_BASE)."""
     if not gpus:
         return "no GPU"
-    return ("GPU " if len(gpus) == 1 else "GPUs ") + gpu_list(gpus)
+    nvidia = [g for g in gpus if g < AMD_BASE]
+    amd = [g - AMD_BASE for g in gpus if g >= AMD_BASE]
+    return " and ".join([("GPU " if len(nvidia) == 1 else "GPUs ") + _runs(nvidia)] * bool(nvidia)
+                        + [("AMD GPU " if len(amd) == 1 else "AMD GPUs ") + _runs(amd)] * bool(amd))
 
 
 def gpu_list(gpus: list[int]) -> str:
-    """GPU indices with runs of three or more shortened, as on a big machine: "0-3,6"."""
+    """GPU numbers with runs of three or more shortened, as on a big machine: "0-3,6"; AMD ones
+    after them as "amd0,amd1"."""
+    nvidia = [g for g in gpus if g < AMD_BASE]
+    amd = [g - AMD_BASE for g in gpus if g >= AMD_BASE]
+    return ",".join(x for x in (_runs(nvidia), ",".join(f"amd{g}" for g in sorted(amd))) if x)
+
+
+def _runs(gpus: list[int]) -> str:
     parts, run = [], []
     for g in sorted(gpus) + [None]:
         if run and (g is None or g != run[-1] + 1):
@@ -144,12 +155,22 @@ def plan(gpus: list[int], instances: dict[str, Instance], running: dict[str, lis
         return result
     wanted = with_requirements(instances, wanted)
 
-    gpu_set = set(gpus)
-    allocations, dropped, on_cpu, error = _allocate(sorted(gpus), gpu_set, instances, wanted, target,
-                                                    previous, usable or {}, gpu_mem or {}, first or set())
-    if error:
-        result.error = error
-        return result
+    # each kind of GPU (NVIDIA, AMD) is planned on its own, for the apps that run on it; apps
+    # without a GPU go with the NVIDIA ones (their kind is nvidia by default)
+    allocations, dropped, on_cpu = {}, [], []
+    for vendor in VENDORS:
+        members = {i for i in wanted if instances[i].gpu.vendor == vendor}
+        if not members:
+            continue
+        pool = sorted(g for g in gpus if gpu_vendor(g) == vendor)
+        a, d, c, error = _allocate(pool, set(pool), instances, members, target, previous, usable or {},
+                                   gpu_mem or {}, first or set())
+        if error:
+            result.error = error
+            return result
+        allocations |= a
+        dropped += d
+        on_cpu += c
 
     result.allocations = allocations
     result.preempted = sorted(i for i in dropped if i in previous)
@@ -229,7 +250,8 @@ def _allocate(gpus: list[int], gpu_set: set[int], instances: dict[str, Instance]
         if i == target:
             pol = instances[i].gpu
             return (f"{instances[i].name} needs at least {pol.min_gpus} GPU(s); "
-                    f"only {max(len(free) - reserved, 0)} of this machine's {len(gpus)} are available to it")
+                    f"only {max(len(free) - reserved, 0)} of this machine's {len(gpus)}"
+                    f"{' AMD GPUs' if pol.vendor == 'amd' else ''} are available to it")
         dropped.append(i)
         return ""
 
