@@ -120,7 +120,7 @@
 </div>
 
 <h3>Worth a look (safe to clean up)</h3>
-{% set why = {"unused": "not used by any model", "partial": "unfinished download", "duplicate": "a copy of another file"} %}
+{% set why = {"unused": "not used by any model", "partial": "unfinished download", "duplicate": "same name and size as another file"} %}
 <div class="card">
   {% if not (st.files or st.leftover_folders or st.orphans) %}
   <p class="muted small" style="margin:0">Nothing to clean up. Every file belongs to an app and nothing is left over.</p>
