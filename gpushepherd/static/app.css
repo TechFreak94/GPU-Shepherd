@@ -22,7 +22,7 @@ nav{margin-left:auto;display:flex;gap:14px;align-items:center}
 nav a,nav button.link{color:var(--muted);text-decoration:none;font-size:14px;padding:4px 2px;border-bottom:2px solid transparent}
 nav a:hover,nav button.link:hover{color:var(--fg);border-bottom-color:var(--btn-line)}
 nav a[aria-current=page]{color:var(--fg);border-bottom-color:var(--accent)}
-main{padding:18px 16px 48px}
+main.wrap{padding:18px 16px 48px}
 h1{font-size:21px;margin:4px 0 4px;letter-spacing:-.01em}
 h2{font-size:16px;margin:0}
 h3{font-size:14px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
@@ -45,8 +45,8 @@ display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap
 .pagehead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .section-title{margin:6px 0 8px;display:flex;align-items:baseline;gap:10px}
 .section-title .count{text-transform:none;letter-spacing:0;font-weight:400;font-size:13px}
-.machine{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:18px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px}
+.machine{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:12px;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(330px,100%),1fr));gap:12px}
 .card.inst{display:flex;flex-direction:column}.card.inst>.btns{margin-top:auto}
 .figure{font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
 .stat .model{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -130,8 +130,10 @@ input:focus,select:focus,textarea:focus,button:focus-visible,.btn:focus-visible,
 .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:6px}
 /* tables */
 .table{width:100%;border-collapse:collapse;font-size:14px}
+@media (max-width:640px){.table td{overflow-wrap:anywhere}.table td:last-child,.table th:last-child{text-align:right}}
 .table th{text-align:left;font-size:12px;color:var(--muted);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
 .table td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+@media (max-width:640px){.table td{overflow-wrap:anywhere}}
 .credits td{padding:6px 8px}
 .credits td:last-child{overflow-wrap:anywhere}
 .scroll{overflow-x:auto}
@@ -190,7 +192,7 @@ form.guided{counter-reset:step}
 background:var(--accent);color:var(--accent-fg);font-size:12px;margin-right:6px;letter-spacing:0}
 /* App Center */
 .filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px}
-.grid.templates{grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+.grid.templates{grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr))}
 main a.chip,main a.mode{text-decoration:none}
 .chip{display:inline-block;padding:4px 12px;border-radius:999px;border:1px solid var(--btn-line);background:var(--btn);color:var(--fg);font-size:13px;text-decoration:none}
 main a.chip:hover{background:var(--btn-hover);color:var(--fg)}
@@ -255,3 +257,8 @@ nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke
 .drop.over{border-color:var(--accent);background:var(--btn-hover)}
 .drop label.btn{cursor:pointer}
 .gpu-note{margin:4px 0 0;font-weight:normal}
+@media (max-width:640px){
+  nav{margin-left:0;width:100%;flex-wrap:wrap;gap:6px 12px;padding-top:8px}
+  nav a,nav button.link{white-space:nowrap}
+  nav button.theme{margin-left:auto}
+}
