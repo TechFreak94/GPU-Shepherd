@@ -4,6 +4,15 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.34 - 2026-11-11
+
+- Logins now end when the password changes or the user logs out; a copied cookie stops working (#77)
+- Added rate limiting on wrong login attempts (5 per IP/username, with exponential backoff) (#77)
+- Fixed instance config files to be owner-only (0o600), preventing other users from reading them (#77)
+- API and form routes now run in worker threads, so waiting for Docker never blocks the dashboard (#77)
+- Drive scans are cached while the kernel's list of drives is unchanged, reducing privileged helper calls (#77)
+- Errors (missing instances, config problems, Docker issues) now return proper responses instead of 500 (#77)
+
 ## 0.13.33 - 2026-11-09
 
 - Maintainers can publish the container image again from the Release workflow's Run workflow button if a release's image push fails (#72)
