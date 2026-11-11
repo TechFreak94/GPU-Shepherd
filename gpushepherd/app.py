@@ -809,7 +809,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
                                                              [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat), "tuning": svc.tuning(iid),
+                "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
                 "pending": bool(running and st.config_hash != engine.config_hash(inst)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
 
@@ -843,6 +843,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 msg = svc.discard_download(iid, key)
             elif op == "forget":
                 msg = svc.forget_link(iid, key)
+            elif op == "delete":
+                msg = svc.delete_download(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:
@@ -941,9 +943,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/models/{mid}/delete")
-    def delete_model(iid: str, mid: str):
+    def delete_model(iid: str, mid: str, files: bool = False):
         try:
-            msg = svc.delete_model(iid, mid)
+            msg = svc.delete_model(iid, mid, files)
         except Problem as err:
             return problem(err)
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})

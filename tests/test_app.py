@@ -334,6 +334,36 @@ def test_login_without_cookie_explains(stack):
     assert "did not keep the login cookie" in client.get("/login?nocookie=1").text
 
 
+def test_delete_model_with_its_file(stack, tmp_path_factory, monkeypatch):
+    app, client, backend, data = stack
+    login(client)
+    models = tmp_path_factory.mktemp("models")
+    (models / "a").mkdir()
+    (models / "a" / "A.gguf").write_bytes(b"gguf")
+    (models / "B.gguf").write_bytes(b"gguf")
+    answers = {"template": "llm-server", "name": "Coder", "id": "coder", "port": "8081", "gpu": "all",
+               "models_dir": str(models), "coder_file": "/models/a/A.gguf", "chat_file": "/models/B.gguf",
+               "coder_ctx": "4096", "chat_ctx": "4096", "offload": "auto", "action": "create"}
+    assert client.post("/instances/guided", headers=HX, data=answers).status_code == 204
+    cat = lambda: [m["id"] for m in yaml.safe_load((data / "catalogs" / "coder.yaml").read_text())["models"]]  # noqa: E731
+    assert cat() == ["b", "a"]
+    page = client.get("/instances/coder/models").text          # the table shows what each model uses here
+    assert "On this machine" in page and "needs " in page and "on disk" in page
+    # a loaded model is refused: unload first
+    from gpushepherd.service import Shepherd
+    real = Shepherd.loaded
+    monkeypatch.setattr(Shepherd, "loaded", lambda self, iid, cat: ({"a": "ready"}, ""))
+    r = client.post("/instances/coder/models/a/delete?files=true", headers=HX)
+    assert "is loaded" in r.headers["HX-Trigger"] and (models / "a" / "A.gguf").exists() and "a" in cat()
+    monkeypatch.setattr(Shepherd, "loaded", real)
+    r = client.post("/instances/coder/models/a/delete?files=true", headers=HX)
+    assert r.status_code == 204 and "Deleted a and its 1 file" in unquote(r.headers["HX-Redirect"])
+    assert not (models / "a").exists() and cat() == ["b"]
+    # without files, the file stays
+    assert client.post("/instances/coder/models/b/delete", headers=HX).status_code == 204
+    assert (models / "B.gguf").exists() and cat() == []
+
+
 def test_guided_setup(stack, tmp_path_factory):
     app, client, backend, data = stack
     login(client)

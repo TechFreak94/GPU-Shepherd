@@ -31,6 +31,11 @@
             <button hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/discard" hx-target="#suggestions" hx-swap="outerHTML"
               hx-confirm="Delete what was downloaded of {{ s.name }} so far?" title="Deletes the unfinished files to free the space">Discard</button>
           {% endif %}
+          {% if s.state == "ready" and not s.in_catalog %}
+            <button class="danger" hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/delete" hx-target="#suggestions" hx-swap="outerHTML"
+              hx-confirm="Delete the downloaded files of {{ s.name }} ({{ s.download_gb }} GB) from disk? It can be downloaded again later."
+              title="Frees the disk space">Delete files</button>
+          {% endif %}
           {% if s.linked and not s.in_catalog %}
             <button hx-post="/instances/{{ inst.id }}/suggestions/{{ s.key }}/forget" hx-target="#suggestions" hx-swap="outerHTML"
               title="Takes it off this list; downloaded files stay">Forget</button>

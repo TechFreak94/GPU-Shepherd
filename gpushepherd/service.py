@@ -1576,6 +1576,34 @@ class Shepherd:
         self.store.save_catalog(cat)
         return " ".join([f"Saved {model.id}.", *notes])
 
+    def model_resources(self, iid: str) -> dict[str, dict]:
+        """For each model in the catalogue: its size on disk, the memory it needs to run whole
+        (weights plus its context's cache) and how that fits this machine's GPUs and RAM."""
+        inst, cat = self.server(iid)
+        m = self.machine()
+        gpus = sorted(int(g * 2**30) for g in m.gpu_mem_gb)
+        ram = int(m.ram_gb * 2**30)
+        out = {}
+        for x in cat.models:
+            disk, need = budget.model_size(inst, x), budget.model_memory(inst, x)
+            if not disk:
+                out[x.id] = {"disk_gb": 0, "need_gb": 0, "ok": True, "text": "File not found, size unknown"}
+                continue
+            gb = lambda b: round(b / 2**30, 1)  # noqa: E731
+            if not gpus:
+                text, ok = f"Needs about {gb(need)} GB of GPU memory", True
+            else:
+                n = next((n for n in range(1, len(gpus) + 1) if sum(gpus[:n]) >= need), 0)
+                if n:
+                    text, ok = f"Fits on {'one GPU' if n == 1 else f'{n} GPUs'}", True
+                else:
+                    over = need - sum(gpus)
+                    ok = not ram or over <= ram * 0.8
+                    text = (f"All GPUs + about {gb(over)} GB of RAM" if ok
+                            else f"Too big: needs about {gb(over)} GB of RAM beside your GPUs")
+            out[x.id] = {"disk_gb": gb(disk), "need_gb": gb(need), "ok": ok, "text": text}
+        return out
+
     def check_model(self, inst: Instance, model: CatalogModel, new_file: bool = True) -> list[str]:
         """Warnings for a model added or changed by hand: its file isn't there, it is bigger than the
         GPUs, or it has a setting that breaks llama.cpp's own GPU split. A new file too big for the
@@ -1592,16 +1620,54 @@ class Shepherd:
             notes.insert(0, f"{model.file} isn't in the models folder yet, so {model.id} can't load until it is.")
         return notes
 
-    def delete_model(self, iid: str, mid: str) -> str:
-        _, cat = self.server(iid)
-        if mid not in {m.id for m in cat.models}:
+    def delete_model(self, iid: str, mid: str, files: bool = False) -> str:
+        """Take a model out of the catalogue. With `files`, also delete its .gguf files (and vision
+        projector / MTP draft) from the models folder, except any another model still uses."""
+        inst, cat = self.server(iid)
+        model = next((m for m in cat.models if m.id == mid), None)
+        if not model:
             raise Problem(f"no model '{mid}'", status=404)
+        if files and mid in self.loaded(iid, cat)[0]:
+            raise Problem(f"{mid} is loaded. Unload it first, then delete its files.", "warn", 409)
         try:
-            cat = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in cat.models if m.id != mid]})
+            new = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in cat.models if m.id != mid]})
         except ValidationError as err:
             raise Problem(f"Cannot delete {mid}: {friendly_errors(err)}", status=409) from err
-        self.store.save_catalog(cat)
-        return f"Deleted {mid}."
+        doomed, kept = (self._model_files_to_delete(inst, model, mid) if files else ([], []))
+        self.store.save_catalog(new)
+        if not files:
+            return f"Deleted {mid}."
+        try:
+            for host, rels in doomed:
+                self.downloads.delete_files(host, rels)
+        except BackendError as err:
+            raise Problem(f"Removed {mid} from the catalogue, but could not delete its files: {err}", status=500) from err
+        n = sum(len(r) for _, r in doomed)
+        text = f"Deleted {mid} and its {n} file{'s' if n != 1 else ''}." if n else f"Deleted {mid}."
+        return text + (f" Kept {', '.join(kept)}: another model uses it." if kept else "")
+
+    def _model_files_to_delete(self, inst: Instance, model: CatalogModel, mid: str) -> tuple[list[tuple[str, list[str]]], list[str]]:
+        """([(models folder, [paths inside it])], files kept) for deleting `model`'s files: only
+        files in a folder mounted into the server, and none another model (on any server) uses."""
+        used: set[str] = set()
+        for other, ocat in ((i, self.store.catalog(i.id)) for i in self.store.instances()[0].values() if i.kind == "llama-swap"):
+            for m in ocat.models:
+                if other.id == inst.id and m.id == mid:
+                    continue
+                used |= {str(p) for f in (m.file, m.mmproj, m.mtp_draft) if f and (p := budget.host_path(other, f))}
+        by_host: dict[str, list[str]] = {}
+        kept = []
+        for f in dict.fromkeys(x for x in (model.file, model.mmproj, model.mtp_draft) if x):
+            p = budget.host_path(inst, f)
+            vol = next((v for v in inst.volumes if f.startswith(v.container.rstrip("/") + "/")), None)
+            rel = f[len(vol.container.rstrip("/")) + 1:] if vol else ""
+            if not p or not vol or ".." in Path(rel).parts or not rel.endswith(".gguf"):
+                continue
+            if str(p) in used:
+                kept.append(Path(f).name)
+            else:
+                by_host.setdefault(vol.host, []).append(rel)
+        return list(by_host.items()), kept
 
     # ------------------------------------------------------------------ suggested models
     @staticmethod
@@ -1707,6 +1773,23 @@ class Shepherd:
             return self.downloads.discard(self._suggestion(key), self.models_dir(inst))
         except BackendError as err:
             raise Problem(f"Could not delete the partial files: {err}", status=500) from err
+
+    def delete_download(self, iid: str, key: str) -> str:
+        """Delete a downloaded suggested model's files, when no model in a catalogue uses them."""
+        inst, _ = self.server(iid)
+        s = self._suggestion(key)
+        folder = self.models_dir(inst)
+        if self.downloads.status(s, folder).state != "ready":
+            raise Problem(f"{s.name} is not downloaded.", "info", 409)
+        for other in (i for i in self.store.instances()[0].values() if i.kind == "llama-swap"):
+            for m in self.store.catalog(other.id).models:
+                if {m.file, m.mmproj, m.mtp_draft} & {f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}" for x in s.files}:
+                    raise Problem(f"{m.id} on {other.name} uses it: delete it from the catalogue (with its file) instead.", "warn", 409)
+        try:
+            self.downloads.delete_files(folder, [s.path(x) for x in s.files])
+        except BackendError as err:
+            raise Problem(f"Could not delete the files: {err}", status=500) from err
+        return f"Deleted {s.name} from disk."
 
     @checked
     def add_suggestion(self, iid: str, key: str) -> str:

@@ -284,8 +284,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.delete("/api/v1/instances/{iid}/models/{mid}")
     @handle
-    def delete_model(request: Request, iid: str, mid: str):
-        return {"message": svc.delete_model(iid, mid)}
+    def delete_model(request: Request, iid: str, mid: str, files: bool = False):
+        return {"message": svc.delete_model(iid, mid, files)}
 
     @r.post("/api/v1/instances/{iid}/models/{mid}/{op}")
     @handle
@@ -314,6 +314,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return {"message": svc.discard_download(iid, key)}
         if op == "forget":
             return {"message": svc.forget_link(iid, key)}
+        if op == "delete":
+            return {"message": svc.delete_download(iid, key)}
         raise Problem("unknown operation", status=404)
 
     @r.post("/api/v1/instances/{iid}/models/from-link")
