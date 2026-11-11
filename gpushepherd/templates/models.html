@@ -96,7 +96,7 @@
 <h4>Add a model from a link</h4>
 <form class="card" hx-post="/instances/{{ inst.id }}/models/from-link">
   <p class="small muted" style="margin-top:0">Any model in one .gguf file. On Hugging Face, open the model's Files, click the
-    .gguf file you want and copy the address. It downloads like a suggested model and starts with llama.cpp's settings;
+    .gguf file you want and copy the address (the file's page or its download link both work). It downloads like a suggested model and starts with llama.cpp's settings;
     tune them with Edit once it is added.</p>
   <div class="fields">
     <div><label for="link_url">Link to the .gguf file</label><input type="url" id="link_url" name="url" required
