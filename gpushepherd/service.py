@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
-from . import gpu_unlock
+from . import gpu_unlock, hf_models
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import instance_url, llamaswap, openwebui
@@ -137,6 +137,7 @@ class Shepherd:
     openwebui_client: object = openwebui.OpenWebUI   # (address, token) -> client; a stand-in in tests
     _library: kn.Library | None = None
     restarter: object = None            # () -> None: restarts this process (power "restart"); a stand-in in tests
+    hf: hf_models.Library | None = None    # suggested models from Hugging Face
 
     def __post_init__(self):
         if self.downloads is None:
@@ -159,6 +160,8 @@ class Shepherd:
             self.drive_log = drives.Memory(self.store.root)
         if self.image_log is None:
             self.image_log = image_updates.Records(self.store.root)
+        if self.hf is None:
+            self.hf = hf_models.Library(self.store.root)
         if self.restarter is None:
             self.restarter = restart_process
         self._auto_tried: set[tuple[str, str]] = set()     # (instance, version) automatic updates tried
@@ -817,7 +820,7 @@ class Shepherd:
     def _downloading(self, instances: dict[str, Instance]) -> set[str]:
         running = {n for n, h in self.backend.helpers(DOWNLOAD_KIND).items() if h.running}
         folders = storage.model_folders(instances, tpl.MODELS_IN_CONTAINER)
-        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS + self._linked()
+        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS + self._extra()
                 if self.downloads.name(s) in running
                 for f in s.files for m in folders}
 
@@ -895,10 +898,11 @@ class Shepherd:
             if info:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        gpus = gpu_mod.query()[0]
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"],
-                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb(),
-                           amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"])
+        gpus, ram = gpu_mod.query()[0], host.ram_gb()
+        nvidia = [g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"]
+        return tpl.Machine(gpu_mem_gb=nvidia, instances=instances, servers=servers, model_sizes={}, ram_gb=ram,
+                           amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"],
+                           suggestions=self.hf_picks(nvidia, ram))
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common
@@ -979,10 +983,11 @@ class Shepherd:
         """Start downloading the suggested models among `models` that aren't in the models folder yet."""
         out, folder = [], self.models_dir(server)
         for m in models:
-            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER, self._linked())
+            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER, self._extra())
             if s and folder and self.downloads.status(s, folder).state != "ready":
                 try:
                     self.downloads.start(s, folder)
+                    self.hf.keep(s)
                     out.append(s.name)
                 except ValueError as err:
                     log.warning("not downloading %s: %s", s.key, err)
@@ -1684,23 +1689,72 @@ class Shepherd:
         files = {x.file for x in cat.models}
         out = []
         linked = self._linked()
+        hf = self.hf_picks(m.gpu_mem_gb, m.ram_gb)
         helpers = self.downloads.helpers()        # one Docker listing for the whole list
-        for s in model_library.SUGGESTIONS + linked:
+        for s in model_library.SUGGESTIONS + linked + hf:
             f = model_library.fit(s, m.gpu_mem_gb, m.ram_gb)
             st = self.downloads.status(s, folder, helpers)
             out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
                         "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
                         "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
-                        "pct": st.pct, "partial": st.partial, "linked": s in linked, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
+                        "pct": st.pct, "partial": st.partial, "linked": s in linked, "hf": s in hf, "license": s.license,
+                        "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
                         "files": [{"path": f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}", "url": x.url, "gb": x.gb}
                                   for x in s.files]})
         return sorted(out, key=lambda x: x.pop("rank"))
 
     def _suggestion(self, key: str) -> model_library.Suggestion:
-        s = model_library.get(key, self._linked())
+        s = model_library.get(key, self._extra())
         if not s:
             raise Problem(f"no suggested model '{key}'", status=404)
         return s
+
+    def hf_picks(self, gpu_mem_gb: list[float], ram_gb: float) -> tuple[model_library.Suggestion, ...]:
+        """Models from Hugging Face that run well on this machine (hf_models.py), and the ones kept
+        because they were added or downloaded. With the setting off, only the kept ones."""
+        models, kept = self.hf.state()
+        if not self.store.settings().hf_suggestions:
+            models = []
+        return hf_models.picks(models, kept, gpu_mem_gb, ram_gb, model_library.SUGGESTIONS + self._linked())
+
+    def _extra(self) -> tuple[model_library.Suggestion, ...]:
+        """Every suggestion besides the built-in ones: added from a link, and from Hugging Face."""
+        return self._linked() + self.hf_picks([g.mem_total / 1024 for g in gpu_mod.query()[0]], host.ram_gb())
+
+    def hf_checked(self) -> float:
+        return self.hf.checked
+
+    def refresh_hf_models(self, wait: bool = False) -> str:
+        """Ask Hugging Face for its trending models now (in the background unless `wait`)."""
+        if not wait:
+            threading.Thread(target=self.hf.refresh, daemon=True, name="hf-models-now").start()
+            return "Asking Hugging Face; the suggested models update within a minute or two."
+        n = self.hf.refresh()
+        return (f"Found {n} models trending on Hugging Face." if n
+                else "Could not reach Hugging Face; the last list (or the built-in picks) stays.")
+
+    def watch_hf_models(self, interval: float = 600.0, first: float = 30.0) -> None:
+        """Refresh the Hugging Face list about once a day, while the setting is on."""
+        def loop():
+            threading.Event().wait(first)
+            while True:
+                try:
+                    if self.store.settings().hf_suggestions and self.hf.due():
+                        self.hf.refresh()
+                except Exception as err:  # noqa: BLE001 - watching must never stop
+                    log.warning("Hugging Face model list: %s", err)
+                threading.Event().wait(interval)
+        threading.Thread(target=loop, daemon=True, name="hf-models").start()
+
+    @checked
+    def set_hf_suggestions(self, on: bool) -> str:
+        s = self.store.settings()
+        s.hf_suggestions = on
+        self.store.save_settings(Settings.model_validate(s.model_dump()))
+        if on and self.hf.due():
+            threading.Thread(target=self.hf.refresh, daemon=True, name="hf-models-now").start()
+        return ("Suggesting models trending on Hugging Face that fit this machine." if on
+                else "Only the built-in model suggestions are shown now (and Hugging Face models you added).")
 
     def _linked(self) -> tuple[model_library.Suggestion, ...]:
         """The models added from a link, set up like suggested ones."""
@@ -1726,7 +1780,7 @@ class Shepherd:
         if same:
             key = str(same.get("key"))       # the same link again
         else:
-            taken = {x.key for x in model_library.SUGGESTIONS + self._linked()}
+            taken = {x.key for x in model_library.SUGGESTIONS + self._extra()}
             key = tpl.free_id(s.key, taken)
             sizes = (_remote_gb(s.model.url), _remote_gb(s.mmproj.url) if s.mmproj else 0)
             m = self.machine()
@@ -1759,7 +1813,9 @@ class Shepherd:
         if self.downloads.status(s, folder).state == "ready":
             return f"{s.name} is already downloaded."
         try:
-            return self.downloads.start(s, folder)
+            msg = self.downloads.start(s, folder)
+            self.hf.keep(s)
+            return msg
         except ValueError as err:
             raise Problem(str(err), "warn", 507) from err
 
@@ -1807,6 +1863,7 @@ class Shepherd:
         if s.role == "embed" and "embed" not in taken:
             model.aliases = ["embed"]
         self.save_model(iid, model, check=False)
+        self.hf.keep(s)
         fetching = self.fetch_suggested(inst, [model])
         st = self.backend.states().get(iid)
         note = " Restart the server to use it." if st and st.running else ""

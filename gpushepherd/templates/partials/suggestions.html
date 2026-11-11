@@ -12,6 +12,7 @@
           {% if s.vision %}<span class="tag" title="Reads images (its vision projector is downloaded with it)">images</span>{% endif %}
           {% if s.moe %}<span class="tag" title="Mixture of experts: its expert layers can sit in system RAM and it stays quick">MoE</span>{% endif %}
           {% if s.linked %}<span class="tag" title="You added it from a link">your link</span>{% endif %}
+          {% if s.hf %}<span class="tag" title="Trending on Hugging Face; the file was picked to fit this machine">Hugging Face</span>{% endif %}
           {% if s.mtp %}<span class="tag" title="Multi-token prediction: guesses a few tokens ahead, for faster answers">MTP</span>{% endif %}
           <div class="small muted">{{ s.blurb }} <a class="ext" href="{{ s.page }}" target="_blank" rel="noopener">Model page</a></div></td>
         <td class="small {{ '' if s.fits else 'warn-text' }}">{{ s.fit }}</td>
@@ -51,6 +52,7 @@
     </tbody>
   </table>
 </div>
+{% if hf_on is defined %}<div class="hint">{% if hf_on %}Also listed: models trending on Hugging Face that run well here{% if hf_checked %} (asked {{ hf_checked|ago }}){% else %} (not asked yet: needs the internet){% endif %}. Turn this off in Settings.{% else %}Models trending on Hugging Face are not suggested: turn that on in Settings.{% endif %}</div>{% endif %}
 {% if download_dir %}<div class="hint">Downloads go to <span class="mono">{{ download_dir }}</span>, one folder per model, and resume if they stop.</div>{% else %}
 <div class="hint warn-text">This server has no models folder mounted at /models, so nothing can be downloaded for it: add one under Edit.</div>{% endif %}
 </div>

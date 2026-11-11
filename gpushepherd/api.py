@@ -417,7 +417,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return {"admin_user": s.admin_user, "bind_address": s.bind_address, "network": s.network,
                 "container_prefix": s.container_prefix, "data_dir": str(store.root),
                 "host_data_dir": str(engine.host_data_dir), "trash_days": s.trash_days,
-                "image_check_hours": s.image_check_hours}
+                "image_check_hours": s.image_check_hours, "hf_suggestions": s.hf_suggestions}
 
     @r.get("/api/v1/settings")
     def get_settings():
@@ -427,7 +427,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def patch_settings(request: Request):
         data = body(request)
-        unknown = set(data) - {"bind_address", "network", "trash_days", "image_check_hours"}
+        unknown = set(data) - {"bind_address", "network", "trash_days", "image_check_hours", "hf_suggestions"}
         if unknown:
             raise Problem(f"unknown or read-only setting(s): {', '.join(sorted(unknown))}")
         msgs = []
@@ -441,6 +441,10 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             if not hours.isdigit():
                 raise Problem("image_check_hours must be a whole number of hours (0 = only when asked)")
             msgs.append(svc.set_image_check_hours(int(hours)))
+        if "hf_suggestions" in data:
+            if not isinstance(data["hf_suggestions"], bool):
+                raise Problem("hf_suggestions must be true or false")
+            msgs.append(svc.set_hf_suggestions(data["hf_suggestions"]))
         if {"bind_address", "network"} & set(data):
             msgs.append(svc.set_containers(data.get("bind_address"), data.get("network")))
         return {"message": " ".join(msgs), "settings": settings_json()}
