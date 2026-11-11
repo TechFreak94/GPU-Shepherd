@@ -1,11 +1,11 @@
 # The base image is pinned by digest, so a rebuild gets the same one; Dependabot moves the pin.
-FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS buildinfo
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS buildinfo
 # Records which commit this image is built from (read from .git without needing git), so the
 # dashboard can show it and tell when an update is waiting. Only the result reaches the image.
 COPY . /ctx
 RUN python3 /ctx/gpushepherd/buildinfo.py /ctx /build.json
 
-FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 LABEL org.opencontainers.image.title="GPU Shepherd" \
       org.opencontainers.image.description="Runs self-hosted AI containers and shares the GPUs between them automatically" \
