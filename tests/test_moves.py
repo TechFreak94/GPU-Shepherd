@@ -261,7 +261,7 @@ def test_storage_page_moves(stack):
     r = page.post("/storage/move/check", headers=HX, data={"source": str(models), "dest": str(disk2 / "m")})
     assert r.status_code == 200 and "Move Models?" in r.text and r.headers["HX-Retarget"] == "#modal-body"
     r = page.post("/storage/move", headers=HX, data={"source": str(models), "dest": str(disk2 / "m")})
-    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/?msg=Moving")
+    assert r.status_code == 204 and r.headers["HX-Redirect"] == "/"
     wait(app)
     html = page.get("/storage").text
     assert "Move back" in html and "Delete old copy" in html

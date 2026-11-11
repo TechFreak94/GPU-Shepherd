@@ -1457,10 +1457,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @threaded
     def storage_move(request: Request):
         try:
-            msg, _job = svc.move_folder(*move_form(request.state.form))
+            svc.move_folder(*move_form(request.state.form))
         except Problem as err:
             return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": with_msg("/", msg)})
+        # The dashboard's job banner already says what is moving; no extra flash message.
+        return Response(status_code=204, headers={"HX-Redirect": "/"})
 
     @app.post("/storage/moves/{op}")
     @threaded
