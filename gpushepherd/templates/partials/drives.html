@@ -1,14 +1,10 @@
 {# The machine's drives. Polled, so a drive that is attached shows up (and is mounted) within seconds. #}
-<div id="drives" hx-get="/storage/drives?source={{ source|urlencode }}{{ '&picking=1' if picking }}"
-  hx-trigger="{% if picking %}every 5s [document.getElementById('modal').open]{% else %}every 10s{% endif %}" hx-swap="outerHTML">
-  {% if drives_error %}<p class="muted small" style="margin:0">{{ drives_error }}</p>
-  {% else %}
-  {% for d in found %}
-  <div class="drive-row">
-    <div><strong>{{ d.name }}</strong>
+{% macro row(d, nested=False) %}
+  <div class="drive-row{{ ' drive-part' if nested }}">
+    <div>{% if nested %}<span class="mono">{{ d.device }}</span>{% else %}<strong>{{ d.name }}</strong>{% endif %}
       <span class="tag{{ ' warn' if d.state == 'failed' else '' }}">{{ {"mounted": "Mounted", "ready": "Not mounted", "empty": "Empty", "unsupported": "Left alone", "failed": "Could not mount"}[d.state] }}</span>
       {% if d.system %}<span class="tag">system</span>{% elif d.removable %}<span class="tag">removable</span>{% endif %}
-      <div class="small muted"><span class="mono">{{ d.device }}</span> · {{ d.size|gb }}{% if d.fstype %} · {{ d.fstype }}{% endif %}
+      <div class="small muted">{% if not nested %}<span class="mono">{{ d.device }}</span> · {% endif %}{{ d.size|gb }}{% if d.fstype %} · {{ d.fstype }}{% endif %}
         {% if d.mountpoint %} · at <span class="mono">{{ d.mountpoint }}</span>{% if d.free is not none %} · {{ d.free|gb }} free{% endif %}{% endif %}
         {% if d.by_us %} · mounted by GPU Shepherd{% endif %}</div>
       {% if d.note and d.state != "mounted" %}<div class="small muted">{{ d.note }}</div>{% endif %}
@@ -23,6 +19,19 @@
       {% endif %}
     </div>
   </div>
+{% endmacro %}
+<div id="drives" hx-get="/storage/drives?source={{ source|urlencode }}{{ '&picking=1' if picking }}"
+  hx-trigger="{% if picking %}every 5s [document.getElementById('modal').open]{% else %}every 10s{% endif %}" hx-swap="outerHTML">
+  {% if drives_error %}<p class="muted small" style="margin:0">{{ drives_error }}</p>
+  {% else %}
+{% for g in found|by_disk %}
+  {% if g.parts|length > 1 %}
+  <div class="drive-group">
+    <div class="drive-disk"><strong>{{ g.name }}</strong>{% if g.removable %} <span class="tag">removable</span>{% endif %}
+      <div class="small muted"><span class="mono">{{ g.device }}</span> · {{ g.size|gb }} · {{ g.parts|length }} partitions</div></div>
+    {% for d in g.parts %}{{ row(d, true) }}{% endfor %}
+  </div>
+  {% else %}{{ row(g.parts[0]) }}{% endif %}
   {% else %}<p class="muted small" style="margin:0">No drives found.</p>{% endfor %}
   {% endif %}
 </div>

@@ -14,6 +14,13 @@ env:
   RAG_OPENAI_API_BASE_URL: http://llm:8080/v1
   RAG_OPENAI_API_KEY: REPLACE_WITH_LLM_API_KEY
   RAG_EMBEDDING_MODEL: embed
+  # as the App Center sets up Open WebUI with an embeddings model (Open WebUI reads these only at its
+  # first start): bigger pieces suit books, and Qwen3 Embedding wants its questions to start like this
+  RAG_EMBEDDING_QUERY_PREFIX: "Instruct: Given a question, retrieve passages that answer it\nQuery: "
+  CHUNK_SIZE: "1500"
+  CHUNK_OVERLAP: "200"
+  RAG_TOP_K: "8"
+  RAG_EMBEDDING_BATCH_SIZE: "16"
   ENABLE_OLLAMA_API: "false"
   ENABLE_IMAGE_GENERATION: "true"
   IMAGE_GENERATION_ENGINE: comfyui

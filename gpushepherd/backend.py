@@ -105,6 +105,20 @@ class HelperState:
     exit_code: int | None = None        # once it has finished
 
 
+def split_image(image: str) -> tuple[str, str]:
+    """An image reference as Docker's pull takes it: (repository, tag or digest). A reference pinned
+    by digest (name@sha256:..., or name:tag@sha256:...) is pulled by that digest; without a tag it
+    is "latest". A registry's port (host:5000/name) is not a tag."""
+    name, at, digest = image.partition("@")
+    if at:
+        repo, _, tag = name.rpartition(":")
+        return (name if not repo or "/" in tag else repo), digest
+    repo, _, tag = image.rpartition(":")
+    if not repo or "/" in tag:          # no tag given
+        return image, "latest"
+    return repo, tag
+
+
 def _gpus_from_label(text: str) -> list[int]:
     return [int(x) for x in text.split(",") if x.strip().isdigit()]
 
@@ -190,7 +204,8 @@ class DockerBackend:
             name = (c.get("Names") or ["/?"])[0].lstrip("/")
             state = c.get("State", "")
             out[iid] = ContainerState(
-                instance_id=iid, name=name, running=state == "running", status=state,
+                # an app that keeps crashing (Docker restarts it) or is paused still holds its GPUs
+                instance_id=iid, name=name, running=state in ("running", "restarting", "paused"), status=state,
                 gpus=_gpus_from_label(labels.get(LABEL_GPUS, "")),
                 config_hash=labels.get(LABEL_CONFIG, ""), image=c.get("Image", ""),
                 status_text=c.get("Status", ""), image_id=c.get("ImageID", ""))
@@ -225,9 +240,7 @@ class DockerBackend:
 
     def pull(self, image: str, log) -> None:
         """Download the image the tag points at now, even when one is already here."""
-        repo, _, tag = image.rpartition(":")
-        if not repo or "/" in tag:          # no tag given
-            repo, tag = image, "latest"
+        repo, tag = split_image(image)
         last = ""
         try:
             for event in self.api.pull(repo, tag=tag, stream=True, decode=True):

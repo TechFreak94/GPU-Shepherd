@@ -1,10 +1,11 @@
-FROM python:3.13-slim AS buildinfo
+# The base image is pinned by digest, so a rebuild gets the same one; Dependabot moves the pin.
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS buildinfo
 # Records which commit this image is built from (read from .git without needing git), so the
 # dashboard can show it and tell when an update is waiting. Only the result reaches the image.
 COPY . /ctx
 RUN python3 /ctx/gpushepherd/buildinfo.py /ctx /build.json
 
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 LABEL org.opencontainers.image.title="GPU Shepherd" \
       org.opencontainers.image.description="Runs self-hosted AI containers and shares the GPUs between them automatically" \
@@ -15,9 +16,14 @@ LABEL org.opencontainers.image.title="GPU Shepherd" \
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+# The exact versions (and file hashes) of every Python dependency, so each build installs the same
+# code. Made from pyproject.toml; after changing its dependencies run:
+#   pip-compile --allow-unsafe --generate-hashes --strip-extras -o requirements.txt pyproject.toml
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY gpushepherd ./gpushepherd
-RUN pip install --no-cache-dir . && rm -rf /src
+RUN pip install --no-cache-dir --no-deps . && rm -rf /src
 COPY --from=buildinfo /build.json /usr/share/gpu-shepherd/build.json
 COPY CHANGELOG.md /usr/share/gpu-shepherd/CHANGELOG.md
 
