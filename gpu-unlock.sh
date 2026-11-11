@@ -116,7 +116,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --check|--install|--uninstall|--install-service|--remove-service|--boot|--confirm)
                           ACTION=${1#--}; shift ;;
-        --set)            ACTION=set; TARGETS_ARG="${2:?--set needs PCI addresses, all or none}"; shift 2 ;;
+        --set)            ACTION="set"; TARGETS_ARG="${2:?--set needs PCI addresses, all or none}"; shift 2 ;;
         --from-dashboard) FROM_DASHBOARD=1; shift ;;
         -q|--quiet)       QUIET=1; shift ;;
         -h|--help)        usage; exit 0 ;;
@@ -148,6 +148,7 @@ LOG="$SHARED/log.txt"
 json_str() {
     local s=${1//\\/\\\\}
     s=${s//\"/\\\"}; s=${s//$'\t'/ }; s=${s//$'\r'/}; s=${s//$'\n'/\\n}
+    s=${s//[[:cntrl:]]/}                 # any other control character would make the file unreadable as JSON
     printf '"%s"' "$s"
 }
 
@@ -318,7 +319,7 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash $HERE/gpu-unlock.sh --boot --quiet
+ExecStart=/bin/bash "$HERE/gpu-unlock.sh" --boot --quiet
 
 [Install]
 WantedBy=multi-user.target rescue.target
@@ -330,7 +331,7 @@ Description=GPU Shepherd: check that gpu-unlock worked on this boot
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash $HERE/gpu-unlock.sh --confirm --quiet
+ExecStart=/bin/bash "$HERE/gpu-unlock.sh" --confirm --quiet
 EOF
     put_unit "$UNIT_DIR/$UNIT-confirm.timer" <<EOF
 # Written by $HERE/gpu-unlock.sh.
@@ -514,7 +515,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash $HERE/gpu-unlock.sh --from-dashboard
+ExecStart=/bin/bash "$HERE/gpu-unlock.sh" --from-dashboard
 EOF
     [ "$UNITS_CHANGED" -eq 0 ] || reload_units
     systemctl enable --no-reload --now "$UNIT.path" >/dev/null
@@ -566,7 +567,7 @@ case "$ACTION" in
     set)       do_set "$TARGETS_ARG" ;;
     uninstall) do_uninstall ;;
 esac
-RUN=done
+RUN="done"
 write_status
 if [ "$ACTION" = check ] && [ "$QUIET" -eq 0 ] && [ "$FROM_DASHBOARD" -eq 0 ]; then
     cat "$STATUS"
