@@ -478,7 +478,10 @@ fi
 # --------------------------------------------------------------------------- rebuild
 
 answers() {   # the web UI is up and its dashboard draws (older versions ignore ?full=1)
-    curl -fsS "http://127.0.0.1:$PORT/healthz?full=1" >/dev/null 2>&1
+    # the dashboard is only drawn for a caller with the API token; without one this still says it answers
+    local token=""
+    token=$(head -n 1 "$DATA_DIR/api-token" 2>/dev/null | tr -dc 'A-Za-z0-9_-' || true)
+    curl -fsS ${token:+-H "Authorization: Bearer $token"} "http://127.0.0.1:$PORT/healthz?full=1" >/dev/null 2>&1
 }
 
 restarts() { docker inspect -f '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo 0; }

@@ -823,13 +823,15 @@ def test_docker_going_away_shows_a_notice(stack):
 
 def test_full_health_check_fails_when_the_dashboard_does(stack, monkeypatch):
     app, client, backend, data = stack
-    assert client.get("/healthz?full=1").json()["ok"]
+    token = {"Authorization": "Bearer " + (data / "api-token").read_text().strip()}   # as update.sh sends it
+    assert client.get("/healthz?full=1", headers=token).json()["ok"]
 
     def broken():
         raise RuntimeError("bug")
     monkeypatch.setattr("gpushepherd.app.host_mod.query", broken)
-    assert client.get("/healthz?full=1").status_code == 500
+    assert client.get("/healthz?full=1", headers=token).status_code == 500
     assert client.get("/healthz").status_code == 200
+    assert client.get("/healthz?full=1").status_code == 200       # nobody else makes it draw the dashboard
 
 
 def test_storage_page_and_trash(stack):

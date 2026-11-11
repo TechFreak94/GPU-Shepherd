@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -94,6 +95,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     if recovered:
         log.error("%s", recovered)
         notices.append(recovered)
+    store.tighten()                        # instance files from older versions: owner-only, like new ones
     try:
         backend.ensure_network(store.settings().network)
     except Exception as err:  # noqa: BLE001
@@ -129,6 +131,19 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     # ------------------------------------------------------------------ security
+    limiter = auth.LoginLimiter()
+
+    def session_user(request: Request) -> str:
+        """Who is logged in ("" = nobody). A cookie from before the last password change or logout
+        no longer counts (auth.session_stamp)."""
+        user = request.session.get("user")
+        if not user:
+            return ""
+        s = store.settings()
+        if user != s.admin_user or not auth.same(str(request.session.get("stamp", "")), auth.session_stamp(s)):
+            return ""
+        return user
+
     class Guard(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
@@ -136,11 +151,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 # scripts and the gpu-shepherd command: the API token; a logged-in browser may read
                 bearer = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
                 if not auth.check_api_token(store, bearer) and not (
-                        request.method == "GET" and request.session.get("user")):
+                        request.method == "GET" and session_user(request)):
                     return JSONResponse({"error": "log in, or send the API token as 'Authorization: Bearer <token>'"},
                                         status_code=401)
             elif not path.startswith(PUBLIC):
-                if not request.session.get("user"):
+                if not session_user(request):
                     if path == "/" and request.query_params.get("login"):
                         # just logged in, yet the session cookie did not come back
                         return RedirectResponse("/login?nocookie=1", status_code=303)
@@ -166,7 +181,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     # ------------------------------------------------------------------ helpers
     def page(request: Request, template: str, status: int = 200, **ctx):
-        ctx.setdefault("user", request.session.get("user"))
+        ctx.setdefault("user", session_user(request))
         ctx.setdefault("flash", request.query_params.get("msg", ""))
         # picked in the browser (app.js), so the page is drawn in that theme from the start
         theme = request.cookies.get("theme", "")
@@ -343,7 +358,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/healthz")
     def healthz(request: Request, full: bool = False):
         body = {"ok": True, "version": __version__, "commit": build.get("commit", "")}
-        if full:
+        # drawing the dashboard asks Docker and nvidia-smi: only for update.sh (which sends the API
+        # token) or a logged-in browser, not for anyone who can reach the port
+        bearer = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        if full and (auth.check_api_token(store, bearer) or session_user(request)):
             # update.sh asks for this after an update: the dashboard must draw too, not just the server
             # answer (a Docker outage is shown on the dashboard, so it doesn't fail this)
             try:
@@ -365,22 +383,37 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         form = await request.form()
         s = store.settings()
         user, password = str(form.get("user", "")), str(form.get("password", ""))
-        # Copying the password out of a terminal easily picks up a space or line break at either end.
-        ok = auth.verify_password(password, s.password_hash) or (
-            password != password.strip() and auth.verify_password(password.strip(), s.password_hash))
         client = request.client.host if request.client else "?"
-        if secrets.compare_digest(user.strip(), s.admin_user) and ok:
+        first_run = auth.initial_password_file(store).exists()
+        wait = limiter.wait(client)
+        if wait:
+            log.warning("login: refused from %s (too many wrong logins)", client)
+            mins = -(-wait // 60)
+            return page(request, "login.html", status=429, first_run=first_run,
+                        error=f"Too many wrong logins. Try again in {mins} minute{'s' if mins != 1 else ''}.")
+
+        def check() -> bool:      # scrypt takes a moment: off the event loop, so the dashboard keeps answering
+            # Copying the password out of a terminal easily picks up a space or line break at either end.
+            return auth.verify_password(password, s.password_hash) or (
+                password != password.strip() and auth.verify_password(password.strip(), s.password_hash))
+        ok = await run_in_threadpool(check)
+        known = auth.same(user.strip(), s.admin_user)
+        if known and ok:
             log.info("login: '%s' logged in from %s", s.admin_user, client)
+            limiter.passed(client)
             request.session.clear()
-            request.session["user"] = s.admin_user
+            request.session.update(user=s.admin_user, stamp=auth.session_stamp(s))
             return RedirectResponse("/?login=1", status_code=303)
-        log.warning("login: rejected from %s (%s)", client,
-                    "wrong password" if secrets.compare_digest(user.strip(), s.admin_user) else f"unknown user {user!r}")
-        return page(request, "login.html", status=401, error="Wrong user name or password.",
-                    first_run=auth.initial_password_file(store).exists())
+        limiter.failed(client)
+        log.warning("login: rejected from %s (%s)", client, "wrong password" if known else f"unknown user {user[:80]!r}")
+        return page(request, "login.html", status=401, error="Wrong user name or password.", first_run=first_run)
 
     @app.post("/logout")
     def logout(request: Request):
+        # a copy of the cookie would stay valid until it expires: end every login made so far
+        s = store.settings()
+        s.session_epoch += 1
+        store.save_settings(s)
         request.session.clear()
         return Response(status_code=204, headers={"HX-Redirect": "/login"})
 
@@ -469,7 +502,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return PlainTextResponse("unknown action", status_code=400)
         form = await request.form()
         back = str(form.get("back", ""))
-        if back and not re.match(r"^/[A-Za-z0-9/_-]*$", back):   # local paths only
+        if back and not re.match(r"^/(?!/)[A-Za-z0-9/_-]*$", back):   # local paths only (//host is another site)
             back = ""
         return run_plan(request, action, iid, confirm=form.get("confirm") == "1", back=back)
 
@@ -1081,6 +1114,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             msg = svc.change_password(*(str(raw.get(k, "")) for k in ("current", "new", "again")))
         except Problem as err:
             return problem(err)
+        # the change ends every login (auth.session_stamp); this browser stays logged in
+        request.session["stamp"] = auth.session_stamp(store.settings())
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", msg)})
 
     @app.post("/settings/general")
