@@ -246,6 +246,10 @@ class Host:
     """Looks at the host's disks and folders. All of it is read-only except mount()."""
 
     def scan(self) -> list[Drive]: ...
+    def signature(self) -> str:
+        """Changes when a drive comes or goes: a scan is only repeated then (or when it is old)."""
+        return proc_signature()
+
     def mount(self, drive: Drive, base: str, persist: bool) -> str:
         """Mount a drive at `base` (or base-2 ... when taken). Returns where it is now mounted."""
         ...
