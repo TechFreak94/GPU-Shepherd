@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu as gpu_mod, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
@@ -594,7 +594,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
                 "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
                 "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app,
-                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update}
+                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update,
+                "devices": ", ".join(inst.devices), "device_gpus": inst.device_gpus or ""}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
         gpus, _ = engine.snapshot().gpus, None
@@ -631,13 +632,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         keys = {sl.key for sl in tpl.slots(t)}
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
                       f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in have)
-                     for s, fit in sorted(((s, model_library.fit(s, m.gpu_mem_gb, m.ram_gb))
+                     for s, fit in sorted(((s, model_library.fit(s, tpl.gpu_mem_gb(t, m, f), m.ram_gb))
                                            for s in model_library.SUGGESTIONS if keys & set(s.uses)),
                                           key=lambda x: x[1].rank)] if wants_files else []
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
-                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
+                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus, amd_gpus=gpu_mod.amd_gpus() if t.devices else [],
                     speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
@@ -691,7 +692,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         slot_fields = [f"{x.key}_{part}" for x in tpl.slots(t) for part in ("file", "ctx")]
         f = {k: str(raw.get(k, "")) for k in ["name", "id", "port", "gpu", "models_dir", "appdata_dir", "server",
                                               "comfyui", "speech", "offload", "login_user", "password", "hass_url",
-                                              "hass_token", "hf_model", "hf_token", "max_len", *slot_fields]}
+                                              "hass_token", "hf_model", "hf_token", "max_len", "device_gpus",
+                                              *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
         then = next_app(str(raw.get("then", ""))) if tpl.is_model_server(t) else None
         if raw.get("action") == "advanced":
@@ -741,7 +743,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
                                           "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
-                                          "drain_path", "drain_key", "app", "requires", "vram_gb")}
+                                          "drain_path", "drain_key", "app", "requires", "vram_gb", "devices",
+                                          "device_gpus")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
         f["cpu_fallback"] = raw.get("cpu_fallback") == "on"
@@ -766,7 +769,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
                                   path=f["drain_path"], key=f["drain_key"]),
                 app=str(f["app"]).strip(), requires=re.split(r"[\s,]+", str(f["requires"]).strip()),
-                auto_update=f["auto_update"])
+                auto_update=f["auto_update"], devices=re.split(r"[\s,]+", str(f["devices"]).strip()),
+                device_gpus=int(f["device_gpus"]) if str(f["device_gpus"]).strip() else 0)
             msg = svc.save_instance(inst, editing)
         except (Problem, ConfigError, ValueError) as err:
             resp = editor(request, f, editing, error=err.msg if isinstance(err, Problem) else message(err))
@@ -789,9 +793,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         st = backend.states().get(iid)
         running = bool(st and st.running)
         gpu_count = len(st.gpus) if running else 0
+        through = inst.device_gpus if inst.devices else 0     # GPUs it reaches through devices (AMD, Vulkan)
+        gpu_count = gpu_count or (through if running else 0)
         loaded, err = svc.loaded(iid, cat)
         files, notes = llamaswap.local_model_files(inst)
-        preview_gpus = gpu_count or max(len(engine.snapshot().gpus), 1)
+        preview_gpus = gpu_count or through or max(len(engine.snapshot().gpus), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),

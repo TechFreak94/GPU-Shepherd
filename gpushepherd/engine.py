@@ -239,7 +239,9 @@ class Engine:
         if inst.kind == "llama-swap":
             catalog = self._ensure_llama_server(inst, self.store.catalog(inst.id), log)
             threads = catalog.threads or gpu_mod.physical_cores()
-            text = llamaswap.render(catalog, len(gpus), threads, self.placement(inst, catalog, gpus), names)
+            # GPUs it reaches through passed-in devices (AMD through Vulkan) count when it has no others
+            count = len(gpus) or (inst.device_gpus if inst.devices else 0)
+            text = llamaswap.render(catalog, count, threads, self.placement(inst, catalog, gpus), names)
             out = self.store.generated_dir(inst.id) / "llama-swap.yaml"
             out.write_text(text, encoding="utf-8")
             host_file = str(self.host_data_dir / "generated" / inst.id / "llama-swap.yaml")
@@ -250,7 +252,7 @@ class Engine:
             network=settings.network, alias=inst.id, command=list(inst.command), env=env,
             ports=[(settings.bind_address, p.host, p.container, p.protocol) for p in inst.ports],
             volumes=volumes, gpus=list(gpus), config_hash=self.config_hash(inst),
-            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit)
+            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=list(inst.devices))
 
     def _ensure_llama_server(self, inst: Instance, catalog: Catalog, log) -> Catalog:
         if catalog.llama_server:

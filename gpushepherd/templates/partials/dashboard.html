@@ -128,6 +128,7 @@
           {% if c.running and c.assigned %}<span class="tl"><strong>{{ c.assigned|map(attribute="name")|unique|join(", ") }}</strong>{% if c.vram_total %}: {{ "%.1f"|format(c.vram_used / 1024) }} GB of video memory in use{% endif %}</span>{% endif %}
           <span class="tl">{% if g.mode == "fixed" %}Always uses GPU {{ g.gpus|join(", ") }}.
             {%- elif g.mode == "elastic" %}Uses {% if not g.max_gpus %}{{ g.min_gpus }} or more GPUs{% elif g.max_gpus == g.min_gpus %}exactly {{ g.min_gpus }} GPU{{ "s" if g.min_gpus > 1 }}{% else %}{{ g.min_gpus }} to {{ g.max_gpus }} GPUs{% endif %}, and gives extra ones up when another instance needs them.
+            {%- elif i.devices %}Uses the GPUs behind {{ i.devices|join(", ") }} directly; GPU Shepherd doesn't share those out.
             {%- else %}Does not use a GPU.{% endif %}
             {%- if g.vram_gb %} Shares its GPU with other apps that have a video memory budget: it may use up to {{ "%g"|format(g.vram_gb) }} GB.{% endif %}
             {%- if g.cpu_fallback %} When no GPU is free it runs on the CPU instead of stopping, and moves back onto a GPU when one is.{% endif %}</span>
@@ -136,6 +137,7 @@
         <dd>{% if c.running and c.gpus %}<strong>{{ gpu_text(c.gpus) }}</strong>
             {%- if c.vram_total %}{% set pct = (100 * c.vram_used / c.vram_total)|round|int %} · {{ "%.1f"|format(c.vram_used / 1024) }} of {{ "%.1f"|format(c.vram_total / 1024) }} GB
             <div class="meter thin" role="img" aria-label="{{ pct }}% video memory used"><i class="{{ level(pct) }}" style="width: {{ pct }}%"></i></div>{% endif %}
+          {% elif c.running and i.devices %}<strong>{{ i.device_gpus or "" }} through {{ i.devices|join(", ") }}</strong>
           {% elif c.running %}{% if g.mode != "none" %}<strong>CPU</strong> <span class="muted">· no GPU free</span>{% else %}none{% endif %}
           {% else %}<span class="muted">none while stopped</span>{% endif %}
           {% if c.gpu_note %}<p class="small muted gpu-note">{{ c.gpu_note }}</p>{% endif %}</dd>

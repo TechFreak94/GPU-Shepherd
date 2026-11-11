@@ -114,7 +114,7 @@ def test_models_picked_while_installing():
 def test_renamed_apps():
     """The chat and coding model servers are one Llama Swap now; old keys and instances still find it."""
     assert tpl.get("llm-chat") is tpl.get("llm-coder") is tpl.get("llm-server")
-    assert [x.key for x in tpl.TEMPLATES if x.kind == "llama-swap"] == ["llm-server"]
+    assert [x.key for x in tpl.TEMPLATES if x.kind == "llama-swap"] == ["llm-server", "llm-server-vulkan"]
 
 
 def test_auto_offload():
@@ -179,7 +179,8 @@ def test_installed_counts_older_instances():
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
                    "librechat": [], "anythingllm": [], "langflow": [], "ollama": [], "invokeai": [],
-                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": [], "opencode": []}
+                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": [], "opencode": [],
+                   "llm-server-vulkan": []}
 
 
 def test_kind_tags():

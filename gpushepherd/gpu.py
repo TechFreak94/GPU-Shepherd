@@ -1,7 +1,11 @@
 """GPU discovery through nvidia-smi (the NVIDIA container runtime provides it inside the app's
 container when the 'utility' capability is requested).
 
-For development and demos, SHEPHERD_FAKE_GPUS="2x8192:NVIDIA GeForce RTX 3070" fakes the GPUs.
+AMD GPUs are only looked up (amd_gpus(), from the amdgpu driver's files in /sys): GPU Shepherd
+doesn't plan or share them out. An app reaches them through passed-in devices (Instance.devices).
+
+For development and demos, SHEPHERD_FAKE_GPUS="2x8192:NVIDIA GeForce RTX 3070" fakes the GPUs,
+and SHEPHERD_FAKE_AMD_GPUS="2x8192:AMD Radeon RX 580" the AMD ones.
 """
 from __future__ import annotations
 
@@ -104,6 +108,58 @@ def _fake(spec: str) -> list[Gpu]:
     mem, _, name = rest.partition(":")
     return [Gpu(i, name or "Fake GPU", round(random.uniform(0.05, 0.2) * float(mem or 8192)),
                 float(mem or 8192), 0.0, f"0000:{i + 1:02x}:00.0", f"GPU-fake-{i}") for i in range(int(count or 1))]
+
+
+DRM = "/sys/class/drm"
+AMD_VENDOR = "0x1002"
+
+
+def amd_gpus(drm: str = DRM) -> list[Gpu]:
+    """The machine's AMD GPUs, as the amdgpu driver describes them in /sys (no AMD tool needed),
+    numbered from 0 in the order of their cards. Empty if there are none or /sys can't be read."""
+    fake = os.environ.get("SHEPHERD_FAKE_AMD_GPUS", "")
+    if fake:
+        return _fake(fake)
+    out = []
+    try:
+        cards = sorted((p for p in os.listdir(drm) if p.startswith("card") and p[4:].isdigit()), key=lambda p: int(p[4:]))
+    except OSError:
+        return []
+    for card in cards:
+        dev = os.path.join(drm, card, "device")
+        if _read(os.path.join(dev, "vendor")) != AMD_VENDOR:
+            continue
+        total = _read(os.path.join(dev, "mem_info_vram_total"))
+        if not total.isdigit():                  # not driven by amdgpu (radeon, or no driver)
+            continue
+        used = _read(os.path.join(dev, "mem_info_vram_used"))
+        busy = _read(os.path.join(dev, "gpu_busy_percent"))
+        name = _read(os.path.join(dev, "product_name")) or f"AMD GPU {_read(os.path.join(dev, 'device'))}"
+        bus = os.path.basename(os.path.realpath(dev))
+        out.append(Gpu(len(out), name, int(used) / 2**20 if used.isdigit() else 0.0, int(total) / 2**20,
+                       float(busy) if busy.isdigit() else 0.0, bus if bus.count(":") == 2 else ""))
+    return out
+
+
+# what a passed-in GPU is taken to have when /sys doesn't say (the 8 GB of the cards the Vulkan
+# Llama Swap is tuned for)
+ASSUMED_GPU_GB = 8.0
+
+
+def device_gpu_mem_gb(count: int, found: list[float] | None = None) -> list[float]:
+    """Video memory (GB) of each of the `count` GPUs an app reaches through passed-in devices: the
+    AMD GPUs found (`found`, or looked up), else ASSUMED_GPU_GB each."""
+    if found is None:
+        found = [g.mem_total / 1024 for g in amd_gpus()]
+    return found[:count] if len(found) >= count else [ASSUMED_GPU_GB] * count
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
 
 
 def cuda_names(indices: list[int]) -> list[str] | None:

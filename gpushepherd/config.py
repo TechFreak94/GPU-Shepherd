@@ -159,6 +159,10 @@ class Instance(BaseModel):
     requires: list[str] = []          # instances that start with it (e.g. its database)
     skipped_updates: list[str] = []   # app updates the user chose not to apply (see app_updates.py)
     auto_update: bool = False         # bring in a new release of its image by itself (image_updates.py)
+    # host devices passed in as they are, e.g. /dev/dri for AMD GPUs through Vulkan. GPU Shepherd
+    # neither sees nor shares out the GPUs behind them: the app gets all of them while it runs
+    devices: list[str] = []
+    device_gpus: int = Field(default=0, ge=0, le=64)   # how many GPUs `devices` gives it (a model server's split)
     # the name in its file when the app shows its App Center name instead (older "Chat UI" names);
     # restart checks use it, so the better name alone never asks for a restart
     _file_name: str | None = PrivateAttr(default=None)
@@ -192,6 +196,15 @@ class Instance(BaseModel):
         if len(hosts) != len(set(hosts)):
             raise ValueError("a host port is used twice")
         return self
+
+    @field_validator("devices")
+    @classmethod
+    def _devices(cls, v: list[str]) -> list[str]:
+        v = list(dict.fromkeys(x.strip().rstrip("/") for x in v if x.strip()))
+        for x in v:
+            if not re.match(r"^/dev/[A-Za-z0-9_./-]+$", x) or ".." in x:
+                raise ValueError(f"'{x}' is not a device path (like /dev/dri)")
+        return v
 
     @field_validator("requires")
     @classmethod

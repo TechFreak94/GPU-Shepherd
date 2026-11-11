@@ -47,6 +47,7 @@ class ContainerSpec:
     shm_size: str | None = None
     user: str | None = None
     mem_limit: str | None = None
+    devices: list[str] = field(default_factory=list)   # host device paths passed in as they are (/dev/dri)
 
 
 @dataclass
@@ -263,6 +264,7 @@ class DockerBackend:
         binds = [bind_spec(h, c, ro, self.selinux) for h, c, ro in spec.volumes]
         host_config = self.api.create_host_config(
             binds=binds, port_bindings=port_bindings, device_requests=device_requests,
+            devices=[f"{d}:{d}:rwm" for d in spec.devices] or None,
             restart_policy={"Name": "unless-stopped"}, shm_size=spec.shm_size, mem_limit=spec.mem_limit,
             init=True, log_config=self.log_config)
         networking = self.api.create_networking_config(

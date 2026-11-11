@@ -230,13 +230,17 @@ class Shepherd:
                 vram = sum(vram_of.get(g, 0) for g in gpus)
                 if inst.gpu.shares:            # a shared GPU: only its budget is its own
                     vram = min(vram, int(inst.gpu.vram_gb * 2**30))
+                count = len(gpus)
+                if not gpus and inst.devices and inst.device_gpus:   # GPUs it reaches through devices
+                    count = inst.device_gpus
+                    vram = int(sum(gpu_mod.device_gpu_mem_gb(count)) * 2**30)
                 cat = self.store.catalog(iid) if inst.kind == "llama-swap" else None
-                n = budget.ram_needed(inst, cat, len(gpus), vram, peaks.get(iid, 0))
+                n = budget.ram_needed(inst, cat, count, vram, peaks.get(iid, 0))
                 if n:
                     need += n
                     starting.append(inst.name)
-                if cat and gpus:
-                    out += budget.too_big(inst, cat, len(gpus), vram)
+                if cat and count:
+                    out += budget.too_big(inst, cat, count, vram)
             total, available = host.mem_available()
             if need and total:
                 leaving = [self.engine.container_name(i) for i in p.to_stop + p.to_restart
@@ -896,7 +900,8 @@ class Shepherd:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
         return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.query()[0]],
-                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb())
+                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb(),
+                           device_gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.amd_gpus()])
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common

@@ -57,6 +57,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | App | License | Image |
 | :- | :- | :- |
 | [Llama Swap](https://github.com/mostlygeek/llama-swap) | MIT (llama-swap and llama.cpp) | `ghcr.io/mostlygeek/llama-swap:cuda` |
+| [Llama Swap (Vulkan)](https://github.com/mostlygeek/llama-swap) | MIT (llama-swap and llama.cpp) | `ghcr.io/mostlygeek/llama-swap:vulkan` |
 | [Ollama](https://docs.ollama.com) | MIT | `ollama/ollama:latest` |
 | [vLLM](https://docs.vllm.ai) | Apache-2.0 | `vllm/vllm-openai:latest` |
 | [Open WebUI](https://docs.openwebui.com) | Open WebUI License (BSD-3-Clause plus branding terms) | `ghcr.io/open-webui/open-webui:main` |
