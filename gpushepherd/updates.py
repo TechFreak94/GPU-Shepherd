@@ -188,7 +188,10 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
         for key in ("checked_at", "state", "step", "message", "repo", "upstream", "branch", "current", "previous",
                     "version", "latest_version", "credentials"):
             setattr(st, key, str(raw.get(key) or ""))
-        st.behind = int(raw.get("behind") or 0)
+        try:
+            st.behind = int(raw.get("behind") or 0)
+        except (TypeError, ValueError):       # a status file written by hand, or cut short
+            st.behind = 0
         st.branches = [str(b) for b in raw.get("branches") or []]
         st.branch_info = [b for b in raw.get("branch_info") or [] if isinstance(b, dict) and b.get("name")]
         st.github = str(raw.get("github") or "")

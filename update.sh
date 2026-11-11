@@ -127,7 +127,7 @@ while [ $# -gt 0 ]; do
         --rollback)     ROLLBACK=1; shift ;;
         --restore-settings) RESTORE=1; shift
                         if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then RESTORE_FILE=$1; shift; fi ;;
-        --set-token)    TOKEN_ACTION=set; TOKEN_USER="${2:?--set-token needs your GitHub user name}"; shift 2 ;;
+        --set-token)    TOKEN_ACTION="set"; TOKEN_USER="${2:?--set-token needs your GitHub user name}"; shift 2 ;;
         --clear-token)  TOKEN_ACTION=clear; shift ;;
         --enable-dashboard-updates)  SERVICE=enable; shift ;;
         --disable-dashboard-updates) SERVICE=disable; shift ;;
@@ -204,6 +204,7 @@ ask_yes() {   # ask_yes "question" - returns 0 for yes; --yes answers yes
 json_str() {   # a JSON string literal
     local s=${1//\\/\\\\}
     s=${s//\"/\\\"}; s=${s//$'\t'/ }; s=${s//$'\r'/}; s=${s//$'\n'/\\n}
+    s=${s//[[:cntrl:]]/}                 # any other control character would make the file unreadable as JSON
     printf '"%s"' "$s"
 }
 service_enabled() { have systemctl && systemctl is-enabled --quiet "$UNIT.path" 2>/dev/null; }
@@ -359,6 +360,14 @@ if [ "$SERVICE" = enable ]; then
        set [boot] systemd=true in /etc/wsl.conf, then wsl --shutdown in Windows)"; exit 1; }
     [ -d "$DATA_DIR" ] || { err "$DATA_DIR does not exist yet; run install.sh first"; exit 1; }
     mkdir -p "$STATE_DIR"
+    # The service runs this script as root from this folder, so whoever can change the folder can
+    # run commands as root. Fine for an account that can already use sudo or docker; worth knowing
+    # for any other.
+    if [ "$OWNER" != root ]; then
+        warn "this folder belongs to $OWNER, and the update service runs update.sh from it as root:
+         whoever can log in as $OWNER (or change files here) can run commands as root. If $OWNER is
+         not an account you trust like root, make root the owner: sudo chown -R root:root $HERE"
+    fi
     put_unit "$UNIT_DIR/$UNIT.path" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates. Remove with --disable-dashboard-updates.
 [Unit]
@@ -380,7 +389,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 # Through bash, so SELinux (Fedora, RHEL) lets systemd run it from a clone in a home folder.
-ExecStart=/bin/bash $HERE/update.sh --from-dashboard
+ExecStart=/bin/bash "$HERE/update.sh" --from-dashboard
 EOF
     put_unit "$UNIT_DIR/$UNIT-check.service" <<EOF
 # Written by $HERE/update.sh --enable-dashboard-updates.
@@ -391,7 +400,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash $HERE/update.sh --check --quiet
+ExecStart=/bin/bash "$HERE/update.sh" --check --quiet
 SuccessExitStatus=10
 EOF
     put_unit "$UNIT_DIR/$UNIT-check.timer" <<EOF
@@ -462,7 +471,9 @@ fi
 
 # One update at a time (the daily check, the dashboard and you could overlap).
 if [ -z "$FINISH" ]; then
-    if have flock && { exec 9>"/tmp/gpu-shepherd-update-$(id -u).lock"; } 2>/dev/null && ! flock -n 9; then
+    # root's lock is in /run, which only root writes (in /tmp another user could put a link in its place)
+    lock_dir=/tmp; [ "$(id -u)" -ne 0 ] || [ ! -d /run/lock ] || lock_dir=/run/lock
+    if have flock && { exec 9>"$lock_dir/gpu-shepherd-update-$(id -u).lock"; } 2>/dev/null && ! flock -n 9; then
         err "another update is already running"; exit 1
     fi
 fi
@@ -478,7 +489,10 @@ fi
 # --------------------------------------------------------------------------- rebuild
 
 answers() {   # the web UI is up and its dashboard draws (older versions ignore ?full=1)
-    curl -fsS "http://127.0.0.1:$PORT/healthz?full=1" >/dev/null 2>&1
+    # the dashboard is only drawn for a caller with the API token; without one this still says it answers
+    local token=""
+    token=$(head -n 1 "$DATA_DIR/api-token" 2>/dev/null | tr -dc 'A-Za-z0-9_-' || true)
+    curl -fsS ${token:+-H "Authorization: Bearer $token"} "http://127.0.0.1:$PORT/healthz?full=1" >/dev/null 2>&1
 }
 
 restarts() { docker inspect -f '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo 0; }
@@ -541,9 +555,10 @@ tidy_images() {
 
 restore_settings() {   # restore_settings FILE: put the backed-up YAML files back (current ones -> .before-restore)
     local f
-    for f in $(tar -tzf "$1" | grep -v '/$'); do
-        [ -e "$DATA_DIR/$f" ] && cp -p "$DATA_DIR/$f" "$DATA_DIR/$f.before-restore"
-    done
+    while IFS= read -r f; do              # line by line: a name may have a space in it
+        case "$f" in */|"") continue ;; esac
+        [ ! -e "$DATA_DIR/$f" ] || cp -p "$DATA_DIR/$f" "$DATA_DIR/$f.before-restore"
+    done < <(tar -tzf "$1")
     tar -xzf "$1" -C "$DATA_DIR"
 }
 
@@ -604,8 +619,9 @@ mount_mnt() {
     local f="$HERE/compose.yaml"
     grep -Eq '^[[:space:]]*-[[:space:]]*"?/mnt:/mnt' "$f" && return 0
     [ -n "$DATA_DIR" ] || return 0
-    if grep -Eq "^[[:space:]]*-[[:space:]]*\"?$DATA_DIR:$DATA_DIR" "$f" \
-            && sed -i.before-mnt "\#^[[:space:]]*-[[:space:]]*\"\?$DATA_DIR:$DATA_DIR#{
+    local d; d=$(printf '%s' "$DATA_DIR" | sed 's/[][\\.*^$#]/\\&/g')   # a dot in the path is a dot, not "any character"
+    if grep -Eq "^[[:space:]]*-[[:space:]]*\"?$d:$d" "$f" \
+            && sed -i.before-mnt "\#^[[:space:]]*-[[:space:]]*\"\?$d:$d#{
                 p
                 s#^\([[:space:]]*-[[:space:]]*\).*#\1/mnt:/mnt:rslave   \# disks under /mnt, so moved folders stay visible#
             }" "$f" && grep -Eq '^[[:space:]]*-[[:space:]]*/mnt:/mnt' "$f"; then

@@ -28,6 +28,16 @@
   document.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target.id === "modal-body") openModal(); });
   document.addEventListener("htmx:responseError", (e) => toast("Request failed (HTTP " + e.detail.xhr.status + ")", "error"));
   document.addEventListener("htmx:sendError", () => toast("GPU Shepherd is not reachable", "error"));
+  // A tab nobody is looking at doesn't keep asking the server every few seconds: its timed
+  // refreshes (the ones no click or other event started) are skipped, and it catches up when it
+  // is shown again. Update and power progress keep going, so they notice the restart.
+  document.addEventListener("htmx:beforeRequest", (e) => {
+    const cfg = e.detail.requestConfig || {};
+    if (document.hidden && !cfg.triggeringEvent && !(e.detail.elt && e.detail.elt.closest("[data-quiet-offline]"))) e.preventDefault();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && window.htmx) document.querySelectorAll("#dash").forEach((el) => window.htmx.trigger(el, "refresh"));
+  });
   // the dashboard re-renders every few seconds: keep the "Advanced details" boxes the user opened open
   const openDetails = new Set();
   document.addEventListener("toggle", (e) => {
@@ -82,7 +92,8 @@
     const p = find(pinned); if (p) pin(p); else pinned = null;
     const f = find(focusedTip); if (f) { const b = f.querySelector(".tip-btn"); if (b) b.focus({ preventScroll: true }); }
   });
-  document.addEventListener("refresh", () => { const d = document.getElementById("dash"); if (d && window.htmx) htmx.trigger(d, "refresh"); });
+  // (the event passed on to the dashboard comes back up here: not passed on again)
+  document.addEventListener("refresh", (e) => { const d = document.getElementById("dash"); if (d && e.target !== d && window.htmx) htmx.trigger(d, "refresh"); });
 
   document.addEventListener("click", (e) => {
     const t = e.target;
