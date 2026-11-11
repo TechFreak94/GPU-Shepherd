@@ -4,6 +4,29 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.35 - 2026-11-11
+
+- Chat and agent apps can now use Ollama or vLLM as well as Llama Swap as their model server. (#74)
+- Ollama now gets a 32K context, so agents and document chat work with it, and it keeps answering on the CPU while ComfyUI or another image app has the only GPU. (#74)
+- The Starter setup's Open WebUI now searches documents with the same settings as an Open WebUI installed from the App Center. (#74)
+- Settings > Storage shows each physical drive once, with its partitions listed under it. (#75)
+- Added AGENTS.md so coding agents other than Claude get the project's contributor notes. (#75)
+- Signing out, changing the password or resetting it now ends every other login. Everyone is signed out once after this update. (#76)
+- After 5 wrong passwords, an address has to wait 5 minutes before trying again. (#76)
+- Settings and app files in the data folder can only be read by their owner. (#76)
+- The detailed health check needs a login or the API token. (#76)
+- The dashboard and the API stay responsive while Docker is slow or an app is starting. (#76)
+- A model that is still downloading is no longer shown as missing. (#76)
+- The Storage page and the model suggestions load faster, and a background tab stops refreshing until you come back to it. (#76)
+- Stopping a database that a running app needs now says which app needs it. (#76)
+- A link to something that no longer exists shows a message instead of an error page from the server. (#76)
+- An app that keeps restarting keeps its GPUs instead of having them handed to another app. (#76)
+- Turning on dashboard updates warns when the install folder is not owned by root. (#76)
+- The dashboard fits phone screens: the header menu wraps and pages no longer scroll sideways. (#78)
+- The dashboard has space at the bottom, so panels no longer touch the edge of the window. (#78)
+- Storage: partitions under a drive show only their path and tags, without repeating the drive name. (#78)
+- Moving a folder no longer shows an extra blue banner; the job banner shows progress. (#78)
+
 ## 0.13.34 - 2026-11-11
 
 - Logins now end when the password changes or the user logs out; a copied cookie stops working (#77)
