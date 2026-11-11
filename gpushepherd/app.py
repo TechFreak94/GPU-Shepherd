@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
-from .backend import Backend, DockerBackend, FakeBackend
+from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
                      parse_volumes)
@@ -344,6 +344,29 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     def problem(err: Problem) -> Response:
         return toast(Response(status_code=204), err.msg, err.kind)
+
+    # A route that doesn't catch these itself (an instance that isn't there any more, a settings
+    # file that can't be read, Docker not answering) answers with the reason instead of "Internal
+    # Server Error": JSON for the API, a toast for the dashboard's own requests, a page otherwise.
+    @app.exception_handler(Problem)
+    @app.exception_handler(ConfigError)
+    @app.exception_handler(BackendError)
+    def on_error(request: Request, err: Exception) -> Response:
+        msg = err.msg if isinstance(err, Problem) else str(err)
+        if isinstance(err, Problem):
+            status, kind = err.status, err.kind
+        elif isinstance(err, BackendError):
+            status, kind, msg = 502, "error", f"Docker did not do that: {msg}"
+        else:
+            status, kind = (404 if re.match(r"(no|invalid) (instance|template)", msg) else 500), "error"
+        if status >= 500:
+            log.warning("%s %s: %s", request.method, request.url.path, msg)
+        if request.url.path.startswith(API):
+            return JSONResponse({"error": msg}, status_code=status)
+        if request.headers.get("HX-Request"):
+            return toast(Response(status_code=204), msg, kind)
+        return page(request, "error.html", status=status, message=msg,
+                    title="Not found" if status == 404 else "That didn't work")
 
     def run_plan(request: Request, action: str, iid: str, confirm: bool, back: str = "") -> Response:
         try:

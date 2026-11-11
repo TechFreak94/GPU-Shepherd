@@ -40,6 +40,7 @@ from .trash import FileOps, Trash
 
 log = logging.getLogger("gpushepherd")
 POWER_ACTIONS = ("restart", "reboot", "shutdown")   # the top menu's Power dialog
+_LOADING = threading.Lock()   # guards Shepherd.loading (routes run in worker threads)
 DRIVE_SCAN_SECONDS = 30       # how long a look at the machine's drives is reused while no drive came or went
 
 
@@ -192,6 +193,16 @@ class Shepherd:
         p = self.engine.plan(action, iid)
         if p.error:
             raise Problem(p.error, status=409)
+        if action == "stop" and p.is_noop:
+            # a helper (a database) that a running app starts with is kept running by the planner:
+            # say so, rather than "already stopped" while it runs on
+            states = self.backend.states()
+            if states.get(iid) and states[iid].running:
+                users = [i.name for i in self.store.instances()[0].values()
+                         if iid in i.requires and states.get(i.id) and states[i.id].running]
+                if users:
+                    raise Problem(f"{names[iid]} is needed by {' and '.join(users)}, which {'is' if len(users) == 1 else 'are'} "
+                                  f"running: stop {'it' if len(users) == 1 else 'them'} first.", "warn", 409)
         c = Change(action, iid, names[iid], p, p.describe(names), noop=p.is_noop)
         if not c.noop:
             c.warnings = self.memory_warnings(p)
@@ -700,7 +711,7 @@ class Shepherd:
                 raise RuntimeError("the copy did not finish" if code is None else
                                    "the copy is not the same as the folder" if code == 5 else
                                    f"the copy failed (exit code {code}); is there room on the new disk?")
-            job("Copied, and every file matches the old copy")
+            job("Copied: every file is there, with the same size as in the old copy")
             self._switch(rec.source, rec.dest, job)
             rec.status, rec.leftover = "done", rec.source
             if not Path(rec.dest).is_dir():
@@ -1751,12 +1762,13 @@ class Shepherd:
             raise Problem(f"{mid} can't load: {', '.join(gone)} is not in the models folder. Download it, "
                           "or fix the path with Edit.", "warn", 409)
         client = self.llama_client(iid)
-        busy = self.loading.setdefault(iid, set())
-        if mid in busy:
-            raise Problem(f"{mid} is already loading.", "info", 409)
+        with _LOADING:                        # two clicks at once start one load, not two
+            busy = self.loading.setdefault(iid, set())
+            if mid in busy:
+                raise Problem(f"{mid} is already loading.", "info", 409)
+            busy.add(mid)
 
         def worker():
-            busy.add(mid)
             try:
                 client.load(mid)
             except Exception as err:  # noqa: BLE001

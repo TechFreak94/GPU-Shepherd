@@ -204,7 +204,8 @@ class DockerBackend:
             name = (c.get("Names") or ["/?"])[0].lstrip("/")
             state = c.get("State", "")
             out[iid] = ContainerState(
-                instance_id=iid, name=name, running=state == "running", status=state,
+                # an app that keeps crashing (Docker restarts it) or is paused still holds its GPUs
+                instance_id=iid, name=name, running=state in ("running", "restarting", "paused"), status=state,
                 gpus=_gpus_from_label(labels.get(LABEL_GPUS, "")),
                 config_hash=labels.get(LABEL_CONFIG, ""), image=c.get("Image", ""),
                 status_text=c.get("Status", ""), image_id=c.get("ImageID", ""))
