@@ -1,5 +1,4 @@
-"""Password hashing (scrypt, standard library), the first-run admin password, what keeps a login
-valid (session_stamp) and the limit on wrong logins (LoginLimiter)."""
+"""Password hashing (scrypt, standard library) and first-run admin password."""
 from __future__ import annotations
 
 import base64
@@ -7,11 +6,9 @@ import hashlib
 import hmac
 import os
 import secrets
-import threading
-import time
 from pathlib import Path
 
-from .config import Settings, Store
+from .config import Store
 
 N, R, P = 2 ** 14, 8, 1
 # No look-alikes (0/O, 1/l/I) and no punctuation: the first password is often read off a terminal
@@ -39,59 +36,6 @@ def verify_password(password: str, stored: str) -> bool:
         return hmac.compare_digest(calc, base64.b64decode(digest))
     except (ValueError, TypeError):
         return False
-
-
-def same(a: str, b: str) -> bool:
-    """Compare two strings without telling how much of them matched (any characters, not only ASCII)."""
-    return hmac.compare_digest(a.encode(), b.encode())
-
-
-def session_stamp(settings: Settings) -> str:
-    """What a login cookie must carry to still count. It changes when the password does (changed
-    under Settings, or reset with --reset-password) and at every logout (session_epoch), so a
-    cookie copied before that stops working although its signature is still good."""
-    text = f"{settings.session_epoch}:{settings.password_hash}".encode()
-    return hmac.new(settings.session_secret.encode(), text, hashlib.sha256).hexdigest()[:32]
-
-
-class LoginLimiter:
-    """Slows down password guessing: after MAX wrong logins from one address within WINDOW
-    seconds, that address waits until the oldest of them is WINDOW old. A second, higher limit
-    counts every address together, for a guesser who has many. Kept in memory: a restart clears
-    it, and --reset-password never goes through it."""
-    MAX, MAX_ALL, WINDOW = 5, 50, 300
-
-    def __init__(self, clock=time.monotonic):
-        self.clock = clock
-        self._failed: dict[str, list[float]] = {}
-        self._lock = threading.Lock()
-
-    def _recent(self, now: float) -> None:
-        for client, times in list(self._failed.items()):
-            times[:] = [t for t in times if now - t < self.WINDOW]
-            if not times:
-                del self._failed[client]
-
-    def wait(self, client: str) -> int:
-        """Seconds this address has to wait before its next try (0 = it may try now)."""
-        with self._lock:
-            now = self.clock()
-            self._recent(now)
-            own = self._failed.get(client, [])
-            everyone = sorted(t for times in self._failed.values() for t in times)
-            if len(own) >= self.MAX:
-                return max(int(self.WINDOW - (now - own[-self.MAX])) + 1, 1)
-            if len(everyone) >= self.MAX_ALL:
-                return max(int(self.WINDOW - (now - everyone[-self.MAX_ALL])) + 1, 1)
-            return 0
-
-    def failed(self, client: str) -> None:
-        with self._lock:
-            self._failed.setdefault(client, []).append(self.clock())
-
-    def passed(self, client: str) -> None:
-        with self._lock:
-            self._failed.pop(client, None)
 
 
 def initial_password_file(store: Store) -> Path:

@@ -1,7 +1,6 @@
 """Web UI (FastAPI + Jinja2 + htmx). Server-rendered pages; htmx swaps in fragments."""
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
@@ -15,12 +14,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
-from .backend import Backend, BackendError, DockerBackend, FakeBackend
+from .backend import Backend, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
                      parse_volumes)
@@ -96,7 +94,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     if recovered:
         log.error("%s", recovered)
         notices.append(recovered)
-    store.tighten()                        # instance files from older versions: owner-only, like new ones
     try:
         backend.ensure_network(store.settings().network)
     except Exception as err:  # noqa: BLE001
@@ -126,25 +123,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                  gpu_text=gpu_text, demo=demo, level=meter_level)
     templates.env.filters["gib"] = gib
     templates.env.filters["gb"] = gb
-    templates.env.filters["by_disk"] = drives.group_by_disk
     templates.env.filters["md"] = changelog.inline
     templates.env.filters["ago"] = image_updates.ago
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     # ------------------------------------------------------------------ security
-    limiter = auth.LoginLimiter()
-
-    def session_user(request: Request) -> str:
-        """Who is logged in ("" = nobody). A cookie from before the last password change or logout
-        no longer counts (auth.session_stamp)."""
-        user = request.session.get("user")
-        if not user:
-            return ""
-        s = store.settings()
-        if user != s.admin_user or not auth.same(str(request.session.get("stamp", "")), auth.session_stamp(s)):
-            return ""
-        return user
-
     class Guard(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
@@ -152,11 +135,11 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 # scripts and the gpu-shepherd command: the API token; a logged-in browser may read
                 bearer = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
                 if not auth.check_api_token(store, bearer) and not (
-                        request.method == "GET" and session_user(request)):
+                        request.method == "GET" and request.session.get("user")):
                     return JSONResponse({"error": "log in, or send the API token as 'Authorization: Bearer <token>'"},
                                         status_code=401)
             elif not path.startswith(PUBLIC):
-                if not session_user(request):
+                if not request.session.get("user"):
                     if path == "/" and request.query_params.get("login"):
                         # just logged in, yet the session cookie did not come back
                         return RedirectResponse("/login?nocookie=1", status_code=303)
@@ -182,22 +165,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     # ------------------------------------------------------------------ helpers
     def page(request: Request, template: str, status: int = 200, **ctx):
-        ctx.setdefault("user", session_user(request))
+        ctx.setdefault("user", request.session.get("user"))
         ctx.setdefault("flash", request.query_params.get("msg", ""))
         # picked in the browser (app.js), so the page is drawn in that theme from the start
         theme = request.cookies.get("theme", "")
         ctx.setdefault("theme", theme if theme in THEMES else "")
         return templates.TemplateResponse(request, template, ctx, status_code=status)
-
-    def threaded(fn):
-        """For a route that takes a form: read it first (request.state.form), then run the route in a
-        worker thread like the plain `def` routes, so one that waits for Docker, a model server or a
-        job never holds up the dashboard for everyone else."""
-        @functools.wraps(fn)
-        async def wrapper(request: Request, **kw):
-            request.state.form = await request.form()
-            return await run_in_threadpool(fn, request, **kw)
-        return wrapper
 
     def toast(resp: Response, msg: str, kind: str = "info") -> Response:
         resp.headers["HX-Trigger"] = json.dumps({"toast": {"msg": msg, "kind": kind}})
@@ -345,29 +318,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def problem(err: Problem) -> Response:
         return toast(Response(status_code=204), err.msg, err.kind)
 
-    # A route that doesn't catch these itself (an instance that isn't there any more, a settings
-    # file that can't be read, Docker not answering) answers with the reason instead of "Internal
-    # Server Error": JSON for the API, a toast for the dashboard's own requests, a page otherwise.
-    @app.exception_handler(Problem)
-    @app.exception_handler(ConfigError)
-    @app.exception_handler(BackendError)
-    def on_error(request: Request, err: Exception) -> Response:
-        msg = err.msg if isinstance(err, Problem) else str(err)
-        if isinstance(err, Problem):
-            status, kind = err.status, err.kind
-        elif isinstance(err, BackendError):
-            status, kind, msg = 502, "error", f"Docker did not do that: {msg}"
-        else:
-            status, kind = (404 if re.match(r"(no|invalid) (instance|template)", msg) else 500), "error"
-        if status >= 500:
-            log.warning("%s %s: %s", request.method, request.url.path, msg)
-        if request.url.path.startswith(API):
-            return JSONResponse({"error": msg}, status_code=status)
-        if request.headers.get("HX-Request"):
-            return toast(Response(status_code=204), msg, kind)
-        return page(request, "error.html", status=status, message=msg,
-                    title="Not found" if status == 404 else "That didn't work")
-
     def run_plan(request: Request, action: str, iid: str, confirm: bool, back: str = "") -> Response:
         try:
             c = svc.change(action, iid, confirm)
@@ -392,10 +342,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     @app.get("/healthz")
     def healthz(request: Request, full: bool = False):
         body = {"ok": True, "version": __version__, "commit": build.get("commit", "")}
-        # drawing the dashboard asks Docker and nvidia-smi: only for update.sh (which sends the API
-        # token) or a logged-in browser, not for anyone who can reach the port
-        bearer = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        if full and (auth.check_api_token(store, bearer) or session_user(request)):
+        if full:
             # update.sh asks for this after an update: the dashboard must draw too, not just the server
             # answer (a Docker outage is shown on the dashboard, so it doesn't fail this)
             try:
@@ -417,37 +364,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         form = await request.form()
         s = store.settings()
         user, password = str(form.get("user", "")), str(form.get("password", ""))
+        # Copying the password out of a terminal easily picks up a space or line break at either end.
+        ok = auth.verify_password(password, s.password_hash) or (
+            password != password.strip() and auth.verify_password(password.strip(), s.password_hash))
         client = request.client.host if request.client else "?"
-        first_run = auth.initial_password_file(store).exists()
-        wait = limiter.wait(client)
-        if wait:
-            log.warning("login: refused from %s (too many wrong logins)", client)
-            mins = -(-wait // 60)
-            return page(request, "login.html", status=429, first_run=first_run,
-                        error=f"Too many wrong logins. Try again in {mins} minute{'s' if mins != 1 else ''}.")
-
-        def check() -> bool:      # scrypt takes a moment: off the event loop, so the dashboard keeps answering
-            # Copying the password out of a terminal easily picks up a space or line break at either end.
-            return auth.verify_password(password, s.password_hash) or (
-                password != password.strip() and auth.verify_password(password.strip(), s.password_hash))
-        ok = await run_in_threadpool(check)
-        known = auth.same(user.strip(), s.admin_user)
-        if known and ok:
+        if secrets.compare_digest(user.strip(), s.admin_user) and ok:
             log.info("login: '%s' logged in from %s", s.admin_user, client)
-            limiter.passed(client)
             request.session.clear()
-            request.session.update(user=s.admin_user, stamp=auth.session_stamp(s))
+            request.session["user"] = s.admin_user
             return RedirectResponse("/?login=1", status_code=303)
-        limiter.failed(client)
-        log.warning("login: rejected from %s (%s)", client, "wrong password" if known else f"unknown user {user[:80]!r}")
-        return page(request, "login.html", status=401, error="Wrong user name or password.", first_run=first_run)
+        log.warning("login: rejected from %s (%s)", client,
+                    "wrong password" if secrets.compare_digest(user.strip(), s.admin_user) else f"unknown user {user!r}")
+        return page(request, "login.html", status=401, error="Wrong user name or password.",
+                    first_run=auth.initial_password_file(store).exists())
 
     @app.post("/logout")
     def logout(request: Request):
-        # a copy of the cookie would stay valid until it expires: end every login made so far
-        s = store.settings()
-        s.session_epoch += 1
-        store.save_settings(s)
         request.session.clear()
         return Response(status_code=204, headers={"HX-Redirect": "/login"})
 
@@ -473,9 +405,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(err)
 
     @app.post("/ui/instances/{iid}/logins", response_class=HTMLResponse)
-    @threaded
-    def instance_logins_reset(request: Request, iid: str):
-        form = request.state.form
+    async def instance_logins_reset(request: Request, iid: str):
+        form = await request.form()
         try:
             result = svc.reset_login(iid, str(form.get("user", "")), str(form.get("password", "")))
         except Problem as err:
@@ -502,9 +433,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
 
     @app.post("/ui/instances/{iid}/auto-update")
-    @threaded
-    def instance_auto_update(request: Request, iid: str):
-        form = request.state.form
+    async def instance_auto_update(request: Request, iid: str):
+        form = await request.form()
         try:
             msg = svc.set_auto_update(iid, form.get("on") == "1")
         except Problem as err:
@@ -522,9 +452,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return resp
 
     @app.post("/settings/app-updates")
-    @threaded
-    def settings_app_updates(request: Request):
-        raw = request.state.form
+    async def settings_app_updates(request: Request):
+        raw = await request.form()
         hours = str(raw.get("hours", "")).strip()
         if not hours.isdigit():
             return problem(Problem("Hours must be a whole number (0 checks only when you press Check now)."))
@@ -534,13 +463,12 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(err)
 
     @app.post("/ui/instances/{iid}/{action}")
-    @threaded
-    def instance_action(request: Request, iid: str, action: str):
+    async def instance_action(request: Request, iid: str, action: str):
         if action not in ("start", "stop", "restart"):
             return PlainTextResponse("unknown action", status_code=400)
-        form = request.state.form
+        form = await request.form()
         back = str(form.get("back", ""))
-        if back and not re.match(r"^/(?!/)[A-Za-z0-9/_-]*$", back):   # local paths only (//host is another site)
+        if back and not re.match(r"^/[A-Za-z0-9/_-]*$", back):   # local paths only
             back = ""
         return run_plan(request, action, iid, confirm=form.get("confirm") == "1", back=back)
 
@@ -603,16 +531,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             app_t = tpl.get(form.get("app") or "") if not editing else None
         except ConfigError:
             app_t = None
-        no_server = bool(app_t and app_t.connects) and not svc.has_model_server()
+        no_server = bool(app_t and app_t.connects) and not svc.has_llm_server()
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
-                    no_server=no_server, model_servers=[x for x in tpl.TEMPLATES if tpl.is_model_server(x)],
+                    no_server=no_server,
                     gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
 
     # ------------------------------------------------------------------ automatic install (templates)
     machine, model_files = svc.machine, svc.model_files
 
     def next_app(key: str) -> tpl.Template | None:
-        """The app to go on to after installing a model server for it (?then=)."""
+        """The app to go on to after installing a Llama Swap server for it (?then=)."""
         try:
             t = tpl.get(key) if key else None
         except ConfigError:
@@ -641,8 +569,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
-                    no_server=bool(t.connects) and not m.servers, then_t=then if tpl.is_model_server(t) else None,
-                    model_servers=[x for x in tpl.TEMPLATES if tpl.is_model_server(x)])
+                    no_server=bool(t.connects) and not m.servers, then_t=then if t.kind == "llama-swap" else None)
 
     # ------------------------------------------------------------------ App Center
     @app.get("/apps", response_class=HTMLResponse)
@@ -650,7 +577,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         instances, _ = store.instances()
         return page(request, "apps.html", groups=tpl.groups(), gpu_choices=tpl.GPU_CHOICES,
                     installed=tpl.installed(instances),
-                    has_server=svc.has_model_server(), server_app=tpl.BUNDLED_SERVER)
+                    has_server=any(i.kind == "llama-swap" for i in instances.values()), server_app=tpl.BUNDLED_SERVER)
 
     @app.get("/apps/{key}", response_class=HTMLResponse)
     def install_app(request: Request, key: str, mode: str = "auto", then: str = ""):
@@ -681,9 +608,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return RedirectResponse(f"/apps/{key}", status_code=303)
 
     @app.post("/instances/guided")
-    @threaded
-    def save_guided(request: Request):
-        raw = request.state.form
+    async def save_guided(request: Request):
+        raw = await request.form()
         try:
             t = tpl.get(str(raw.get("template", "")))
         except ConfigError as err:
@@ -693,7 +619,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                               "comfyui", "speech", "offload", "login_user", "password", "hass_url",
                                               "hass_token", "hf_model", "hf_token", "max_len", *slot_fields]}
         f["autostart"] = raw.get("autostart") == "on"
-        then = next_app(str(raw.get("then", ""))) if tpl.is_model_server(t) else None
+        then = next_app(str(raw.get("then", ""))) if t.kind == "llama-swap" else None
         if raw.get("action") == "advanced":
             try:
                 inst = svc.app_instance(t.key, f)
@@ -734,9 +660,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return RedirectResponse(with_msg("/", str(err)), status_code=303)
 
     @app.post("/instances/save")
-    @threaded
-    def save_instance(request: Request):
-        raw = request.state.form
+    async def save_instance(request: Request):
+        raw = await request.form()
         f = {k: raw.get(k, "") for k in ("id", "name", "description", "kind", "image", "command", "env", "ports",
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
@@ -842,9 +767,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return toast(suggestions_part(request, iid), msg)
 
     @app.post("/instances/{iid}/models/from-link")
-    @threaded
-    def model_from_link(request: Request, iid: str):
-        form = request.state.form
+    async def model_from_link(request: Request, iid: str):
+        form = await request.form()
         try:
             msg = svc.add_from_link(iid, str(form.get("url", "")), str(form.get("name", "")),
                                     str(form.get("mmproj_url", "")))
@@ -898,9 +822,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return rules
 
     @app.post("/instances/{iid}/models/save")
-    @threaded
-    def save_model(request: Request, iid: str):
-        raw = request.state.form
+    async def save_model(request: Request, iid: str):
+        raw = await request.form()
         inst = store.instance(iid)
         original = str(raw.get("original_id", ""))
         f = {k: str(raw.get(k, "")) for k in ("id", "name", "description", "file", "ctx_size", "parallel",
@@ -955,9 +878,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(err)
 
     @app.post("/instances/{iid}/tuning")
-    @threaded
-    def tuning_decide(request: Request, iid: str):
-        raw = request.state.form
+    async def tuning_decide(request: Request, iid: str):
+        raw = await request.form()
         try:
             msg = svc.tuning_decide(iid, str(raw.get("key", "")), str(raw.get("action", "")))
         except Problem as err:
@@ -965,9 +887,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/catalog/settings")
-    @threaded
-    def catalog_settings(request: Request, iid: str):
-        raw = request.state.form
+    async def catalog_settings(request: Request, iid: str):
+        raw = await request.form()
         try:
             unset = svc.server(iid)[1].fit_gpus is None    # left unticked: still offered as a suggestion
             msg = svc.server_settings(iid, threads=int(raw.get("threads") or 0),
@@ -983,9 +904,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/catalog/auto")
-    @threaded
-    def catalog_auto(request: Request, iid: str):
-        raw = request.state.form
+    async def catalog_auto(request: Request, iid: str):
+        raw = await request.form()
         try:
             autos = [AutoAlias(alias=str(alias).strip(), default_model=str(default), rules=parse_auto_rules(rules))
                      for alias, default, rules in zip(raw.getlist("alias"), raw.getlist("default_model"),
@@ -1054,9 +974,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "partials/update_card.html", u=updates.status(store.root))
 
     @app.post("/ui/update/branch")
-    @threaded
-    def update_branch(request: Request):
-        raw = request.state.form
+    async def update_branch(request: Request):
+        raw = await request.form()
         try:
             msg = svc.switch_branch(str(raw.get("branch", "")))
         except Problem as err:
@@ -1072,9 +991,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     text=updates.log_text(store.root) or "Nothing yet: the updater writes here once it starts.")
 
     @app.post("/ui/update/credentials")
-    @threaded
-    def update_credentials(request: Request):
-        raw = request.state.form
+    async def update_credentials(request: Request):
+        raw = await request.form()
         try:
             svc.update_credentials(str(raw.get("user", "")), str(raw.get("token", "")), clear=raw.get("clear") == "1")
         except Problem as err:
@@ -1136,11 +1054,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     text=gpu_unlock.log_text(store.root) or "Nothing yet: the server writes here once a change starts.")
 
     @app.post("/ui/unlock/{action}")
-    @threaded
-    def unlock_request(request: Request, action: str):
+    async def unlock_request(request: Request, action: str):
         if action not in gpu_unlock.ACTIONS:
             return PlainTextResponse("unknown action", status_code=400)
-        raw = request.state.form
+        raw = await request.form()
         try:
             msg = svc.request_unlock(action, [str(c) for c in raw.getlist("cards")])
         except Problem as err:
@@ -1156,21 +1073,17 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                     image_checked=svc.image_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
 
     @app.post("/settings/password")
-    @threaded
-    def change_password(request: Request):
-        raw = request.state.form
+    async def change_password(request: Request):
+        raw = await request.form()
         try:
             msg = svc.change_password(*(str(raw.get(k, "")) for k in ("current", "new", "again")))
         except Problem as err:
             return problem(err)
-        # the change ends every login (auth.session_stamp); this browser stays logged in
-        request.session["stamp"] = auth.session_stamp(store.settings())
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", msg)})
 
     @app.post("/settings/general")
-    @threaded
-    def general_settings(request: Request):
-        raw = request.state.form
+    async def general_settings(request: Request):
+        raw = await request.form()
         try:
             msg = svc.set_containers(str(raw.get("bind_address", "")), str(raw.get("network", "")))
         except Problem as err:
@@ -1212,15 +1125,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/knowledge", msg)})
 
     @app.post("/knowledge/folder")
-    @threaded
-    def knowledge_folder(request: Request):
-        raw = request.state.form
+    async def knowledge_folder(request: Request):
+        raw = await request.form()
         return knowledge_done(lambda: svc.set_documents_folder(str(raw.get("path", ""))))
 
     @app.post("/knowledge/upload")
-    @threaded
-    def knowledge_upload(request: Request):
-        raw = request.state.form
+    async def knowledge_upload(request: Request):
+        raw = await request.form()
         files = [(f.filename, f.file) for f in raw.getlist("file") if getattr(f, "filename", "")]
         return knowledge_done(lambda: svc.add_documents(files))
 
@@ -1249,9 +1160,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return knowledge_done(svc.stop_knowledge)
 
     @app.post("/knowledge/send")
-    @threaded
-    def knowledge_send(request: Request):
-        raw = request.state.form
+    async def knowledge_send(request: Request):
+        raw = await request.form()
         emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
         return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
                                                  bool(raw.get("split")), emb))
@@ -1261,9 +1171,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return knowledge_done(svc.ocr_documents)
 
     @app.post("/knowledge/delete-all")
-    @threaded
-    def knowledge_delete_all(request: Request):
-        raw = request.state.form
+    async def knowledge_delete_all(request: Request):
+        raw = await request.form()
         return knowledge_done(lambda: svc.delete_documents(str(raw.get("status", ""))))
 
     @app.post("/knowledge/{key}/delete")
@@ -1271,15 +1180,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return knowledge_done(lambda: svc.delete_document(key))
 
     @app.post("/knowledge/clear")
-    @threaded
-    def knowledge_clear(request: Request):
-        raw = request.state.form
+    async def knowledge_clear(request: Request):
+        raw = await request.form()
         return knowledge_done(lambda: svc.clear_knowledge(tuple(raw.getlist("what"))))
 
     @app.post("/knowledge/{key}/skill")
-    @threaded
-    def knowledge_skill(request: Request, key: str):
-        raw = request.state.form
+    async def knowledge_skill(request: Request, key: str):
+        raw = await request.form()
         return knowledge_done(lambda: svc.make_skill(key, str(raw.get("server", ""))))
 
     def skill_dialog(request: Request, slug: str, **ctx):
@@ -1294,18 +1201,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return skill_dialog(request, slug)
 
     @app.post("/knowledge/skills/{slug}", response_class=HTMLResponse)
-    @threaded
-    def knowledge_skill_save(request: Request, slug: str):
-        text = str(request.state.form.get("text", ""))
+    async def knowledge_skill_save(request: Request, slug: str):
+        text = str((await request.form()).get("text", ""))
         try:
             return skill_dialog(request, slug, saved=svc.save_skill(slug, text))
         except Problem as err:
             return skill_dialog(request, slug, text=text, error=err.msg)
 
     @app.post("/knowledge/skills/{slug}/install")
-    @threaded
-    def knowledge_skill_install(request: Request, slug: str):
-        raw = request.state.form
+    async def knowledge_skill_install(request: Request, slug: str):
+        raw = await request.form()
         return knowledge_done(lambda: svc.install_skill(slug, str(raw.get("instance", ""))))
 
     @app.post("/knowledge/skills/{slug}/delete")
@@ -1334,27 +1239,23 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return storage_done(svc.remove_orphans)
 
     @app.post("/storage/files/trash")
-    @threaded
-    def storage_trash_files(request: Request):
-        raw = request.state.form
+    async def storage_trash_files(request: Request):
+        raw = await request.form()
         return storage_done(lambda: svc.trash_files([str(p) for p in raw.getlist("path")]))
 
     @app.post("/storage/leftover/trash")
-    @threaded
-    def storage_trash_leftover(request: Request):
-        raw = request.state.form
+    async def storage_trash_leftover(request: Request):
+        raw = await request.form()
         return storage_done(lambda: svc.trash_leftover(str(raw.get("name", ""))))
 
     @app.post("/storage/trash/restore")
-    @threaded
-    def storage_restore(request: Request):
-        raw = request.state.form
+    async def storage_restore(request: Request):
+        raw = await request.form()
         return storage_done(lambda: svc.restore_trash(str(raw.get("id", ""))))
 
     @app.post("/storage/trash/purge")
-    @threaded
-    def storage_purge(request: Request):
-        raw = request.state.form        # no id = empty the whole trash
+    async def storage_purge(request: Request):
+        raw = await request.form()        # no id = empty the whole trash
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
 
     def move_form(raw) -> tuple[str, str]:
@@ -1400,9 +1301,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "partials/drives.html", **drives_info(), source=source, picking=bool(picking))
 
     @app.post("/storage/drives/mount", response_class=HTMLResponse)
-    @threaded
-    def storage_drive_mount(request: Request):
-        raw = request.state.form
+    async def storage_drive_mount(request: Request):
+        raw = await request.form()
         source, picking = str(raw.get("source", "")), bool(raw.get("picking"))
         kind, msg = "info", ""
         try:
@@ -1413,9 +1313,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return toast(resp, msg, kind)
 
     @app.post("/storage/drives/auto")
-    @threaded
-    def storage_drives_auto(request: Request):
-        raw = request.state.form
+    async def storage_drives_auto(request: Request):
+        raw = await request.form()
         return storage_done(lambda: svc.set_auto_mount(raw.get("on") == "1"))
 
     @app.get("/storage/tree", response_class=HTMLResponse)
@@ -1440,11 +1339,10 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "partials/pick_info.html", p=info)
 
     @app.post("/storage/move/check", response_class=HTMLResponse)
-    @threaded
-    def storage_move_check(request: Request):
+    async def storage_move_check(request: Request):
         """The checked move, to confirm in a dialog."""
         try:
-            info = svc.check_move(*move_form(request.state.form))
+            info = svc.check_move(*move_form(await request.form()))
         except Problem as err:
             return problem(err)
         resp = page(request, "partials/move_confirm.html", m=info)
@@ -1454,19 +1352,16 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return resp
 
     @app.post("/storage/move")
-    @threaded
-    def storage_move(request: Request):
+    async def storage_move(request: Request):
         try:
-            svc.move_folder(*move_form(request.state.form))
+            msg, _job = svc.move_folder(*move_form(await request.form()))
         except Problem as err:
             return problem(err)
-        # The dashboard's job banner already says what is moving; no extra flash message.
-        return Response(status_code=204, headers={"HX-Redirect": "/"})
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/", msg)})
 
     @app.post("/storage/moves/{op}")
-    @threaded
-    def storage_move_op(request: Request, op: str):
-        mid = str(request.state.form.get("id", ""))
+    async def storage_move_op(request: Request, op: str):
+        mid = str((await request.form()).get("id", ""))
         if op == "back":
             return storage_done(lambda: svc.move_back(mid))
         if op == "delete":
@@ -1474,9 +1369,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return PlainTextResponse("unknown operation", status_code=404)
 
     @app.post("/storage/trash/days")
-    @threaded
-    def storage_trash_days(request: Request):
-        raw = request.state.form
+    async def storage_trash_days(request: Request):
+        raw = await request.form()
         try:
             days = int(str(raw.get("days", "")).strip())
         except ValueError:

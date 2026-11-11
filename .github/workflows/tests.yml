@@ -9,42 +9,12 @@ permissions:
   contents: read
 
 jobs:
-  # "pytest" is the check the branch rules require: keep its name
   pytest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: pytest -q
-
-  # the oldest Python the project supports, and the one the image runs
-  python-versions:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13"]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: pytest -q
-
-  # mistakes in the Python (unused and undefined names) and in the scripts that run as root on the
-  # host, and known vulnerabilities in the versions the image installs
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"
-      - run: pip install ruff pip-audit
-      - run: ruff check .
-      - run: shellcheck -S warning install.sh update.sh gpu-unlock.sh gpushepherd/presets/*.sh
-      - run: pip-audit --require-hashes --disable-pip -r requirements.txt

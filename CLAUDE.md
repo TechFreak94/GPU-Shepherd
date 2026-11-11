@@ -41,6 +41,4 @@ Host-side scripts: `install.sh`, `update.sh`, `gpu-unlock.sh`. Release automatio
   pull request description; merging releases it.
 - Don't update docs or screenshots in a feature PR unless the change would leave them wrong.
   Screenshots only when asked.
-- `AGENTS.md` holds these same notes for other coding agents (OpenCode, Aider, Cline...). Change both
-  files together; `tests/test_agent_notes.py` checks they match.
 - Keep everything generic: no personal models, paths, hardware, hostnames, IPs, emails or private workflows.

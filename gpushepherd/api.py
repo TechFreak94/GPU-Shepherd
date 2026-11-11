@@ -8,14 +8,11 @@ any route here runs. Errors are {"error": "..."} with a 4xx status. Reference: d
 from __future__ import annotations
 
 import functools
-import inspect
-import json
 import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from . import __version__, auth, changelog, host as host_mod, instance_templates as tpl, updates
 from .config import AutoAlias, CatalogModel, ConfigError, Instance
@@ -33,10 +30,9 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return JSONResponse({"error": err.msg} | err.data, status_code=err.status)
         return JSONResponse({"error": message(err)}, status_code=400)
 
-    def body(request: Request, kind=dict):
-        """The request's JSON body (read by `handle` before the route runs)."""
+    async def body(request: Request, kind=dict):
         try:
-            data = json.loads(request.state.raw)
+            data = await request.json()
         except ValueError as err:
             raise Problem("send a JSON body") from err
         if not isinstance(data, kind):
@@ -51,19 +47,14 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return int(offset), int(total)
 
     def handle(fn):
-        """Run a route, answering a Problem or a validation error as {"error": ...}. Routes are plain
-        functions run in a worker thread, with the body read first (request.state.raw), so one that
-        waits for Docker, a model server or a job never holds up the dashboard. The two that take a
-        file as it arrives are `async` and read the request themselves."""
-        streams = inspect.iscoroutinefunction(fn)
-
+        """Run a route, answering a Problem or a validation error as {"error": ...}."""
         @functools.wraps(fn)
         async def wrapper(request: Request, **kw):
             try:
-                if streams:
-                    return await fn(request, **kw)
-                request.state.raw = await request.body()
-                return await run_in_threadpool(fn, request, **kw)
+                result = fn(request, **kw)
+                if hasattr(result, "__await__"):
+                    result = await result
+                return result
             except (Problem, ConfigError, ValueError) as err:
                 return fail(err)
         return wrapper
@@ -134,8 +125,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.put("/api/v1/instances/{iid}")
     @handle
-    def put_instance(request: Request, iid: str):
-        data = body(request)
+    async def put_instance(request: Request, iid: str):
+        data = await body(request)
         data.pop("state", None)                       # as GET returns it
         data.setdefault("id", iid)
         if data["id"] != iid:
@@ -158,21 +149,21 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/instances/{iid}/logins")
     @handle
-    def reset_login(request: Request, iid: str):
-        data = body(request) if request.state.raw else {}
+    async def reset_login(request: Request, iid: str):
+        data = await body(request) if await request.body() else {}
         msg, password = svc.reset_login(iid, str(data.get("user") or ""), str(data.get("password") or ""))
         return {"message": msg, "password": password}
 
     @r.post("/api/v1/instances/{iid}/tuning")
     @handle
-    def tuning_decide(request: Request, iid: str):
-        data = body(request)
+    async def tuning_decide(request: Request, iid: str):
+        data = await body(request)
         return {"message": svc.tuning_decide(iid, str(data.get("key", "")), str(data.get("action", "")))}
 
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
-    def instance_action(request: Request, iid: str, action: str):
-        data = body(request) if request.state.raw else {}
+    async def instance_action(request: Request, iid: str, action: str):
+        data = await body(request) if await request.body() else {}
         c = svc.change(action, iid, confirm=bool(data.get("confirm")))
         if c.noop:
             return {"message": c.text, "noop": True}
@@ -237,14 +228,14 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/apps/{key}/instance")
     @handle
-    def app_instance(request: Request, key: str):
-        data = body(request) if request.state.raw else {}
+    async def app_instance(request: Request, key: str):
+        data = await body(request) if await request.body() else {}
         return svc.app_instance(key, data).model_dump(mode="json")
 
     @r.post("/api/v1/apps/{key}/install")
     @handle
-    def install_app(request: Request, key: str):
-        done = svc.install(key, body(request) if request.state.raw else {}, fill_defaults=True)
+    async def install_app(request: Request, key: str):
+        done = svc.install(key, await body(request) if await request.body() else {}, fill_defaults=True)
         also = "".join(f" and {x.name}" for x in [done.bundle, *done.companions] if x)
         after = f" {tpl.get(key).after_install}" if tpl.get(key).after_install else ""
         fetching = f" Downloading {', '.join(done.downloads)}." if done.downloads else ""
@@ -274,8 +265,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.put("/api/v1/instances/{iid}/models/{mid}")
     @handle
-    def put_model(request: Request, iid: str, mid: str):
-        data = body(request)
+    async def put_model(request: Request, iid: str, mid: str):
+        data = await body(request)
         data.setdefault("id", mid)
         _, cat = svc.server(iid)
         exists = any(m.id == mid for m in cat.models)
@@ -318,11 +309,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/instances/{iid}/models/from-link")
     @handle
-    def model_from_link(request: Request, iid: str):
-        data = body(request, object)
-        if not isinstance(data, dict) or not data.get("url"):
+    async def model_from_link(request: Request, iid: str):
+        body = await request.json()
+        if not isinstance(body, dict) or not body.get("url"):
             raise Problem('send {"url": "https://.../model.gguf"} (and optionally "name", "mmproj_url")')
-        msg = svc.add_from_link(iid, str(data["url"]), str(data.get("name", "")), str(data.get("mmproj_url", "")))
+        msg = svc.add_from_link(iid, str(body["url"]), str(body.get("name", "")), str(body.get("mmproj_url", "")))
         return JSONResponse({"message": msg}, status_code=201)
 
     @r.get("/api/v1/app-updates")
@@ -362,10 +353,10 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/image-updates/update-all")
     @handle
-    def update_images(request: Request):
+    async def update_images(request: Request):
         """Update several apps in one change: {"instances": [...]}, or every app with a new
         version when there is no body."""
-        data = body(request) if request.state.raw.strip() else {}
+        data = await body(request) if (await request.body()).strip() else {}
         ids = data.get("instances")
         if ids is not None and not (isinstance(ids, list) and ids and all(isinstance(i, str) for i in ids)):
             raise Problem('send {"instances": ["webui", ...]} or no body for every app')
@@ -380,16 +371,16 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.put("/api/v1/instances/{iid}/auto-update")
     @handle
-    def auto_update(request: Request, iid: str):
-        data = body(request)
+    async def auto_update(request: Request, iid: str):
+        data = await body(request)
         if not isinstance(data.get("on"), bool):
             raise Problem('send {"on": true} or {"on": false}')
         return {"message": svc.set_auto_update(iid, data["on"])}
 
     @r.patch("/api/v1/instances/{iid}/server-settings")
     @handle
-    def server_settings(request: Request, iid: str):
-        data = body(request)
+    async def server_settings(request: Request, iid: str):
+        data = await body(request)
         unknown = set(data) - {"threads", "llama_server", "health_timeout", "fit_gpus", "auto_tune", "new_api_key"}
         if unknown:
             raise Problem(f"unknown setting(s): {', '.join(sorted(unknown))}")
@@ -405,8 +396,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.put("/api/v1/instances/{iid}/auto-aliases")
     @handle
-    def put_auto_aliases(request: Request, iid: str):
-        autos = [AutoAlias.model_validate(a) for a in body(request, list)]
+    async def put_auto_aliases(request: Request, iid: str):
+        autos = [AutoAlias.model_validate(a) for a in await body(request, list)]
         return {"message": svc.set_auto_aliases(iid, autos)}
 
     # ------------------------------------------------------------------ settings
@@ -423,8 +414,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.patch("/api/v1/settings")
     @handle
-    def patch_settings(request: Request):
-        data = body(request)
+    async def patch_settings(request: Request):
+        data = await body(request)
         unknown = set(data) - {"bind_address", "network", "trash_days", "image_check_hours"}
         if unknown:
             raise Problem(f"unknown or read-only setting(s): {', '.join(sorted(unknown))}")
@@ -457,13 +448,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/storage/drives/mount")
     @handle
-    def mount_drive(request: Request):
-        return {"message": svc.mount_drive(str(body(request).get("device", "")))}
+    async def mount_drive(request: Request):
+        return {"message": svc.mount_drive(str((await body(request)).get("device", "")))}
 
     @r.put("/api/v1/storage/drives/auto")
     @handle
-    def auto_mount(request: Request):
-        return {"message": svc.set_auto_mount(bool(body(request).get("enabled")))}
+    async def auto_mount(request: Request):
+        return {"message": svc.set_auto_mount(bool((await body(request)).get("enabled")))}
 
     @r.get("/api/v1/storage/browse")
     @handle
@@ -476,11 +467,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/storage/move")
     @handle
-    def storage_move(request: Request):
+    async def storage_move(request: Request):
         """Move a folder the Storage report lists under "movable" to `dest`, or with "home": true
         back to where it was before it was moved (its "home"). Without confirm it only checks, and
         answers what the move would do."""
-        data = body(request)
+        data = await body(request)
         source, dest = str(data.get("source", "")), str(data.get("dest", ""))
         if data.get("home"):
             dest = svc.home_of(source)
@@ -508,19 +499,19 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/storage/{what}")
     @handle
-    def storage_cleanup(request: Request, what: str):
+    async def storage_cleanup(request: Request, what: str):
         if what == "images":
             return {"message": svc.remove_unused_images()}
         if what == "orphans":
             return {"message": svc.remove_orphans()}
         if what == "files":
-            data = body(request)
+            data = await body(request)
             paths = data.get("paths")
             if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
                 raise Problem('send {"paths": [...]} with paths the storage report lists')
             return {"message": svc.trash_files(paths)}
         if what == "leftovers":
-            data = body(request)
+            data = await body(request)
             return {"message": svc.trash_leftover(str(data.get("name", "")))}
         raise Problem("unknown clean-up (images, orphans, files or leftovers)", status=404)
 
@@ -546,8 +537,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/settings/password")
     @handle
-    def change_password(request: Request):
-        data = body(request)
+    async def change_password(request: Request):
+        data = await body(request)
         return {"message": svc.change_password(str(data.get("current", "")), str(data.get("new", "")))}
 
     @r.post("/api/v1/token")
@@ -579,16 +570,16 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/updates/credentials")
     @handle
-    def update_credentials(request: Request):
-        data = body(request)
+    async def update_credentials(request: Request):
+        data = await body(request)
         return JSONResponse({"message": svc.update_credentials(str(data.get("user", "")), str(data.get("token", "")),
                                                                clear=bool(data.get("clear")))}, status_code=202)
 
     @r.post("/api/v1/updates/branch")
     @handle
-    def update_branch(request: Request):
+    async def update_branch(request: Request):
         """Follow another branch of the repository: {"branch": "main"}. Rebuilds GPU Shepherd from it."""
-        return JSONResponse({"message": svc.switch_branch(str(body(request).get("branch", "")))},
+        return JSONResponse({"message": svc.switch_branch(str((await body(request)).get("branch", "")))},
                             status_code=202)
 
     @r.post("/api/v1/updates/{action}")
@@ -613,9 +604,9 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/gpu-unlock/{action}")
     @handle
-    def gpu_unlock_request(request: Request, action: str):
+    async def gpu_unlock_request(request: Request, action: str):
         """check, install, uninstall, or set {"cards": ["0000:01:00.0"]} ([] unlocks none). Applies at the next reboot."""
-        data = body(request) if action == "set" else {}
+        data = await body(request) if action == "set" else {}
         cards = data.get("cards") or []
         if not isinstance(cards, list):
             return JSONResponse({"error": "cards must be a list of PCI addresses"}, status_code=400)
@@ -650,8 +641,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.put("/api/v1/knowledge/folder")
     @handle
-    def knowledge_folder(request: Request):
-        return {"message": svc.set_documents_folder(str(body(request).get("path", "")))}
+    async def knowledge_folder(request: Request):
+        return {"message": svc.set_documents_folder(str((await body(request)).get("path", "")))}
 
     @r.post("/api/v1/knowledge/upload")
     @handle
@@ -659,7 +650,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         """Add documents: a multipart form with one or more `file` fields. A scan starts afterwards."""
         form = await request.form()
         files = [(f.filename, f.file) for f in form.getlist("file") if hasattr(f, "filename")]
-        return JSONResponse({"message": await run_in_threadpool(svc.add_documents, files)}, status_code=202)
+        return JSONResponse({"message": svc.add_documents(files)}, status_code=202)
 
     @r.get("/api/v1/knowledge/files")
     @handle
@@ -690,19 +681,19 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/knowledge/send")
     @handle
-    def knowledge_send(request: Request):
+    async def knowledge_send(request: Request):
         """Put the ready documents into an Open WebUI knowledge base: {"instance", "name", "split",
         "embeddings": "server" | "keep"}."""
-        d = body(request)
+        d = await body(request)
         return JSONResponse({"message": svc.send_documents(str(d.get("instance", "")), str(d.get("name", "") or "Documents"),
                                                         bool(d.get("split")), embeddings_choice(d.get("embeddings")))},
                             status_code=202)
 
     @r.post("/api/v1/knowledge/{key}/skill")
     @handle
-    def knowledge_skill(request: Request, key: str):
+    async def knowledge_skill(request: Request, key: str):
         """Draft an agent skill from a document with a model server's chat model: {"server"} (optional)."""
-        d = body(request) if request.state.raw else {}
+        d = await body(request) if (await request.body()) else {}
         return JSONResponse({"message": svc.make_skill(key, str(d.get("server", "")))}, status_code=202)
 
     @r.post("/api/v1/knowledge/ocr")
@@ -713,9 +704,9 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/knowledge/delete")
     @handle
-    def knowledge_delete_all(request: Request):
+    async def knowledge_delete_all(request: Request):
         """Delete every document with a status, in the background: {"status": "duplicate" | "failed"}."""
-        return JSONResponse({"message": svc.delete_documents(str(body(request).get("status", "")))},
+        return JSONResponse({"message": svc.delete_documents(str((await body(request)).get("status", "")))},
                             status_code=202)
 
     @r.delete("/api/v1/knowledge/{key}")
@@ -726,10 +717,10 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.post("/api/v1/knowledge/clear")
     @handle
-    def knowledge_clear(request: Request):
+    async def knowledge_clear(request: Request):
         """Start over: {"what": ["documents", "converted", "skills", "apps"]} (all of them if left out).
         See Service.clear_knowledge for what each one removes."""
-        d = body(request) if request.state.raw else {}
+        d = await body(request) if (await request.body()) else {}
         what = d.get("what") or list(svc.CLEAR)
         if isinstance(what, str):
             what = [w.strip() for w in what.split(",")]
@@ -742,13 +733,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.put("/api/v1/skills/{slug}")
     @handle
-    def put_skill(request: Request, slug: str):
-        return {"message": svc.save_skill(slug, str(body(request).get("text", "")))}
+    async def put_skill(request: Request, slug: str):
+        return {"message": svc.save_skill(slug, str((await body(request)).get("text", "")))}
 
     @r.post("/api/v1/skills/{slug}/install")
     @handle
-    def install_skill(request: Request, slug: str):
-        return {"message": svc.install_skill(slug, str(body(request).get("instance", "")))}
+    async def install_skill(request: Request, slug: str):
+        return {"message": svc.install_skill(slug, str((await body(request)).get("instance", "")))}
 
     @r.delete("/api/v1/skills/{slug}")
     @handle

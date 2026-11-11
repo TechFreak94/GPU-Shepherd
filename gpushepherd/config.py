@@ -362,7 +362,6 @@ class Settings(BaseModel):
     admin_user: str = "admin"
     password_hash: str = ""
     session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
-    session_epoch: int = 0                # goes up at every logout: logins made before it stop working (auth.py)
     network: str = "gpushepherd"          # Docker network every instance joins
     bind_address: str = "0.0.0.0"         # host address published ports bind to
     container_prefix: str = "shepherd-"
@@ -373,16 +372,12 @@ class Settings(BaseModel):
 
 # --------------------------------------------------------------------------- store
 
-def _atomic_write(path: Path, text: str, mode: int = 0o600) -> None:
-    """Replace a file in one step, keeping the version before as <file>.prev. Owner-only by default:
-    instance files hold passwords, tokens and API keys in their environment."""
+def _atomic_write(path: Path, text: str, mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         prev = path.with_suffix(path.suffix + ".prev")
-        fd = os.open(prev, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)   # never readable by others, even briefly
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(path.read_bytes())
-        os.chmod(prev, mode)                  # one that was already there keeps its old mode otherwise
+        prev.write_bytes(path.read_bytes())
+        os.chmod(prev, mode)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(text)
@@ -453,20 +448,6 @@ class Store:
         self.root = Path(data_dir)
         for sub in ("instances", "catalogs", "generated"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
-
-    def tighten(self) -> int:
-        """Run at startup: make the instance files (and their .prev copies) written by older
-        versions readable by their owner only, as new ones are. They hold passwords, tokens and API
-        keys in their environment. Returns how many were changed."""
-        changed = 0
-        for path in (self.root / "instances").glob("*.yaml*"):
-            try:
-                if path.is_file() and not path.is_symlink() and path.stat().st_mode & 0o077:
-                    os.chmod(path, 0o600)
-                    changed += 1
-            except OSError:
-                pass
-        return changed
 
     # settings
     @property

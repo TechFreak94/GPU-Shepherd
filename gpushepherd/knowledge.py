@@ -28,6 +28,7 @@ with connectors/openwebui.py; skills are made in knowledge_skills.py.
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 import posixpath
 import re
