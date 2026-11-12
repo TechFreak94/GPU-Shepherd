@@ -2502,8 +2502,8 @@ class Shepherd:
         """Hand a running Open WebUI the image settings in its environment through its API: it reads
         the variables only until its image settings are first saved."""
         if not self._running(inst.id):
-            return (f"Start {inst.name} to use them; if its image settings were changed in Open WebUI before, "
-                    "apply this again while it runs, or set them in Open WebUI: Admin Panel, Settings, Images.")
+            return (f"Start {inst.name} to use them; if it saved picture settings of its own before, press Pictures "
+                    "on its card once it runs, so it gets these.")
         try:
             self._openwebui(inst).use_images(comfyui.from_env(inst.env))
         except (Problem, openwebui.OpenWebUIError) as err:
@@ -2511,6 +2511,23 @@ class Shepherd:
                     f"({err}), so if pictures don't work after the restart, set them in Open WebUI: "
                     "Admin Panel, Settings, Images.")
         return f"{inst.name} makes and edits pictures now: turn on Image in a chat's message box."
+
+    @checked
+    def send_images(self, iid: str) -> str:
+        """Send the picture settings GPU Shepherd keeps for an Open WebUI (its ComfyUI workflows, model,
+        size and steps) to it again, for when it has others saved: Open WebUI ignores the variables
+        once its image settings are saved, so an update applied while it was stopped never reached it."""
+        inst = self.instance(iid)
+        if not tpl.matches(tpl.get("open-webui"), inst) or not inst.env.get("COMFYUI_BASE_URL"):
+            raise Problem(f"{inst.name} isn't an Open WebUI connected to ComfyUI.")
+        if not self._running(iid):
+            raise Problem(f"Start {inst.name} first.", status=409)
+        try:
+            self._openwebui(inst).use_images(comfyui.from_env(inst.env))
+        except openwebui.OpenWebUIError as err:
+            raise Problem(f"couldn't set {inst.name}'s picture settings: {err}", status=409) from err
+        model = inst.env.get("IMAGE_GENERATION_MODEL")
+        return f"Sent {inst.name} its picture settings" + (f" (model {model})." if model else ".")
 
     def _embed_server(self, inst: Instance, m: tpl.Machine) -> str:
         """The model server whose embeddings model Open WebUI should use: the one it is connected to."""

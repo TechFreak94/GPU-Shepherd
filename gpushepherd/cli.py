@@ -397,6 +397,11 @@ def cmd_app_updates(args, c: Client) -> int:
     if args.action == "apply" and args.all:
         out(args, c.post("/api/v1/app-updates/apply-all"))
         return 0
+    if args.action == "send-images":
+        if not args.instance:
+            raise Failed("which Open WebUI? e.g. gpu-shepherd app-updates send-images webui")
+        out(args, c.post(f"/api/v1/instances/{args.instance}/send-images"))
+        return 0
     if not (args.instance and args.key):
         raise Failed(f"which update? e.g. gpu-shepherd app-updates {args.action} webui env-1a2b3c4d")
     out(args, c.post(f"/api/v1/app-updates/{args.instance}/{args.key}/{args.action}"))
@@ -991,8 +996,9 @@ def add_commands(sub) -> None:
     p.add_argument("answers", nargs="*", metavar="KEY=VALUE")
 
     p = sub.add_parser("app-updates", help="settings added to apps since they were installed: list, "
-                                           "apply INSTANCE KEY (or --all), skip INSTANCE KEY")
-    p.add_argument("action", nargs="?", choices=("list", "apply", "skip"))
+                                           "apply INSTANCE KEY (or --all), skip INSTANCE KEY, send-images INSTANCE "
+                                           "(an Open WebUI's picture settings, again)")
+    p.add_argument("action", nargs="?", choices=("list", "apply", "skip", "send-images"))
     p.add_argument("instance", nargs="?")
     p.add_argument("key", nargs="?")
     p.add_argument("--all", action="store_true", help="apply every update")

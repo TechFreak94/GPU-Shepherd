@@ -200,3 +200,30 @@ def test_own_comfyui_workflow_replaces_the_built_in_one(tmp_path):
     assert u.env["IMAGE_SIZE"] == "768x1344" and u.env["IMAGE_STEPS"] == "9" and u.env["ENABLE_IMAGE_EDIT"] == "false"
     assert comfyui.from_env(webui.env | u.env)["ENABLE_IMAGE_EDIT"] is False
     assert au.for_instance(webui.model_copy(update={"env": webui.env | u.env}), m) == []
+
+
+def test_pictures_button_sends_the_settings_again(stack):  # noqa: F811
+    app, client, backend, data = stack
+    svc = app.state.svc
+    sent = []
+
+    class Client:
+        def __init__(self, base, token):
+            pass
+
+        def use_images(self, values):
+            sent.append(values)
+    svc.openwebui_client = Client
+    backend.exec_reply = lambda name, cmd, env: (0, '{"token": "tok"}')
+    r = client.post("/api/v1/instances/webui/send-images")
+    assert r.status_code == 409, r.text                                                # stopped
+    assert client.post("/api/v1/instances/llm/send-images").status_code == 400         # not an Open WebUI
+    assert client.post("/api/v1/instances/webui/start").status_code in (200, 202)
+    wait(app)
+    from fastapi.testclient import TestClient
+    b = TestClient(app)
+    b.post("/login", data={"user": "admin", "password": "correct-horse"})
+    assert 'send-images"' in b.get("/ui/dashboard").text
+    r = client.post("/api/v1/instances/webui/send-images")
+    assert r.status_code == 200 and "picture settings" in r.json()["message"]
+    assert sent[0]["COMFYUI_BASE_URL"] == "http://comfyui:8188" and sent[0]["ENABLE_IMAGE_GENERATION"] is True

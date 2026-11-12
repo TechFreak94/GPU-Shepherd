@@ -276,6 +276,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "unknown" if unknown else "not created"),
                     "container": engine.container_name(inst.id), "has_logins": logins.method(inst) is not None,
+                    "sends_images": bool(inst.env.get("COMFYUI_BASE_URL")) and tpl.matches(tpl.get("open-webui"), inst),
                     "gpus": gpus, "assigned": assigned, "image": images.get(inst.id),
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
                     "usage": usage.get(engine.container_name(inst.id)),
@@ -485,6 +486,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             except Problem:
                 return problem(err)
         return logins_dialog(request, iid, result=result)
+
+    @app.post("/ui/instances/{iid}/send-images")
+    @threaded
+    def instance_send_images(request: Request, iid: str):
+        try:
+            msg = svc.send_images(iid)
+        except Problem as err:
+            return problem(err)
+        return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
 
     @app.post("/ui/instances/{iid}/update-image")
     def instance_update_image(request: Request, iid: str):

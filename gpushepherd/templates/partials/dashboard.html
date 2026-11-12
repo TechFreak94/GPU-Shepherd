@@ -221,6 +221,7 @@
       {% endif %}
       {% if i.kind == "llama-swap" %}<a class="btn" href="/instances/{{ i.id }}/models" title="Load, unload and configure models">Models</a>{% endif %}
       {% if c.state %}<button hx-get="/ui/instances/{{ i.id }}/logs" hx-target="#modal-body" title="Show the container's recent output">Logs</button>{% endif %}
+      {% if c.sends_images and c.running %}<button hx-post="/ui/instances/{{ i.id }}/send-images" hx-target="#dash" title="Send {{ i.name }} the ComfyUI picture settings GPU Shepherd keeps for it again (workflows, model, size, steps), replacing the ones in its Admin Panel">Pictures</button>{% endif %}
       {% if c.has_logins %}<button hx-get="/ui/instances/{{ i.id }}/logins" hx-target="#modal-body" title="Show this app's accounts and set a new password">Logins</button>{% endif %}
       <a class="btn" href="/instances/{{ i.id }}/edit" title="Change image, ports, GPUs and other settings">Edit</a>
     </div>

@@ -180,6 +180,7 @@ Settings that an app's template gained after it was installed (the dashboard's *
 | `GET /api/v1/app-updates` | A list of `instance`, `key`, `title`, `changes` and `afterwards` (what is left for you to do). |
 | `POST /api/v1/app-updates/{id}/{key}/apply` | Apply it. `/skip` stops it being offered again. |
 | `POST /api/v1/app-updates/apply-all` | Apply every offered update. |
+| `POST /api/v1/instances/{id}/send-images` | Send a running Open WebUI the ComfyUI picture settings GPU Shepherd keeps for it (workflows, model, size, steps), replacing the ones saved in it. |
 
 ### App image updates
 

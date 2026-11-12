@@ -169,6 +169,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         data = body(request)
         return {"message": svc.tuning_decide(iid, str(data.get("key", "")), str(data.get("action", "")))}
 
+    @r.post("/api/v1/instances/{iid}/send-images")
+    @handle
+    def send_images(request: Request, iid: str):
+        return {"message": svc.send_images(iid)}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     def instance_action(request: Request, iid: str, action: str):
