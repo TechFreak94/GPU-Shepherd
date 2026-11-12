@@ -175,7 +175,8 @@ sudo TS_AUTHKEY=tskey-... ./install.sh --tailscale # or use an auth key (never s
 sudo ./install.sh --tailscale-https                # also https://<name>.<tailnet>.ts.net
 ```
 
-HTTPS needs certificates turned on in Tailscale's admin console. On WSL2, install Tailscale for
+With dashboard updates on, you can also do all of this later in **Settings › Remote access**, which
+shows a login link and this machine's Tailscale addresses. HTTPS needs certificates turned on in Tailscale's admin console. On WSL2, install Tailscale for
 Windows instead. If a firewall (such as `ufw` or `firewalld`) is on, allow the dashboard port and
 the ports of the apps you want to reach from your network.
 

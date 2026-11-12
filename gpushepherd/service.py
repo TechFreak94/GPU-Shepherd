@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
-from . import gpu_unlock, hf_models
+from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import instance_url, llamaswap, openwebui
@@ -2136,6 +2136,51 @@ class Shepherd:
                         else "Saving: no card unlocked from the next boot. Reboot to put the cards back to normal."),
                 "uninstall": "Removing gpu-unlock. Reboot afterwards to put the cards back to normal."}[action]
 
+    # ------------------------------------------------------------------ Tailscale (on the host, through update.sh)
+    def tailscale_status(self, refresh: bool = False) -> tailscale.TailscaleStatus:
+        """This machine's Tailscale state as the host last reported it; with refresh, ask the host
+        for a new report when the last one is missing or old (and nothing else is waiting)."""
+        st = tailscale.status(self.store.root)
+        if refresh and tailscale.needs_refresh(st) and not updates.status(self.store.root).pending:
+            tailscale.request(self.store.root, "refresh")
+            st = tailscale.status(self.store.root)
+        return st
+
+    def request_tailscale(self, action: str) -> str:
+        """Install Tailscale and log this machine in to a tailnet, serve the dashboard over HTTPS on
+        its Tailscale name, disconnect, or log out. update.sh's service on the host does the work."""
+        if action not in tailscale.ACTIONS:
+            raise Problem("unknown action")
+        st = tailscale.status(self.store.root)
+        if st.image:
+            raise Problem("This install has no update service, so Tailscale can't be set up from here. Install Tailscale "
+                          "on the server (https://tailscale.com/download) and run: sudo tailscale up", "warn", 409)
+        if not st.service:
+            raise Problem(f"Setting up Tailscale from here needs dashboard updates. On the server run: "
+                          f"{st.command} --enable-dashboard-updates (or install it with: install.sh --tailscale)", "warn", 409)
+        if st.wsl and action in ("install", "up"):
+            raise Problem("In WSL2, install Tailscale for Windows instead: the apps answer on the Windows machine's "
+                          "Tailscale address.", "warn", 409)
+        if st.busy:
+            raise Problem("Tailscale is already being changed; wait for it to finish.", "warn", 409)
+        u = updates.status(self.store.root)
+        if u.busy:
+            raise Problem("An update or check is running; wait for it to finish.", "warn", 409)
+        if action != "install" and action != "refresh" and not st.installed:
+            raise Problem("Install Tailscale first.", "warn", 409)
+        if action == "https-on" and st.checked and st.connected and not st.cert_domains:
+            raise Problem("Turn on HTTPS certificates in Tailscale's admin console (DNS page) first, then try again.",
+                          "warn", 409)
+        tailscale.request(self.store.root, action)
+        log.info("tailscale: %s requested", action)
+        return {"refresh": "Asking the server…",
+                "install": "Installing Tailscale; a login link appears here in a minute.",
+                "up": "Connecting; if a login is needed, a link appears here.",
+                "down": "Disconnecting from your tailnet…",
+                "https-on": "Serving the dashboard over HTTPS…",
+                "https-off": "Turning HTTPS off…",
+                "logout": "Logging out of Tailscale…"}[action]
+
     # ------------------------------------------------------------------ knowledge
     @property
     def library(self) -> kn.Library:
@@ -2192,7 +2237,7 @@ class Shepherd:
                 "hermes": [{"id": i.id, "name": i.name} for i in hermes],
                 "servers": [{"id": k, "name": v["name"], "model": v.get("default_model", ""), "embed": v.get("embed", "")}
                             for k, v in m.servers.items()],
-                "sends": data.get("sends") or [], "skills": skills, "upload_mb": kn.UPLOAD_MB,
+                "sends": data.get("sends") or [], "sync": data.get("sync"), "skills": skills, "upload_mb": kn.UPLOAD_MB,
                 "zip_mb": kn.ZIP_MB}
 
     def _knowledge_busy(self) -> None:
@@ -2381,6 +2426,9 @@ class Shepherd:
         return "Stopping after the current document…"
 
     def scan_documents(self) -> str:
+        """Find and read the documents, in the background. With sync on (see send_documents), the
+        Open WebUI it syncs with is brought up to date afterwards: new documents go in, documents
+        gone from the folder (or changed) come out."""
         folder = self.library.folder()
         if not folder.is_dir():
             if folder == self.library.default_folder:
@@ -2391,12 +2439,41 @@ class Shepherd:
         def work(task: kn.Task) -> str:
             def progress(done, total, name):
                 task.progress(done, total, f"Reading {name}")
+            before = {k: (b.stamp, dict(b.sent)) for k, b in self.library.load()["books"].items() if b.sent}
             counts = self.library.scan(progress, lambda: task.stop)
+            self._note_stale(before)
             if task.stop:
                 raise InterruptedError
             parts = [f"{counts.get('ready', 0)} ready"] + [f"{n} {s}" for s, n in sorted(counts.items()) if s != "ready"]
-            return "Found the documents: " + ", ".join(parts) + "."
+            msg = "Found the documents: " + ", ".join(parts) + "."
+            sync = self.library.load().get("sync")
+            if not sync:
+                return msg
+            instances, _ = self.store.instances()
+            inst = instances.get(sync.get("instance", ""))
+            if not inst:
+                return msg
+            if not self._running(inst.id):
+                return msg + f" Start {inst.name} and scan again to sync it."
+            return msg + " " + self._sync_openwebui(task, inst, sync["name"], bool(sync.get("split")),
+                                                    bool(sync.get("embeddings")))
         return self._knowledge_work("Finding and reading documents", work)
+
+    def _note_stale(self, before: dict[str, tuple[str, dict]]) -> None:
+        """After a scan: copies in Open WebUI of documents that are gone from the folder, or were
+        changed (and read again), are noted as stale, to be taken out by the next sync or clear.
+        A changed document is sent again."""
+        def note(d):
+            stale = d.setdefault("stale", [])
+            for key, (stamp, sent) in before.items():
+                b = d["books"].get(key)
+                if b and b.stamp == stamp:
+                    continue
+                stale += [{"target": t, "fid": f} for t, f in sent.items()]
+                if b:
+                    b.sent = {}
+        if before:
+            self.library.update(note)
 
     # Open WebUI
     def _openwebui(self, inst: Instance) -> openwebui.OpenWebUI:
@@ -2419,11 +2496,13 @@ class Shepherd:
 
     @checked
     def send_documents(self, iid: str, name: str = "Documents", split: bool = False,
-                   use_server_embeddings: bool | None = None) -> str:
+                       use_server_embeddings: bool | None = None, sync: bool | None = None) -> str:
         """Put the ready documents into an Open WebUI knowledge base (one per first-level folder with
         `split`), in the background. Documents already sent there are skipped, so it carries on after a stop.
         use_server_embeddings: True switches Open WebUI to the model server's embeddings model, False
-        keeps whatever it uses, None stops with a question when they differ."""
+        keeps whatever it uses, None stops with a question when they differ.
+        sync: True keeps that knowledge base in sync from now on (every scan sends new documents and
+        takes out the ones gone from the folder), False stops syncing, None leaves it as it is."""
         inst = self.instance(iid)
         if not tpl.matches(tpl.get("open-webui"), inst):
             raise Problem(f"{inst.name} isn't Open WebUI: documents go into Open WebUI's knowledge bases.")
@@ -2432,74 +2511,163 @@ class Shepherd:
         name = re.sub(r"\s+", " ", name or "").strip()[:80] or "Documents"
         if not any(b.status == "ready" for b in self.library.books()):
             raise Problem("No documents ready to send: add documents and scan the documents folder first.", status=409)
-        m = self.machine()
-        server = self._embed_server(inst, m)
+        self._knowledge_busy()
+        if sync is not None:
+            self.library.update(lambda d: d.__setitem__("sync", {
+                "instance": iid, "name": name, "split": split,
+                "embeddings": use_server_embeddings is not False} if sync else None))
 
         def work(task: kn.Task) -> str:
-            task.text = f"Signing in to {inst.name}"
-            ow = self._openwebui(inst)
-            if server:
-                info = m.servers[server]
-                emb = ow.embedding()
-                uses = emb["engine"] == "openai" and emb["model"] == info["embed"] and server in emb["url"]
-                if not uses and use_server_embeddings:
-                    ow.use_embedding(tpl._server_url(server, m), info["api_key"], info["embed"],
-                                     info.get("embed_query_prefix", ""))
-                elif not uses and use_server_embeddings is None:
-                    raise Problem(f"{inst.name} embeds documents with {emb['model'] or 'its own model'}"
-                                  f"{' on its CPU' if not emb['engine'] else ''}, not {info['name']}'s embeddings "
-                                  "model. Choose which to use, then send again.", status=409)
-            todo = [b for b in self.library.books() if b.status == "ready"]
-            kbs: dict[str, str] = {}
-            sent = skipped = failed = in_a_row = 0
-            for i, b in enumerate(todo):
-                if task.stop:
-                    raise InterruptedError
-                kb = f"{name} - {b.group}" if split and b.group else name
-                target = f"{iid}/{kb}"
-                if target in b.sent:
-                    skipped += 1
-                    continue
-                task.progress(i, len(todo), f"Sending {b.name}")
-                try:
-                    if kb not in kbs:
-                        kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
-                    fid = ow.upload(b.file_name, self.library.text(b.key))
-                    ow.add(kbs[kb], fid)
-                except (openwebui.OpenWebUIError, OSError) as err:
-                    if "answered 401" in str(err):          # the sign-in ran out: sign in again, then retry it
-                        ow = self._openwebui(inst)
-                        kbs.clear()
-                        try:
-                            kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
-                            fid = ow.upload(b.file_name, self.library.text(b.key))
-                            ow.add(kbs[kb], fid)
-                        except (openwebui.OpenWebUIError, OSError) as err2:
-                            err = err2
-                        else:
-                            err = None
-                    if err is not None:
-                        failed += 1
-                        in_a_row += 1
-                        task.errors.append(f"{b.name}: {err}")
-                        if in_a_row >= 5:
-                            raise openwebui.OpenWebUIError(f"stopped after 5 documents in a row failed; the last: {err}")
-                        continue
-                in_a_row = 0
-                sent += 1
-
-                def mark(d, key=b.key, fid=fid):
-                    if key in d["books"]:
-                        d["books"][key].sent[target] = fid
-                self.library.update(mark)
-            self.library.update(lambda d: d.__setitem__("sends", [
-                s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
-                {"instance": iid, "name": name, "split": split, "when": time.time()}]))
-            msg = f"Sent {sent} document{'s' if sent != 1 else ''} to {inst.name}"
-            msg += f" ({skipped} were there already)" if skipped else ""
-            msg += f"; {failed} failed." if failed else "."
-            return msg + " In a chat, type # and pick the knowledge base."
+            return self._sync_openwebui(task, inst, name, split, use_server_embeddings)
         return self._knowledge_work(f"Sending documents to {inst.name}", work)
+
+    def stop_sync(self) -> str:
+        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
+        sync = self.library.load().get("sync")
+        if not sync:
+            raise Problem("Sync isn't on.", "info", 409)
+        self.library.update(lambda d: d.__setitem__("sync", None))
+        return (f"Stopped syncing {sync['name']}. What is in it stays; send again to add new documents, "
+                "or turn sync back on.")
+
+    def _sync_openwebui(self, task: kn.Task, inst: Instance, name: str, split: bool,
+                        use_server_embeddings: bool | None) -> str:
+        """Take stale copies out of an Open WebUI, then send it the ready documents it doesn't have."""
+        iid = inst.id
+        m = self.machine()
+        server = self._embed_server(inst, m)
+        task.text = f"Signing in to {inst.name}"
+        ow = self._openwebui(inst)
+        if server:
+            info = m.servers[server]
+            emb = ow.embedding()
+            uses = emb["engine"] == "openai" and emb["model"] == info["embed"] and server in emb["url"]
+            if not uses and use_server_embeddings:
+                ow.use_embedding(tpl._server_url(server, m), info["api_key"], info["embed"],
+                                 info.get("embed_query_prefix", ""))
+            elif not uses and use_server_embeddings is None:
+                raise Problem(f"{inst.name} embeds documents with {emb['model'] or 'its own model'}"
+                              f"{' on its CPU' if not emb['engine'] else ''}, not {info['name']}'s embeddings "
+                              "model. Choose which to use, then send again.", status=409)
+        removed = self._take_out_stale(task, ow, iid)
+        there = ow.knowledge_bases()
+
+        def forget_gone(d):                      # knowledge bases deleted in Open WebUI: send to them again
+            for b in d["books"].values():
+                b.sent = {t: f for t, f in b.sent.items() if t.partition("/")[0] != iid or t.partition("/")[2] in there}
+        self.library.update(forget_gone)
+        todo = [b for b in self.library.books() if b.status == "ready"]
+        kbs: dict[str, str] = {}
+        sent = skipped = failed = in_a_row = 0
+        for i, b in enumerate(todo):
+            if task.stop:
+                raise InterruptedError
+            kb = f"{name} - {b.group}" if split and b.group else name
+            target = f"{iid}/{kb}"
+            if target in b.sent:
+                skipped += 1
+                continue
+            task.progress(i, len(todo), f"Sending {b.name}")
+            try:
+                if kb not in kbs:
+                    kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
+                fid = ow.upload(b.file_name, self.library.text(b.key))
+                ow.add(kbs[kb], fid)
+            except (openwebui.OpenWebUIError, OSError) as err:
+                if "answered 401" in str(err):          # the sign-in ran out: sign in again, then retry it
+                    ow = self._openwebui(inst)
+                    kbs.clear()
+                    try:
+                        kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
+                        fid = ow.upload(b.file_name, self.library.text(b.key))
+                        ow.add(kbs[kb], fid)
+                    except (openwebui.OpenWebUIError, OSError) as err2:
+                        err = err2
+                    else:
+                        err = None
+                if err is not None:
+                    failed += 1
+                    in_a_row += 1
+                    task.errors.append(f"{b.name}: {err}")
+                    if in_a_row >= 5:
+                        raise openwebui.OpenWebUIError(f"stopped after 5 documents in a row failed; the last: {err}")
+                    continue
+            in_a_row = 0
+            sent += 1
+
+            def mark(d, key=b.key, fid=fid):
+                if key in d["books"]:
+                    d["books"][key].sent[target] = fid
+            self.library.update(mark)
+        self.library.update(lambda d: d.__setitem__("sends", [
+            s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
+            {"instance": iid, "name": name, "split": split, "when": time.time()}]))
+        msg = f"Sent {sent} document{'s' if sent != 1 else ''} to {inst.name}"
+        msg += f" ({skipped} were there already)" if skipped else ""
+        msg += f", took out {removed} old cop{'ies' if removed != 1 else 'y'}" if removed else ""
+        msg += f"; {failed} failed." if failed else "."
+        return msg + " In a chat, type # and pick the knowledge base."
+
+    def _take_out_stale(self, task: kn.Task, ow, iid: str) -> int:
+        """Take the stale copies (see _note_stale) out of one Open WebUI. Returns how many."""
+        stale = [s for s in self.library.load().get("stale") or [] if s["target"].partition("/")[0] == iid]
+        if not stale:
+            return 0
+        task.text = "Taking out documents that are gone or changed"
+        ids = ow.knowledge_bases()
+        done = []
+        for s in stale:
+            kb = s["target"].partition("/")[2]
+            try:
+                if ids.get(kb):
+                    ow.remove(ids[kb], s["fid"])
+                ow.delete_file(s["fid"])
+            except openwebui.OpenWebUIError as err:
+                task.errors.append(f"taking out an old copy in {kb}: {err}")
+                continue
+            done.append(s)
+        self.library.update(lambda d: d.__setitem__("stale", [s for s in d.get("stale") or [] if s not in done]))
+        return len(done)
+
+    def openwebui_knowledge(self, iid: str) -> dict:
+        """What is in an Open WebUI's knowledge: its knowledge bases, how many files each has, and
+        for the ones GPU Shepherd sends to, how many documents are in it and how many aren't yet."""
+        inst = self.instance(iid)
+        if not tpl.matches(tpl.get("open-webui"), inst):
+            raise Problem(f"{inst.name} isn't Open WebUI.")
+        if not self._running(iid):
+            raise Problem(f"Start {inst.name} to see its knowledge.", status=409)
+        data = self.library.load()
+        ready = [b for b in data["books"].values() if b.status == "ready"]
+        sends = {s["name"]: s for s in data.get("sends") or [] if s.get("instance") == iid}
+        sync = data.get("sync") if (data.get("sync") or {}).get("instance") == iid else None
+        ours: dict[str, dict] = {}               # knowledge base -> {"sent", "missing", "send", "sync"}
+        for s in sends.values():
+            for b in ready:
+                kb = f"{s['name']} - {b.group}" if s.get("split") and b.group else s["name"]
+                row = ours.setdefault(kb, {"sent": 0, "missing": 0, "send": s["name"],
+                                           "sync": bool(sync and sync["name"] == s["name"])})
+                row["sent" if f"{iid}/{kb}" in b.sent else "missing"] += 1
+        try:
+            ow = self._openwebui(inst)
+            bases = ow.knowledge_list()
+            for k in bases[:50]:
+                if k["files"] is None:
+                    k["files"] = ow.file_count(k["id"])
+        except openwebui.OpenWebUIError as err:
+            raise Problem(f"couldn't read {inst.name}'s knowledge: {err}", status=502) from err
+        rows = []
+        for k in sorted(bases, key=lambda k: (k["name"] not in ours, k["name"].lower())):
+            mine = ours.pop(k["name"], None)
+            rows.append(k | {"ours": bool(mine), "sent": mine["sent"] if mine else None,
+                             "missing": mine["missing"] if mine else 0, "sync": bool(mine and mine["sync"]),
+                             "path": f"/workspace/knowledge/{k['id']}"})
+        for kb, mine in sorted(ours.items()):    # sent there before, but the knowledge base is gone
+            if mine["sent"]:
+                rows.append({"id": "", "name": kb, "description": "", "files": 0, "ours": True, "gone": True,
+                             "sent": mine["sent"], "missing": mine["missing"], "sync": mine["sync"], "path": ""})
+        return {"instance": iid, "name": inst.name, "bases": rows, "sync": sync,
+                "stale": sum(1 for s in data.get("stale") or [] if s["target"].partition("/")[0] == iid)}
 
     # skills
     def _skill_dir(self, slug: str) -> Path:
@@ -2617,10 +2785,10 @@ class Shepherd:
         instances, _ = self.store.instances()
         targets: dict[str, dict[str, list[str]]] = {}         # instance -> knowledge base -> file ids
         if "apps" in what:
-            for b in data["books"].values():
-                for target, fid in b.sent.items():
-                    iid, _, kb = target.partition("/")
-                    targets.setdefault(iid, {}).setdefault(kb, []).append(fid)
+            sent = [(t, f) for b in data["books"].values() for t, f in b.sent.items()]
+            for target, fid in sent + [(s["target"], s["fid"]) for s in data.get("stale") or []]:
+                iid, _, kb = target.partition("/")
+                targets.setdefault(iid, {}).setdefault(kb, []).append(fid)
             stopped = [instances[i].name for i in targets if i in instances and not self._running(i)]
             if stopped:
                 raise Problem(f"Start {', '.join(stopped)} first, so the documents can be taken out of it, or clear "
@@ -2657,6 +2825,9 @@ class Shepherd:
                         for b in d["books"].values():
                             b.sent = {t: f for t, f in b.sent.items() if not t.startswith(iid + "/")}
                         d["sends"] = [x for x in (d.get("sends") or []) if x.get("instance") != iid]
+                        d["stale"] = [x for x in (d.get("stale") or []) if not x["target"].startswith(iid + "/")]
+                        if (d.get("sync") or {}).get("instance") == iid:
+                            d["sync"] = None          # or the next scan would send it all again
                     self.library.update(unsent)
                 done.append(f"took {removed} document{'s' if removed != 1 else ''} out of Open WebUI")
             if "skills" in what:
@@ -2679,7 +2850,7 @@ class Shepherd:
             if "converted" in what:
                 task.text = "Deleting the converted text"
                 shutil.rmtree(self.library.text_dir, ignore_errors=True)
-                self.library.update(lambda d: d.update({"books": {}, "sends": [], "scanned": None}))
+                self.library.update(lambda d: d.update({"books": {}, "sends": [], "stale": [], "scanned": None}))
                 done.append("deleted the converted text and the list of documents")
             return "Cleared: " + ", ".join(done) + "."
         return self._knowledge_work("Clearing out knowledge", work)
@@ -2753,10 +2924,9 @@ class Shepherd:
             inst = instances.get(iid)
             if not inst:
                 continue
-            if not self._running(iid):
-                left.append(inst.name)
-                continue
             try:
+                if not self._running(iid):
+                    raise Problem(f"{inst.name} isn't running")
                 ow = self._openwebui(inst)
                 ids = ow.knowledge_bases()
                 for kb, fid in files:
@@ -2766,8 +2936,10 @@ class Shepherd:
             except (Problem, openwebui.OpenWebUIError) as err:
                 log.warning("knowledge: couldn't take %s out of %s: %s", b.name, inst.name, err)
                 left.append(inst.name)
-        return f"Deleted {b.name}." + (f" It is still in {', '.join(left)} (it wasn't running or answering): remove "
-                                       "it there by hand." if left else "")
+                self.library.update(lambda d, iid=iid, files=files: d.setdefault("stale", []).extend(
+                    {"target": f"{iid}/{kb}", "fid": fid} for kb, fid in files))
+        return f"Deleted {b.name}." + (f" It is still in {', '.join(left)} (it wasn't running or answering): the next "
+                                       "send or sync takes it out, or remove it there by hand." if left else "")
 
     @staticmethod
     def _empty_documents(folder: Path, own: bool) -> int:

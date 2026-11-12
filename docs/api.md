@@ -214,6 +214,8 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 | `POST /api/v1/updates/branch` | `{"branch": "feature-x"}`: follow that branch (one listed in `branches` of `GET /api/v1/updates`) and rebuild (`202`). |
 | `GET /api/v1/updates/log` | The log of the last check or update. |
 | `POST /api/v1/updates/credentials` | `{"user": "...", "token": "github_pat_..."}` to save a GitHub token for a private repository, or `{"clear": true}`. |
+| `GET /api/v1/tailscale` | Tailscale on the host: `installed`, `state` (`Running`, `NeedsLogin`, `Stopped`...), `connected`, `name`, `ips`, `tailnet`, `https`, `https_available`, `login_url` (while logging in), `dashboard_urls`, `busy`, `run`, `message`, `service`, `wsl`. |
+| `POST /api/v1/tailscale/{action}` | `refresh`, `install`, `up` (log in or connect), `down`, `https-on`, `https-off` or `logout` (`202`). Needs dashboard updates; the host does the work. |
 | `GET /api/v1/changelog` | Releases, newest first: `version`, `date`, `items`, `running`, `new`. |
 
 ## Examples

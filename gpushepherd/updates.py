@@ -6,7 +6,7 @@ path inside and outside the container:
 
   status.json  written by update.sh after every check or update (see write_status there)
   request      written here: "check" or "update" (or "reboot" / "poweroff" for the top menu's
-               Power dialog); a systemd path unit installed by
+               Power dialog, or "tailscale" and an action for tailscale.py); a systemd path unit installed by
                `update.sh --enable-dashboard-updates` runs update.sh when it appears
   log.txt      the output of the last run started from the dashboard
   changelog.md CHANGELOG.md of the newest version on the remote, saved at every check
@@ -205,6 +205,8 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
     req = d / "request"
     try:
         st.pending = req.read_text().strip()
+        if st.pending.split("\n")[0] == "tailscale":    # tailscale.py's, not an update
+            st.pending = ""
         st.pending_stale = (now or time.time()) - req.stat().st_mtime > STALE_REQUEST
     except OSError:
         pass
@@ -214,7 +216,7 @@ def status(root: Path, now: float | None = None) -> UpdateStatus:
 def request(root: Path, action: str, arg: str = "") -> None:
     """Ask the host to check or update; update.sh deletes the file when it starts. `arg` is the
     second line (the branch for "branch")."""
-    if action not in ACTIONS + POWER + ("credentials", "branch"):
+    if action not in ACTIONS + POWER + ("credentials", "branch", "tailscale"):
         raise ValueError(f"unknown update action {action!r}")
     d = folder(root)
     d.mkdir(parents=True, exist_ok=True)

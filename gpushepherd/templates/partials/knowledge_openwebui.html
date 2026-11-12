@@ -1,0 +1,20 @@
+{# What is in one Open WebUI's knowledge: loaded into the Knowledge page by /knowledge/openwebui/<id> #}
+<div class="kn-openwebui">
+{% if err %}<p class="small muted" style="margin:0">{{ err }}</p>
+{% elif not k.bases %}<p class="small muted" style="margin:0">No knowledge bases in {{ k.name }} yet.</p>
+{% else %}
+<table class="table books-table">
+  <thead><tr><th>Knowledge base</th><th>Files</th><th>From GPU Shepherd</th></tr></thead>
+  {% for x in k.bases %}
+  <tr><td>{% if base and x.path %}<a class="ext" href="{{ base }}{{ x.path }}" target="_blank" rel="noopener">{{ x.name }}</a>{% else %}{{ x.name }}{% endif %}
+      {% if x.sync %} <span class="tag accent">sync</span>{% endif %}
+      {% if x.description and not x.ours %}<div class="small muted">{{ x.description[:120] }}</div>{% endif %}</td>
+    <td data-label="Files">{{ "?" if x.files is none else x.files }}</td>
+    <td data-label="From GPU Shepherd">{% if x.get("gone") %}<span class="tag warn">deleted in Open WebUI</span> <span class="small muted">send again to remake it</span>
+      {% elif x.ours %}{{ x.sent }} document{{ "s" if x.sent != 1 }}{% if x.missing %}, <span class="tag warn">{{ x.missing }} not sent yet</span>{% endif %}
+      {% else %}<span class="muted">made in Open WebUI</span>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% if k.stale %}<p class="small muted" style="margin:6px 0 0">{{ k.stale }} old cop{{ "ies" if k.stale != 1 else "y" }} of deleted or changed documents still in it: the next send or sync takes {{ "them" if k.stale != 1 else "it" }} out.</p>{% endif %}
+{% endif %}
+</div>

@@ -711,6 +711,44 @@ def cmd_power(args, c: Client) -> int:
     return 0
 
 
+def cmd_tailscale(args, c: Client) -> int:
+    a = args.action or "status"
+    if a != "status":
+        if a in ("down", "logout") and not (args.yes or ask("Take the server off your tailnet? Devices that reach it "
+                                                             "through Tailscale lose it until it connects again.")):
+            print("Nothing changed. Add -y to go ahead without asking.")
+            return 1
+        out(args, c.post(f"/api/v1/tailscale/{a}"))
+        if a not in ("install", "up"):
+            return 0
+        if args.json:
+            return 0
+        print("Waiting for the server (Ctrl+C stops waiting; the login goes on)…")
+        shown = ""
+        for _ in range(170):
+            time.sleep(2)
+            r = c.get("/api/v1/tailscale")
+            if r["login_url"] and r["login_url"] != shown:
+                shown = r["login_url"]
+                print("Log in to add the server to your tailnet: " + shown)
+            if not r["busy"]:
+                break
+    r = c.get("/api/v1/tailscale")
+
+    def show(r):
+        if not r["installed"]:
+            print("Tailscale: not installed" + ("" if r["service"] else f" (to set it up from here: {r['command']} --enable-dashboard-updates)"))
+            return
+        print(f"Tailscale: {r['state'] or 'unknown'}" + (f" as {r['name']}" if r["name"] else "")
+              + (f" ({', '.join(r['ips'])})" if r["ips"] else ""))
+        for u in r["dashboard_urls"]:
+            print("  dashboard: " + u)
+        if r["message"]:
+            print(r["message"])
+    out(args, r, show)
+    return 0
+
+
 def cmd_update(args, c: Client) -> int:
     a = args.action or "status"
     if a == "status":
@@ -816,9 +854,20 @@ def cmd_knowledge(args, c: Client) -> int:
         need(1, "upload FOLDER-OR-FILE...  (from any computer: --url http://server:8080 --token TOKEN)")
         upload_documents(c, [Path(i) for i in items])
     elif a == "send":
-        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep]")
+        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep] [--sync]")
         out(args, c.post("/api/v1/knowledge/send", {"instance": items[0], "name": args.name, "split": args.split,
-                                                "embeddings": args.embeddings}))
+                                                "embeddings": args.embeddings, "sync": True if args.sync else None}))
+    elif a == "sync-off":
+        out(args, c.call("DELETE", "/api/v1/knowledge/sync"))
+    elif a == "in":
+        need(1, "in open-webui  (what is in its knowledge bases)")
+
+        def bases(k):
+            table([[b["name"][:50], "" if b["files"] is None else b["files"],
+                    "" if b["sent"] is None else b["sent"], b["missing"] or "",
+                    "sync" if b["sync"] else "gone" if b.get("gone") else "yes" if b["ours"] else ""] for b in k["bases"]],
+                  ["KNOWLEDGE BASE", "FILES", "SENT", "NOT YET", "GPU SHEPHERD"])
+        out(args, c.get(f"/api/v1/knowledge/openwebui/{quote(items[0])}"), bases)
     elif a == "skill":
         need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd knowledge)")
         out(args, c.post(f"/api/v1/knowledge/{quote(items[0])}/skill", {"server": args.server}))
@@ -903,7 +952,7 @@ COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": c
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
             "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash,
-            "password": cmd_password, "update": cmd_update, "power": cmd_power, "changelog": cmd_changelog, "token": cmd_token}
+            "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
 
 
 def add_commands(sub) -> None:
@@ -1028,14 +1077,16 @@ def add_commands(sub) -> None:
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
     p = sub.add_parser("knowledge", aliases=["books"],
                        help="documents (ebooks, manuals, notes) for chat apps and agents: list, status, folder PATH, scan, "
-                            "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
+                            "upload FOLDER..., send OPEN-WEBUI [--sync], sync-off, in OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
                             "skill-delete SKILL, ocr, delete KEY|duplicates|unreadable, clear [documents converted skills apps]")
-    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "stop", "skill",
+    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "sync-off", "in", "stop", "skill",
                                                  "skill-show", "skill-install", "skill-delete", "ocr", "delete", "clear"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="clear: without asking")
     p.add_argument("--name", default="Documents", help="send: the knowledge base's name (default Documents)")
     p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the documents folder")
+    p.add_argument("--sync", action="store_true",
+                   help="send: keep that knowledge base in sync (every scan sends new documents, takes out deleted ones)")
     p.add_argument("--embeddings", choices=("server", "keep"),
                    help="send: use the model server's embeddings model in Open WebUI, or keep the one it has")
     p.add_argument("--server", default="", help="skill: the model server that writes it (default: the first)")
@@ -1050,6 +1101,9 @@ def add_commands(sub) -> None:
     p.add_argument("-y", "--yes", action="store_true", help="install without asking")
     p = sub.add_parser("power", help="status; restart (GPU Shepherd only), reboot or shutdown (the server)")
     p.add_argument("action", nargs="?", choices=("status", "restart", "reboot", "shutdown"))
+    p.add_argument("-y", "--yes", action="store_true", help="don't ask first")
+    p = sub.add_parser("tailscale", help="status; install, up, down, https-on, https-off, logout, refresh (reach it from your other devices)")
+    p.add_argument("action", nargs="?", choices=("status", "refresh", "install", "up", "down", "https-on", "https-off", "logout"))
     p.add_argument("-y", "--yes", action="store_true", help="don't ask first")
     p = sub.add_parser("changelog", help="what changed in each version")
     p.add_argument("--limit", type=int, default=5, help="how many versions (default 5)")

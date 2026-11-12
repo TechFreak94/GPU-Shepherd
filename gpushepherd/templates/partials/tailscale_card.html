@@ -1,0 +1,67 @@
+{# Settings > Remote access > Tailscale, refreshed in place. ts = tailscale.TailscaleStatus #}
+{% set via_ts = here and (here == ts.name or here in ts.ips) %}
+<div class="row"><strong>Tailscale</strong>
+  {% if ts.checked and not ts.wsl %}<span class="pill {{ 'on' if ts.connected }}">{% if not ts.installed %}Not installed{% elif ts.connected %}Connected{% elif ts.backend == "Stopped" %}Disconnected{% else %}Not logged in{% endif %}</span>{% endif %}</div>
+<p class="small" style="margin-top:6px"><a href="{{ ts_url }}" target="_blank" rel="noopener">Tailscale</a> (free for personal use) lets your
+  phone and laptop open the dashboard and every app from anywhere, without opening ports on your router. It runs on the server;
+  each device you use needs the Tailscale app, logged in to the same account.</p>
+
+{% if ts.image %}
+<p class="small">This install has no update service, so Tailscale can't be set up from here. Install it on the server
+  (<a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>) and run
+  <span class="mono">sudo tailscale up</span>; the apps then answer on the server's Tailscale name.</p>
+{% elif not ts.service %}
+<p class="small">To set it up from here, turn on dashboard updates: on the server run
+  <span class="mono">{{ ts.command }} --enable-dashboard-updates</span>. Or set it up while installing:
+  <span class="mono">sudo ./install.sh --tailscale</span>.</p>
+{% elif not ts.checked %}
+<p class="small busy-t">Asking the server…</p>
+{% elif ts.wsl %}
+<p class="small">GPU Shepherd runs in WSL2 here, so install <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">Tailscale
+  for Windows</a> instead. The apps then answer on the Windows machine's Tailscale name.</p>
+{% else %}
+{% if ts.auth_url and ts.busy %}
+<p class="small"><strong>Log in to add this server to your tailnet:</strong></p>
+<div class="actions" style="margin-top:0"><a class="btn primary" href="{{ ts.auth_url }}" target="_blank" rel="noopener">Log in to Tailscale ›</a></div>
+<p class="small muted">The link works for 5 minutes. This card updates by itself once the server has joined.</p>
+{% elif ts.busy %}<p class="small busy-t">{{ ts.message or "Waiting for the server…" }}</p>
+{% elif ts.stuck %}<p class="small bad">The last change has been quiet for 15 minutes; see the log.</p>
+{% elif ts.run == "failed" %}<p class="small bad">{{ ts.message }}</p>
+{% elif ts.message %}<p class="small">{{ ts.message }}</p>{% endif %}
+
+{% if ts.connected %}
+<p class="small" style="margin-bottom:4px">Open the dashboard from your other devices at:</p>
+<ul class="small" style="margin-top:0">
+  {% for url in ts.dashboard_urls %}<li><a class="mono" href="{{ url }}" target="_blank" rel="noopener">{{ url }}</a></li>{% endfor %}
+</ul>
+<p class="small muted">Opened that way, the dashboard's app buttons use the same name, so the apps work too.
+  {% if ts.tailnet %}Tailnet: <span class="mono">{{ ts.tailnet }}</span>.{% endif %}</p>
+{% if not ts.https and not ts.cert_domains %}
+<p class="small muted">For an HTTPS address (some browsers only allow a microphone or camera on HTTPS), turn on
+  <em>HTTPS certificates</em> in <a href="{{ ts_admin }}" target="_blank" rel="noopener">Tailscale's admin console (DNS)</a>, then refresh here.</p>
+{% endif %}
+{% endif %}
+
+<div class="actions">
+  {% if not ts.installed %}
+  <button class="primary" hx-post="/ui/tailscale/install" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %}
+          hx-confirm="Install Tailscale on the server? It adds Tailscale's package repository and installs it, then shows a link to log in.">Install Tailscale…</button>
+  {% elif not ts.connected %}
+  <button class="primary" hx-post="/ui/tailscale/up" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %}>{{ "Connect" if ts.backend == "Stopped" else "Log in" }}</button>
+  {% else %}
+  {% if ts.https %}
+  <button hx-post="/ui/tailscale/https-off" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %}
+          {% if via_ts and here == ts.name %}hx-confirm="Stop serving the dashboard over HTTPS? This page stops working if you opened it at its https address."{% endif %}>Turn HTTPS off</button>
+  {% elif ts.cert_domains %}
+  <button class="primary" hx-post="/ui/tailscale/https-on" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %}
+          title="Also serve the dashboard at https://{{ ts.name }}">Serve over HTTPS</button>
+  {% endif %}
+  <button hx-post="/ui/tailscale/down" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %}
+          hx-confirm="Disconnect the server from your tailnet? {{ 'You opened this page through Tailscale, so it stops working until you reconnect from the server or its network.' if via_ts else 'Your other devices can no longer reach it through Tailscale until you connect again.' }}">Disconnect</button>
+  <button hx-post="/ui/tailscale/logout" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %}
+          hx-confirm="Log the server out of Tailscale? It leaves your tailnet; logging in again adds it back. {{ 'You opened this page through Tailscale, so it stops working.' if via_ts else '' }}">Log out</button>
+  {% endif %}
+  <button hx-get="/ui/tailscale/card?refresh=1" hx-target="#tailscale" {% if ts.busy %}disabled{% endif %} title="Ask the server for Tailscale's state now">Refresh</button>
+  <button hx-get="/ui/tailscale/log" hx-target="#modal-body">Log</button>
+</div>
+{% endif %}

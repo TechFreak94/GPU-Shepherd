@@ -583,6 +583,22 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         """restart (GPU Shepherd only), reboot or shutdown (the server)."""
         return JSONResponse({"message": svc.power(action)}, status_code=202)
 
+    # ------------------------------------------------------------------ Tailscale (on the host)
+    @r.get("/api/v1/tailscale")
+    def get_tailscale():
+        """This machine's Tailscale state, as the host last reported it."""
+        ts = svc.tailscale_status()
+        return {"installed": ts.installed, "state": ts.backend, "connected": ts.connected, "name": ts.name,
+                "ips": ts.ips, "tailnet": ts.tailnet, "https": ts.https, "https_available": bool(ts.cert_domains),
+                "login_url": ts.auth_url, "dashboard_urls": ts.dashboard_urls, "busy": ts.busy, "run": ts.run,
+                "message": ts.message, "checked_at": ts.at, "service": ts.service, "wsl": ts.wsl, "command": ts.command}
+
+    @r.post("/api/v1/tailscale/{action}")
+    @handle
+    def tailscale_request(request: Request, action: str):
+        """refresh, install, up (log in or connect), down, https-on, https-off or logout; the host does it."""
+        return JSONResponse({"message": svc.request_tailscale(action)}, status_code=202)
+
     @r.post("/api/v1/updates/credentials")
     @handle
     def update_credentials(request: Request):
@@ -698,11 +714,27 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def knowledge_send(request: Request):
         """Put the ready documents into an Open WebUI knowledge base: {"instance", "name", "split",
-        "embeddings": "server" | "keep"}."""
+        "embeddings": "server" | "keep", "sync": true | false}. sync true keeps it in sync from now on:
+        every scan sends new documents and takes out the ones gone from the documents folder."""
         d = body(request)
+        sync = d.get("sync")
         return JSONResponse({"message": svc.send_documents(str(d.get("instance", "")), str(d.get("name", "") or "Documents"),
-                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")))},
+                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")),
+                                                        None if sync is None else bool(sync))},
                             status_code=202)
+
+    @r.delete("/api/v1/knowledge/sync")
+    @handle
+    def knowledge_sync_stop(request: Request):
+        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
+        return {"message": svc.stop_sync()}
+
+    @r.get("/api/v1/knowledge/openwebui/{iid}")
+    @handle
+    def knowledge_openwebui(request: Request, iid: str):
+        """What is in an Open WebUI's knowledge: {"bases": [{"id", "name", "files", "ours", "sent", "missing",
+        "sync", "path"}], "sync", "stale"}. "path" is the knowledge base's page in Open WebUI."""
+        return svc.openwebui_knowledge(iid)
 
     @r.post("/api/v1/knowledge/{key}/skill")
     @handle

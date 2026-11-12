@@ -57,10 +57,11 @@
       <div><label for="send-to">Open WebUI</label>
         <select id="send-to" name="instance">{% for w in b.webuis %}<option value="{{ w.id }}">{{ w.name }}{% if not w.running %} (stopped){% endif %}</option>{% endfor %}</select></div>
       <div><label for="send-name">Knowledge base</label>
-        <input id="send-name" name="name" value="{{ b.sends[-1].name if b.sends else 'Documents' }}" autocomplete="off">
+        <input id="send-name" name="name" value="{{ b.sync.name if b.sync else b.sends[-1].name if b.sends else 'Documents' }}" autocomplete="off">
         <div class="hint">Made if it isn't there. Documents already in it are skipped, so sending again only adds new documents.</div></div>
     </div>
-    <label class="small"><input type="checkbox" name="split" value="1"> One knowledge base per folder (smaller ones by topic find passages better)</label>
+    <label class="small"><input type="checkbox" name="split" value="1"{% if b.sync and b.sync.split %} checked{% endif %}> One knowledge base per folder (smaller ones by topic find passages better)</label><br>
+    <label class="small"><input type="checkbox" name="sync" value="1"{% if b.sync or not b.sends %} checked{% endif %}> Keep it in sync: after every scan, new documents go in and documents deleted or changed in the documents folder come out</label>
     {% if b.servers|selectattr("embed")|list %}
     <fieldset class="small" style="border:0;padding:0;margin:8px 0 0">
       <label><input type="radio" name="embeddings" value="server" checked> Index with the model server's embeddings model (on this machine, fast)</label><br>
@@ -71,6 +72,13 @@
     <div class="actions"><button type="submit"{% if not b.counts.get("ready") %} disabled title="Scan the documents folder first"{% endif %}>Send {{ b.counts.get("ready", 0) }} document{{ "s" if b.counts.get("ready", 0) != 1 }}</button></div>
   </form>
   <p class="small muted" style="margin-bottom:0">A big library takes hours to index (start it overnight); it carries on where it stopped. Then in a chat type # and pick the knowledge base, or attach it to a model in Workspace, Models.</p>
+  {% if b.sync %}{% set sw = b.webuis|selectattr("id", "equalto", b.sync.instance)|first %}
+  <div class="row small" style="margin-top:8px"><span><span class="tag accent">Sync on</span> {{ b.sync.name }}{% if b.sync.split %} (one per folder){% endif %} in {{ sw.name if sw else b.sync.instance }}{% if sw and not sw.running %}: start it, then scan to catch up{% endif %}</span>
+    <button type="button" class="small" hx-post="/knowledge/sync/stop">Stop syncing</button></div>{% endif %}
+  {% for w in b.webuis if w.running %}
+  <h4 style="margin:16px 0 4px">In {{ w.name }}</h4>
+  <div hx-get="/knowledge/openwebui/{{ w.id }}" hx-trigger="load" hx-swap="outerHTML"><p class="small muted" style="margin:0">Looking at its knowledge…</p></div>
+  {% endfor %}
   {% else %}<p class="muted small" style="margin:0">Install Open WebUI from the <a href="/apps">App Center</a> to chat with your documents.</p>{% endif %}
 </div>
 

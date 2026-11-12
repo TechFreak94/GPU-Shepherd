@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, tailscale, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      gpu_label, gpu_vendor,
@@ -1173,13 +1173,46 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(err)
         return toast(unlock_card_page(request), msg)
 
+    # ------------------------------------------------------------------ Tailscale (on the host, through update.sh)
+    def tailscale_card_page(request: Request, refresh: bool = False) -> Response:
+        return page(request, "partials/tailscale_card.html", ts=svc.tailscale_status(refresh), ts_url=tailscale.URL,
+                    ts_admin=tailscale.ADMIN_DNS, here=request.url.hostname or "")
+
+    @app.get("/ui/tailscale/card", response_class=HTMLResponse)
+    def tailscale_card(request: Request):
+        if request.query_params.get("refresh") == "1":         # the Refresh button: ask the host now
+            try:
+                svc.request_tailscale("refresh")
+            except Problem as err:
+                return problem(err)
+        return tailscale_card_page(request)
+
+    @app.get("/ui/tailscale/log", response_class=HTMLResponse)
+    def tailscale_log(request: Request):
+        ts = svc.tailscale_status()
+        return page(request, "partials/logs.html", title="Tailscale log", refresh="/ui/tailscale/log" if ts.busy else "",
+                    text=tailscale.log_text(store.root) or "Nothing yet: the server writes here once a change starts.")
+
+    @app.post("/ui/tailscale/{action}")
+    @threaded
+    def tailscale_request(request: Request, action: str):
+        if action not in tailscale.ACTIONS:
+            return PlainTextResponse("unknown action", status_code=400)
+        try:
+            msg = svc.request_tailscale(action)
+        except Problem as err:
+            return problem(err)
+        return toast(tailscale_card_page(request), msg)
+
     # ------------------------------------------------------------------ settings
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
                     error="", u=updates.status(store.root), api_token=auth.api_token(store),
-                    image_checked=svc.image_checked(), hf_checked=svc.hf_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
+                    image_checked=svc.image_checked(), hf_checked=svc.hf_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL,
+                    ts=svc.tailscale_status(refresh=True), ts_url=tailscale.URL, ts_admin=tailscale.ADMIN_DNS,
+                    here=request.url.hostname or "")
 
     @app.post("/settings/password")
     @threaded
@@ -1280,7 +1313,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         raw = request.state.form
         emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
         return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
-                                                 bool(raw.get("split")), emb))
+                                                 bool(raw.get("split")), emb, True if raw.get("sync") else None))
+
+    @app.post("/knowledge/sync/stop")
+    def knowledge_sync_stop():
+        return knowledge_done(svc.stop_sync)
+
+    @app.get("/knowledge/openwebui/{iid}", response_class=HTMLResponse)
+    def knowledge_openwebui(request: Request, iid: str):
+        """What is in an Open WebUI's knowledge (loaded into the Knowledge page after it shows: signing in takes a moment)."""
+        try:
+            k, err = svc.openwebui_knowledge(iid), ""
+        except Problem as e:
+            k, err = None, e.msg
+        inst = svc.store.instances()[0].get(iid)
+        base = base_url(request, inst.open_url_port, "/").rstrip("/") if inst and inst.open_url_port else ""
+        return templates.TemplateResponse(request, "partials/knowledge_openwebui.html", {"k": k, "err": err, "base": base})
 
     @app.post("/knowledge/ocr")
     def knowledge_ocr():
