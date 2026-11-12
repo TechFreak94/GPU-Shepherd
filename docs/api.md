@@ -160,6 +160,9 @@ Deleting an instance or cleaning up a file moves it to the trash first, so it ca
 | `POST /api/v1/storage/orphans` | Remove containers left without an instance. Their data folders are not touched. |
 | `POST /api/v1/storage/files` | `{"paths": [...]}`: move model files from `files` to the trash. |
 | `POST /api/v1/storage/leftovers` | `{"name": "..."}`: move an unused app data folder from `leftover_folders` to the trash. |
+| `GET /api/v1/pictures` | Each app with ComfyUI picture folders: `folders` (`kind` `output` = made, `input` = uploaded), with `count`, `size` and `path`. |
+| `GET /api/v1/pictures/{id}/{kind}?page=1` | One page of that folder's `pictures` (`name`, `size`, `modified`, `age_days`, `video`), newest first. |
+| `POST /api/v1/pictures/{id}/{kind}/trash` | `{"names": [...]}` or `{"older_than": DAYS}` (0 = all): move pictures to the trash. |
 | `GET /api/v1/storage/drives` | The machine's `drives` (device, label, size, filesystem, where mounted, whether it can be mounted and why not), an `error` if they can't be looked at, and `auto_mount`. |
 | `POST /api/v1/storage/drives/mount` | `{"device": "/dev/sdb1"}`: mount a drive that holds data (never formatted or written to). |
 | `PUT /api/v1/storage/drives/auto` | `{"enabled": true}`: mount newly attached drives by itself, or only when asked. |

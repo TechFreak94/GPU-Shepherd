@@ -24,6 +24,7 @@ modules a task touches: each one starts with a docstring that says what it owns.
 | `gpu.py`, `host.py`, `auth.py` | GPUs (nvidia-smi; AMD from /sys, numbered from 100), /proc CPU and RAM, passwords |
 | `gpu_unlock.py` | Experimental tensor unlock: talks to `gpu-unlock.sh` on the host (Settings > Experimental) |
 | `tailscale.py` | Remote access: Tailscale on the host, set up through `update.sh`'s service (Settings > Remote access) |
+| `pictures.py` | ComfyUI's made and uploaded pictures (Storage > Pictures) |
 | `logins.py`, `credits.py` | Apps' accounts and password resets; open-source credits (keep `ACKNOWLEDGEMENTS.md` in step) |
 | `presets/starter/` | The default example setup offered on first run |
 

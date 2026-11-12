@@ -377,6 +377,11 @@ Unused app images and containers without an instance are removed at once; images
 an app needs them. The same things are in the `gpu-shepherd` [commands](cli.md#commands) and the
 [API](api.md#storage-and-trash).
 
+**Pictures** (Storage › *Look through and clear out*) shows what each ComfyUI made (its `output`
+folder, where pictures from Open WebUI and SillyTavern land too) and what it was given to edit (its
+`input` folder), newest first. Open or download one, or move the picked ones, or all older than a
+number of days, to the trash. Deleting a chat in Open WebUI doesn't remove its pictures from ComfyUI.
+
 ### App image updates
 
 Apps are installed from image tags that move with each release (`open-webui:main`, `mongo:8.0`).

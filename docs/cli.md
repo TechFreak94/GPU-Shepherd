@@ -207,6 +207,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `storage` | Free space per disk, folder sizes, app images and what looks unused. `storage remove-images` and `remove-orphans` clean up; `storage trash-files PATH...` and `trash-folder NAME` move unused model files or an app data folder to the trash. | Storage |
 | `storage drives`, `storage mount DEVICE`, `storage browse [PATH]` | The machine's drives, mount one that holds data, list the folders in a place. | Storage › Other disks |
 | `storage move PATH NEW-PLACE`, `storage moves`, `storage move-home PATH`, `storage move-back ID`, `storage delete-old ID` | [Move a folder to another disk](advanced.md#other-disks) (asks first; `-y` doesn't, `--no-wait` returns at once), list moves, move a moved folder back to where it first was (`move-home`, works after the old copy is gone), point the apps back at the old copy, delete the old copy. | Storage › Move to another disk |
+| `pictures`, `pictures clean APP --older-than DAYS [--folder input]` | ComfyUI's pictures per app and folder; move the ones older than DAYS (0 = all) to the trash (`-y` doesn't ask). | Storage › Pictures |
 | `trash`, `trash restore ID`, `trash delete ID`, `trash empty` | What is in the trash, put one back, delete one for good, empty it (`-y` doesn't ask). | Storage › Trash |
 | `jobs` | Recent changes and how they ended. | Dashboard › last change |
 | `jobs show N` | Follow a change's log. | Log |

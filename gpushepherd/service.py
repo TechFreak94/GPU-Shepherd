@@ -26,7 +26,7 @@ import httpx
 from pydantic import ValidationError
 
 from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
-               instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
+               instance_templates as tpl, logins, model_library, moves, pictures as pics, storage, tuning, updates)
 from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
@@ -873,6 +873,82 @@ class Shepherd:
         for n in names:
             self.backend.remove(n)
         return f"Removed {len(names)} container(s) left without an instance." if names else "Nothing to remove."
+
+    # ------------------------------------------------------------------ ComfyUI's pictures (pictures.py)
+    def pictures(self) -> list[dict]:
+        """Each app with ComfyUI picture folders, and how many pictures each holds and their size."""
+        instances, _ = self.store.instances()
+        out = []
+        for iid, inst in sorted(instances.items(), key=lambda kv: kv[1].name.lower()):
+            found = pics.folders(inst)
+            if not found:
+                continue
+            rows = []
+            for kind, label in pics.FOLDERS.items():
+                if kind not in found:
+                    continue
+                visible = Path(found[kind]).is_dir()
+                items = pics.scan(found[kind]) if visible else []
+                rows.append({"kind": kind, "label": label, "path": found[kind], "visible": visible,
+                             "count": len(items), "size": sum(p.size for p in items)})
+            out.append({"id": iid, "name": inst.name, "folders": rows})
+        return out
+
+    def _picture_folder(self, iid: str, kind: str) -> tuple[Instance, str]:
+        instances, _ = self.store.instances()
+        inst = instances.get(iid)
+        folder = pics.folders(inst).get(kind) if inst else None
+        if not folder:
+            raise Problem(f"{inst.name if inst else iid} has no ComfyUI {kind} folder" if inst else f"No app called '{iid}'",
+                          status=404)
+        return inst, folder
+
+    def picture_page(self, iid: str, kind: str, page: int = 1, per_page: int = pics.PER_PAGE) -> dict:
+        """One page of an app's pictures in one folder, newest first."""
+        inst, folder = self._picture_folder(iid, kind)
+        items = pics.scan(folder) if Path(folder).is_dir() else []
+        pages = max(1, -(-len(items) // per_page))
+        page = min(max(1, page), pages)
+        shown = items[(page - 1) * per_page: page * per_page]
+        return {"id": iid, "name": inst.name, "kind": kind, "label": pics.FOLDERS[kind], "path": folder,
+                "visible": Path(folder).is_dir(), "count": len(items), "size": sum(p.size for p in items),
+                "page": page, "pages": pages,
+                "pictures": [asdict(p) | {"video": p.video, "age_days": p.age_days} for p in shown]}
+
+    def picture_file(self, iid: str, kind: str, name: str) -> Path:
+        """A picture's file, to show or download."""
+        _, folder = self._picture_folder(iid, kind)
+        p = pics.path(folder, name)
+        if not p:
+            raise Problem(f"No picture called '{name}'", status=404)
+        return p
+
+    @checked
+    def trash_pictures(self, iid: str, kind: str, names: list[str] | None = None, older_than: int | None = None) -> str:
+        """Move pictures to the trash: the ones named, or all older than a number of days (0 = all)."""
+        inst, folder = self._picture_folder(iid, kind)
+        if names:
+            paths = [pics.path(folder, n) for n in names]
+            missing = [n for n, p in zip(names, paths) if not p]
+            if missing:
+                raise Problem(f"No picture called '{missing[0]}'", status=404)
+        elif older_than is not None and older_than >= 0:
+            cutoff = time.time() - older_than * pics.DAY
+            paths = [Path(folder) / p.name for p in pics.scan(folder) if p.modified < cutoff] if Path(folder).is_dir() else []
+        else:
+            raise Problem("Pick pictures, or a number of days.")
+        if not paths:
+            return "No pictures to move."
+        size = sum(p.stat().st_size for p in paths)
+        label = pics.FOLDERS[kind].lower()
+        title = (f"{paths[0].name} from {inst.name}" if len(paths) == 1
+                 else f"{len(paths)} {label} pictures from {inst.name}")
+        try:
+            self.trash.put_files(title, folder, [str(p) for p in paths])
+        except (OSError, BackendError) as err:
+            raise Problem(f"Could not move the pictures: {err}", status=500) from err
+        return (f"Moved {len(paths)} picture(s) ({gb(size)}) to the trash. "
+                "The space is freed when the trash is emptied.")
 
     # ------------------------------------------------------------------ App Center
     def machine(self) -> tpl.Machine:

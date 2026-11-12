@@ -687,6 +687,22 @@ def cmd_trash(args, c: Client) -> int:
     return 0
 
 
+def cmd_pictures(args, c: Client) -> int:
+    if not args.action or args.action == "list":
+        out(args, c.get("/api/v1/pictures"), lambda rows: table(
+            [[a["id"], f["kind"], f["count"] if f["visible"] else "not visible", gb(f["size"]), f["path"]]
+             for a in rows for f in a["folders"]], ["APP", "FOLDER", "PICTURES", "SIZE", "PATH"]))
+        return 0
+    if not args.app or args.older_than is None:
+        raise Failed("which app, and how old? e.g. gpu-shepherd pictures clean comfyui --older-than 30")
+    days = "every picture" if args.older_than == 0 else f"pictures older than {args.older_than} days"
+    if not (args.yes or ask(f"Move {days} in {args.app}'s {args.folder} folder to the trash?")):
+        print("Nothing moved. Add -y to move them without asking.")
+        return 1
+    out(args, c.post(f"/api/v1/pictures/{args.app}/{args.folder}/trash", {"older_than": args.older_than}))
+    return 0
+
+
 def cmd_password(args, c: Client) -> int:
     current = getpass.getpass("Current password: ")
     new = getpass.getpass("New password (10+ characters): ")
@@ -956,7 +972,7 @@ def cmd_token(args, c: Client | None) -> int:
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
-            "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash,
+            "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash, "pictures": cmd_pictures,
             "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
 
 
@@ -1100,6 +1116,12 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("list", "restore", "delete", "empty"))
     p.add_argument("id", nargs="?")
     p.add_argument("-y", "--yes", action="store_true", help="empty without asking")
+    p = sub.add_parser("pictures", help="ComfyUI's pictures: list, clean APP --older-than DAYS [--folder input]")
+    p.add_argument("action", nargs="?", choices=("list", "clean"))
+    p.add_argument("app", nargs="?")
+    p.add_argument("--folder", choices=("output", "input"), default="output", help="output = made, input = uploaded")
+    p.add_argument("--older-than", type=int, help="days (0 = every picture)")
+    p.add_argument("-y", "--yes", action="store_true", help="move them without asking")
     sub.add_parser("password", help="change the admin password (asks for it)")
     p = sub.add_parser("update", help="status, check, install, log, branch [NAME], set-token USER, clear-token")
     p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "branch", "set-token", "clear-token"))
