@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
                instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
-from . import gpu_unlock, hf_models
+from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
 from .connectors import instance_url, llamaswap, openwebui
@@ -2135,6 +2135,51 @@ class Shepherd:
                 "set": (f"Saving: {len(cards or [])} card(s) unlocked from the next boot. Reboot to apply it." if cards
                         else "Saving: no card unlocked from the next boot. Reboot to put the cards back to normal."),
                 "uninstall": "Removing gpu-unlock. Reboot afterwards to put the cards back to normal."}[action]
+
+    # ------------------------------------------------------------------ Tailscale (on the host, through update.sh)
+    def tailscale_status(self, refresh: bool = False) -> tailscale.TailscaleStatus:
+        """This machine's Tailscale state as the host last reported it; with refresh, ask the host
+        for a new report when the last one is missing or old (and nothing else is waiting)."""
+        st = tailscale.status(self.store.root)
+        if refresh and tailscale.needs_refresh(st) and not updates.status(self.store.root).pending:
+            tailscale.request(self.store.root, "refresh")
+            st = tailscale.status(self.store.root)
+        return st
+
+    def request_tailscale(self, action: str) -> str:
+        """Install Tailscale and log this machine in to a tailnet, serve the dashboard over HTTPS on
+        its Tailscale name, disconnect, or log out. update.sh's service on the host does the work."""
+        if action not in tailscale.ACTIONS:
+            raise Problem("unknown action")
+        st = tailscale.status(self.store.root)
+        if st.image:
+            raise Problem("This install has no update service, so Tailscale can't be set up from here. Install Tailscale "
+                          "on the server (https://tailscale.com/download) and run: sudo tailscale up", "warn", 409)
+        if not st.service:
+            raise Problem(f"Setting up Tailscale from here needs dashboard updates. On the server run: "
+                          f"{st.command} --enable-dashboard-updates (or install it with: install.sh --tailscale)", "warn", 409)
+        if st.wsl and action in ("install", "up"):
+            raise Problem("In WSL2, install Tailscale for Windows instead: the apps answer on the Windows machine's "
+                          "Tailscale address.", "warn", 409)
+        if st.busy:
+            raise Problem("Tailscale is already being changed; wait for it to finish.", "warn", 409)
+        u = updates.status(self.store.root)
+        if u.busy:
+            raise Problem("An update or check is running; wait for it to finish.", "warn", 409)
+        if action != "install" and action != "refresh" and not st.installed:
+            raise Problem("Install Tailscale first.", "warn", 409)
+        if action == "https-on" and st.checked and st.connected and not st.cert_domains:
+            raise Problem("Turn on HTTPS certificates in Tailscale's admin console (DNS page) first, then try again.",
+                          "warn", 409)
+        tailscale.request(self.store.root, action)
+        log.info("tailscale: %s requested", action)
+        return {"refresh": "Asking the server…",
+                "install": "Installing Tailscale; a login link appears here in a minute.",
+                "up": "Connecting; if a login is needed, a link appears here.",
+                "down": "Disconnecting from your tailnet…",
+                "https-on": "Serving the dashboard over HTTPS…",
+                "https-off": "Turning HTTPS off…",
+                "logout": "Logging out of Tailscale…"}[action]
 
     # ------------------------------------------------------------------ knowledge
     @property

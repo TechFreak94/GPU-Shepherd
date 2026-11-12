@@ -47,7 +47,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Runs GGUF models inside the Llama Swap |
 | [Python](https://www.python.org) | PSF License | GPU Shepherd's own image is built on python:3.13-slim (Debian), whose packages keep their own licenses |
 | [curl](https://curl.se) | curl license (MIT-style) | Downloads models, in the curlimages/curl container |
-| [Tailscale](https://tailscale.com) | BSD-3-Clause (client) | Optional remote access, only if you choose it in install.sh |
+| [Tailscale](https://tailscale.com) | BSD-3-Clause (client) | Optional remote access, only if you choose it in install.sh or Settings |
 | [gpu-unlock](https://github.com/Zagitta/gpu-unlock) | GPL-2.0-only (NVIDIA firmware under NVIDIA's terms) | Experimental full-speed tensor math on GeForce cards, built on your server by gpu-unlock.sh only if you install it in Settings |
 | [Distil-Whisper large-v3 (faster-whisper build)](https://huggingface.co/Systran/faster-distil-whisper-large-v3) | MIT | Speaches' default speech-to-text model |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | Apache-2.0 | Speaches' default text-to-speech model (ONNX build by speaches-ai) |

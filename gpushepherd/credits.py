@@ -52,7 +52,7 @@ WORKS_WITH: tuple[Credit, ...] = (
     Credit("curl", "https://curl.se", "curl license (MIT-style)",
            "Downloads models, in the curlimages/curl container"),
     Credit("Tailscale", "https://tailscale.com", "BSD-3-Clause (client)",
-           "Optional remote access, only if you choose it in install.sh"),
+           "Optional remote access, only if you choose it in install.sh or Settings"),
     Credit("gpu-unlock", "https://github.com/Zagitta/gpu-unlock", "GPL-2.0-only (NVIDIA firmware under NVIDIA's terms)",
            "Experimental full-speed tensor math on GeForce cards, built on your server by gpu-unlock.sh only if you "
            "install it in Settings"),

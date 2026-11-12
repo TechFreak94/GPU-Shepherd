@@ -583,6 +583,22 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         """restart (GPU Shepherd only), reboot or shutdown (the server)."""
         return JSONResponse({"message": svc.power(action)}, status_code=202)
 
+    # ------------------------------------------------------------------ Tailscale (on the host)
+    @r.get("/api/v1/tailscale")
+    def get_tailscale():
+        """This machine's Tailscale state, as the host last reported it."""
+        ts = svc.tailscale_status()
+        return {"installed": ts.installed, "state": ts.backend, "connected": ts.connected, "name": ts.name,
+                "ips": ts.ips, "tailnet": ts.tailnet, "https": ts.https, "https_available": bool(ts.cert_domains),
+                "login_url": ts.auth_url, "dashboard_urls": ts.dashboard_urls, "busy": ts.busy, "run": ts.run,
+                "message": ts.message, "checked_at": ts.at, "service": ts.service, "wsl": ts.wsl, "command": ts.command}
+
+    @r.post("/api/v1/tailscale/{action}")
+    @handle
+    def tailscale_request(request: Request, action: str):
+        """refresh, install, up (log in or connect), down, https-on, https-off or logout; the host does it."""
+        return JSONResponse({"message": svc.request_tailscale(action)}, status_code=202)
+
     @r.post("/api/v1/updates/credentials")
     @handle
     def update_credentials(request: Request):

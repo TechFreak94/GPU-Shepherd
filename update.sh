@@ -438,12 +438,102 @@ elif [ "$SERVICE" = disable ]; then
     exit 0
 fi
 
+# --------------------------------------------------------------------------- Tailscale
+
+# Settings > Remote access asks for these through the same request file (gpushepherd/tailscale.py
+# reads the answers). Tailscale runs here on the host, so the dashboard and apps answer on this
+# machine's Tailscale name. Everything goes to $TS_DIR/log.txt; the update log is left alone.
+TS_DIR="$DATA_DIR/tailscale"
+ts_backend() { tailscale status --json 2>/dev/null | tr -d ' \n' | sed -n 's/.*"BackendState":"\([A-Za-z]*\)".*/\1/p'; }
+ts_write() {   # ts_write idle|busy|failed "message": state.json plus Tailscale's own status and serve config
+    mkdir -p "$TS_DIR"
+    local installed=false wsl=false
+    grep -qi microsoft /proc/version 2>/dev/null && wsl=true
+    if have tailscale; then
+        installed=true
+        tailscale status --json >"$TS_DIR/status.json.tmp" 2>/dev/null || true
+        tailscale serve status --json >"$TS_DIR/serve.json.tmp" 2>/dev/null || true
+        mv -f "$TS_DIR/status.json.tmp" "$TS_DIR/status.json"
+        mv -f "$TS_DIR/serve.json.tmp" "$TS_DIR/serve.json"
+    else
+        rm -f "$TS_DIR/status.json" "$TS_DIR/serve.json"
+    fi
+    printf '{"installed":%s,"wsl":%s,"port":%s,"state":"%s","message":"%s","at":"%s"}\n' \
+        "$installed" "$wsl" "${PORT//[^0-9]/}" "$1" "${2//\"/}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$TS_DIR/state.json.tmp"
+    mv -f "$TS_DIR/state.json.tmp" "$TS_DIR/state.json"
+}
+ts_fail() { echo "$1"; ts_write failed "$1"; exit 0; }
+ts_request() {   # ts_request refresh|install|up|down|https-on|https-off|logout
+    mkdir -p "$TS_DIR"
+    if [ "${1:-refresh}" = refresh ]; then exec >/dev/null 2>&1; else exec >"$TS_DIR/log.txt" 2>&1; fi   # keep the last change's log
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Tailscale, from the dashboard: ${1:-refresh}"
+    local wsl=0; grep -qi microsoft /proc/version 2>/dev/null && wsl=1
+    case "${1:-refresh}" in
+        refresh) ts_write idle "" ;;
+        install|up)
+            [ "$wsl" -eq 0 ] || ts_fail "In WSL2, install Tailscale for Windows instead: the apps are reached on the Windows machine's Tailscale address."
+            if ! have tailscale; then
+                [ "$1" = install ] || ts_fail "Tailscale isn't installed."
+                ts_write busy "Installing Tailscale"
+                local script; script=$(mktemp)
+                # Tailscale's own script adds its package repository for this distro (apt, dnf, pacman...).
+                if ! curl -fsSL https://tailscale.com/install.sh -o "$script" || ! sh "$script"; then
+                    rm -f "$script"; ts_fail "Tailscale could not be installed; see the log."
+                fi
+                rm -f "$script"
+            fi
+            systemctl enable --now tailscaled || true
+            sleep 2
+            case "$(ts_backend)" in
+                Running) ts_write idle "Connected."; return 0 ;;
+                Stopped) ts_write busy "Connecting"
+                         tailscale up || ts_fail "tailscale up failed; see the log."
+                         ts_write idle "Connected."; return 0 ;;
+            esac
+            # Log in: tailscale login waits until someone opens the link it makes (shown on the card
+            # from status.json's AuthURL), so keep the status fresh while it waits, for up to 5 minutes.
+            ts_write busy "Waiting for you to log in"
+            timeout 300 tailscale login &
+            local pid=$! i
+            for i in $(seq 1 150); do
+                sleep 2
+                kill -0 "$pid" 2>/dev/null || break
+                [ "$(ts_backend)" = Running ] && break
+                [ $((i % 2)) -eq 0 ] && ts_write busy "Waiting for you to log in"
+            done
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            [ "$(ts_backend)" = Running ] || ts_fail "Nobody logged in within 5 minutes. Try again to get a new link."
+            ts_write idle "Connected." ;;
+        down)   have tailscale || ts_fail "Tailscale isn't installed."
+                tailscale down || ts_fail "tailscale down failed; see the log."
+                ts_write idle "Disconnected: this machine is still in your tailnet but can't be reached through it." ;;
+        logout) have tailscale || ts_fail "Tailscale isn't installed."
+                tailscale logout || ts_fail "tailscale logout failed; see the log."
+                ts_write idle "Logged out: this machine left your tailnet." ;;
+        https-on)
+            have tailscale || ts_fail "Tailscale isn't installed."
+            local name
+            name=$(tailscale status --json 2>/dev/null | tr -d ' \n' | sed -n 's/.*"CertDomains":\["\([^"]*\)".*/\1/p')
+            [ -n "$name" ] || ts_fail "Turn on HTTPS certificates in Tailscale's admin console (DNS page) first."
+            timeout 60 tailscale serve --bg --https=443 "http://127.0.0.1:${PORT//[^0-9]/}" </dev/null \
+                || ts_fail "tailscale serve failed; see the log."
+            ts_write idle "The dashboard is at https://$name" ;;
+        https-off)
+            have tailscale || ts_fail "Tailscale isn't installed."
+            timeout 60 tailscale serve --https=443 off </dev/null || ts_fail "tailscale serve failed; see the log."
+            ts_write idle "HTTPS is off." ;;
+        *) ts_fail "unknown Tailscale request" ;;
+    esac
+}
+
 # A request from the dashboard: "check" or "update". Taken (deleted) first, so systemd doesn't
 # start us again for the same request; the output goes to a log the dashboard shows.
 if [ "$FROM_DASHBOARD" -eq 1 ]; then
     action=$(head -n 1 "$REQUEST" 2>/dev/null | head -c 16 | tr -dc "[:lower:]" || true)
     request_arg=$(sed -n 2p "$REQUEST" 2>/dev/null | head -c 100 | tr -dc 'A-Za-z0-9._/-' || true)
     rm -f "$REQUEST"
+    if [ "$action" = tailscale ]; then ts_request "$request_arg"; exit 0; fi
     exec >"$STATE_DIR/log.txt" 2>&1
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) requested from the dashboard: ${action:-nothing}"
     case "$action" in

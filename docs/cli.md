@@ -219,6 +219,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `update log` | The log of the last check or update. | Update log |
 | `update branch [NAME]` | Without a name: the branch being followed and the others on the remote. With one: switch to it and rebuild (asks first; `-y` doesn't). Needs dashboard updates. | Settings › Updates › Follow branch |
 | `update set-token USER`, `update clear-token` | Save or forget a GitHub token for a private repository (asks for it, or reads it from standard input). | Settings › Private repository |
+| `tailscale [ACTION]` | Without an action: this machine's Tailscale state and the addresses to open the dashboard at. `install`, `up` (prints the login link), `down`, `https-on`, `https-off`, `logout`, `refresh`. Needs dashboard updates. | Settings › Remote access |
 | `changelog` | What changed in each version (`--limit N`, default 5). | Changelog |
 
 Exit status: `0` when it worked, `1` when it didn't (the reason is printed), `130` when you pressed

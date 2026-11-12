@@ -48,6 +48,11 @@
     hx-confirm="Make a new API token? Scripts using the old one stop working until you give them the new one.">Make a new token</button></div>
 </div>
 
+<h3>Remote access</h3>
+<div class="card" id="tailscale" hx-get="/ui/tailscale/card" hx-trigger="every 5s">
+  {% include "partials/tailscale_card.html" %}
+</div>
+
 <h3>Storage</h3>
 <div class="card">
   <p class="small" style="margin-top:0">See how much room your disks, models and app images take, clean up what you no longer use,
