@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from . import instance_templates as tpl, model_library
+from .connectors import comfyui
 from .config import Catalog, CatalogModel, Instance
 
 EMBED_MODEL = "qwen3-embedding-0.6b"           # the embeddings model a Llama Swap server without one is offered
@@ -90,10 +91,24 @@ def _images(inst: Instance, m: tpl.Machine) -> Update | None:
         comfy = comfys[0] if comfys and inst.env.get("ENABLE_IMAGE_GENERATION", "").lower() != "false" else ""
     if not comfy:
         return None
-    missing = {k: v for k, v in tpl.comfyui_env(comfy, m).items() if k not in inst.env}
+    want = tpl.comfyui_env(comfy, m)
+    name = m.instances[comfy].name
+    if comfy in m.comfy_workflows:        # the user's own workflows: they replace what was set before
+        change = {k: v for k, v in want.items() if inst.env.get(k) != v and k != "COMFYUI_BASE_URL"}
+        if not change:
+            return None
+        own = m.comfy_workflows[comfy]
+        lines = [f"Makes pictures with your own workflow in {name}'s user/{comfyui.CUSTOM_DIR}/generate.json"
+                 if "generate" in own else "Makes pictures with GPU Shepherd's checkpoint workflow"]
+        lines.append("Edits them with your own edit.json" if "edit" in own else
+                     "Turns editing pictures off (there is no edit.json beside it)")
+        if change.get("IMAGE_GENERATION_MODEL"):
+            lines.append(f"Model: {change['IMAGE_GENERATION_MODEL']}, at {want.get('IMAGE_SIZE', '')}")
+        return Update(inst.id, _key("images", comfy, *sorted(f"{k}={v}" for k, v in change.items())),
+                      f"Use your own {name} workflow for pictures", lines, env=change, kind="images")
+    missing = {k: v for k, v in want.items() if k not in inst.env}
     if not missing:
         return None
-    name = m.instances[comfy].name
     title = f"Make and edit pictures in chats with {name}" if not url else f"Finish connecting {name} for pictures"
     lines = [f"Turns on making pictures and editing them in chats with {name}, with its workflows and node "
              "mapping filled in"]
@@ -104,7 +119,8 @@ def _images(inst: Instance, m: tpl.Machine) -> Update | None:
     return Update(inst.id, _key("images", comfy, *sorted(missing)), title, lines, env=missing, kind="images",
                   manual=[] if "IMAGE_GENERATION_MODEL" in missing or "IMAGE_GENERATION_MODEL" in inst.env else
                   ["Put a checkpoint in the models folder's comfyui/checkpoints/, then pick it in Open WebUI: "
-                   "Admin Panel, Settings, Images."])
+                   "Admin Panel, Settings, Images. A model that isn't one checkpoint file needs a workflow of "
+                   f"your own in {name}'s app data folder, user/{comfyui.CUSTOM_DIR}/ (see docs/advanced.md)."])
 
 
 def _anythingllm(inst: Instance, server: str, m: tpl.Machine, text: str) -> Update | None:
