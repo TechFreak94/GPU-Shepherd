@@ -907,13 +907,10 @@ class Shepherd:
             v = next((v for v in instances[cid].volumes if v.container.rstrip("/").endswith("ComfyUI/models")), None)
             if v:
                 m.checkpoints[cid] = comfyui.checkpoints(v.host)
-<<<<<<< HEAD
             u = next((v for v in instances[cid].volumes if v.container.rstrip("/").endswith("ComfyUI/user")), None)
             own = comfyui.custom(u.host) if u else {}
             if own:
                 m.comfy_workflows[cid] = own
-=======
->>>>>>> origin/claude/project-thread-warbvl
         return m
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:

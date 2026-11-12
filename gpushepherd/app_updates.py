@@ -91,7 +91,6 @@ def _images(inst: Instance, m: tpl.Machine) -> Update | None:
         comfy = comfys[0] if comfys and inst.env.get("ENABLE_IMAGE_GENERATION", "").lower() != "false" else ""
     if not comfy:
         return None
-<<<<<<< HEAD
     want = tpl.comfyui_env(comfy, m)
     name = m.instances[comfy].name
     if comfy in m.comfy_workflows:        # the user's own workflows: they replace what was set before
@@ -110,12 +109,6 @@ def _images(inst: Instance, m: tpl.Machine) -> Update | None:
     missing = {k: v for k, v in want.items() if k not in inst.env}
     if not missing:
         return None
-=======
-    missing = {k: v for k, v in tpl.comfyui_env(comfy, m).items() if k not in inst.env}
-    if not missing:
-        return None
-    name = m.instances[comfy].name
->>>>>>> origin/claude/project-thread-warbvl
     title = f"Make and edit pictures in chats with {name}" if not url else f"Finish connecting {name} for pictures"
     lines = [f"Turns on making pictures and editing them in chats with {name}, with its workflows and node "
              "mapping filled in"]
@@ -126,12 +119,8 @@ def _images(inst: Instance, m: tpl.Machine) -> Update | None:
     return Update(inst.id, _key("images", comfy, *sorted(missing)), title, lines, env=missing, kind="images",
                   manual=[] if "IMAGE_GENERATION_MODEL" in missing or "IMAGE_GENERATION_MODEL" in inst.env else
                   ["Put a checkpoint in the models folder's comfyui/checkpoints/, then pick it in Open WebUI: "
-<<<<<<< HEAD
                    "Admin Panel, Settings, Images. A model that isn't one checkpoint file needs a workflow of "
                    f"your own in {name}'s app data folder, user/{comfyui.CUSTOM_DIR}/ (see docs/advanced.md)."])
-=======
-                   "Admin Panel, Settings, Images."])
->>>>>>> origin/claude/project-thread-warbvl
 
 
 def _anythingllm(inst: Instance, server: str, m: tpl.Machine, text: str) -> Update | None:
