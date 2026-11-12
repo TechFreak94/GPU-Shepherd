@@ -547,7 +547,10 @@ class Machine:
     amd_gpu_mem_gb: list[float] = field(default_factory=list)   # the AMD GPUs, for apps that run on them
     suggestions: tuple = ()            # suggested models besides the built-in ones (model_library.Suggestion)
     checkpoints: dict[str, list[str]] = field(default_factory=dict)   # ComfyUI instance id -> its checkpoint files
+<<<<<<< HEAD
     comfy_workflows: dict[str, dict] = field(default_factory=dict)    # ComfyUI instance id -> the user's own workflows
+=======
+>>>>>>> origin/claude/project-thread-warbvl
 
 
 def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dict:
@@ -1090,8 +1093,12 @@ def comfyui_env(comfy: str, m: Machine) -> dict[str, str]:
     """Open WebUI's settings for making and editing pictures with a ComfyUI instance."""
     ports = m.instances[comfy].ports
     url = comfyui.base_url(comfy, ports[0].container if ports else None)
+<<<<<<< HEAD
     return comfyui.openwebui_env(url, comfyui.pick_checkpoint(m.checkpoints.get(comfy, [])),
                                  m.comfy_workflows.get(comfy))
+=======
+    return comfyui.openwebui_env(url, comfyui.pick_checkpoint(m.checkpoints.get(comfy, [])))
+>>>>>>> origin/claude/project-thread-warbvl
 
 
 def speech_servers(m: Machine) -> dict[str, str]:

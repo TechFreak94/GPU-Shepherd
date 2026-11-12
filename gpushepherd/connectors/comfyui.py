@@ -11,6 +11,7 @@ next message, and models that call tools get Open WebUI's generate and edit imag
 Both workflows use only ComfyUI's own nodes and a single checkpoint file (Stable Diffusion 1.5 or
 XL style, in the models folder's comfyui/checkpoints/), so nothing extra has to be installed.
 
+<<<<<<< HEAD
 Models that aren't one checkpoint file (a diffusion model with its own text encoder and VAE, and
 the like) need a workflow of their own. Put it in ComfyUI's app data folder, user/open-webui/, in
 ComfyUI's API format ("Export (API)") with Open WebUI's node map beside it:
@@ -21,12 +22,15 @@ ComfyUI's API format ("Export (API)") with Open WebUI's node map beside it:
 A node map is a list like GENERATE_NODES below. GPU Shepherd then uses these instead of its own,
 taking the model, size and steps from the nodes the map names, and offers them as an app update.
 
+=======
+>>>>>>> origin/claude/project-thread-warbvl
 Open WebUI reads these variables only until its image settings are saved, so for an Open WebUI that
 already ran, GPU Shepherd also sends them through its API (connectors/openwebui.py, use_images).
 """
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
 import logging
 from pathlib import Path
 
@@ -35,6 +39,12 @@ log = logging.getLogger(__name__)
 CONTAINER_PORT = 8188
 CHECKPOINT_EXT = (".safetensors", ".ckpt")
 CUSTOM_DIR = "open-webui"            # in ComfyUI's user/ folder: workflows of the user's own
+=======
+from pathlib import Path
+
+CONTAINER_PORT = 8188
+CHECKPOINT_EXT = (".safetensors", ".ckpt")
+>>>>>>> origin/claude/project-thread-warbvl
 
 # text to image: Open WebUI's own default workflow, with a few more steps' worth of defaults
 GENERATE = {
@@ -107,6 +117,7 @@ def size(checkpoint: str) -> str:
     return "512x512" if checkpoint and "xl" not in checkpoint.lower() else "1024x1024"
 
 
+<<<<<<< HEAD
 def custom(user_dir: str | Path) -> dict[str, tuple[dict, list]]:
     """The user's own workflows in ComfyUI's user folder: {"generate"/"edit": (workflow, node map)}.
     One that doesn't read, or whose map names a node or input its workflow doesn't have, is left out."""
@@ -175,11 +186,36 @@ def openwebui_env(url: str, checkpoint: str = "", own: dict | None = None) -> di
     return {k: (str(v).lower() if isinstance(v, bool) else json.dumps(v, separators=(",", ":"))
                 if isinstance(v, list) else str(v))
             for k, v in settings(url, checkpoint, own).items()}
+=======
+def settings(url: str, checkpoint: str = "") -> dict:
+    """Open WebUI's image settings (the names its API and environment use) for making and editing
+    pictures with the ComfyUI at `url`. Without a checkpoint the model is left for the user to pick
+    in Open WebUI (Admin Panel, Settings, Images lists ComfyUI's)."""
+    out = {"ENABLE_IMAGE_GENERATION": True, "IMAGE_GENERATION_ENGINE": "comfyui", "COMFYUI_BASE_URL": url,
+           "COMFYUI_WORKFLOW": json.dumps(GENERATE, separators=(",", ":")), "COMFYUI_WORKFLOW_NODES": GENERATE_NODES,
+           "IMAGE_SIZE": size(checkpoint), "IMAGE_STEPS": 25,
+           "ENABLE_IMAGE_EDIT": True, "IMAGE_EDIT_ENGINE": "comfyui", "IMAGES_EDIT_COMFYUI_BASE_URL": url,
+           "IMAGES_EDIT_COMFYUI_WORKFLOW": json.dumps(EDIT, separators=(",", ":")),
+           "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES": EDIT_NODES}
+    if checkpoint:
+        out |= {"IMAGE_GENERATION_MODEL": checkpoint, "IMAGE_EDIT_MODEL": checkpoint}
+    return out
+
+
+def openwebui_env(url: str, checkpoint: str = "") -> dict[str, str]:
+    """settings() as Open WebUI's environment variables."""
+    return {k: ("true" if v is True else json.dumps(v, separators=(",", ":")) if isinstance(v, list) else str(v))
+            for k, v in settings(url, checkpoint).items()}
+>>>>>>> origin/claude/project-thread-warbvl
 
 
 def from_env(env: dict[str, str]) -> dict:
     """The image settings in an Open WebUI's environment, typed as its API wants them."""
+<<<<<<< HEAD
     keys = settings("x", "x") | {"ENABLE_IMAGE_EDIT": True}
+=======
+    keys = settings("x", "x")
+>>>>>>> origin/claude/project-thread-warbvl
     out: dict = {}
     for k, v in env.items():
         if k not in keys:
