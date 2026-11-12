@@ -4,6 +4,27 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.36 - 2026-11-12
+
+- Bump python from 3.13-slim to 3.15-slim (#81)
+- New (Experimental): Llama Swap for AMD GPUs over Vulkan, tuned for several 8 GB cards. (#82)
+- AMD GPUs are now found and shared out to apps like NVIDIA ones (Experimental, shown as AMD GPU 100, 101...). The installer can set up an AMD-only machine. (#82)
+- Adding a model from a link now accepts the Hugging Face page link as you copy it (with a file open, a file page or a short hf.co link), not only the download link. (#82)
+- Delete a downloaded model and its files from the Models page; the model list now shows each model's size on disk, the memory it needs and whether it fits. (#83)
+- Suggested models now include trending models from Hugging Face that fit your machine (Settings > Suggested models). (#83)
+- Models added from a link that don't fit on the GPUs say how much system RAM they need beside them. (#83)
+- Storage shows each disk by where it is mounted, not by a folder on it. (#83)
+- Docs and screenshots for AMD, Hugging Face suggestions, model deletion and Storage mount points (#84)
+- The Knowledge page shows each Open WebUI's knowledge bases, and can keep one in sync with your documents. (#85)
+- New Settings › Remote access: install Tailscale, log the server in to your tailnet, see the addresses to open GPU Shepherd from your other devices, and serve the dashboard over HTTPS, all from the dashboard (needs dashboard updates). Also in the API and the `gpu-shepherd tailscale` command. (#85)
+- Open WebUI now makes pictures with ComfyUI and edits them in the chat. Turn on Image in the message box, then ask for changes to a picture it made or one you attach. Open WebUIs that were already installed get this as an app update. (#86)
+- SillyTavern can make pictures with ComfyUI: pick your ComfyUI when installing it, then ask for a picture in the chat. (#86)
+- The docs and screenshots now cover Knowledge sync, Tailscale remote access, pictures with ComfyUI, OpenCode and the Power menu. (#86)
+- Open WebUI can make pictures with a ComfyUI workflow of your own, for models that aren't a single checkpoint file. Export it from ComfyUI in API format into ComfyUI's app data folder, `user/open-webui/`, with Open WebUI's node map beside it, then apply the app update. (#87)
+- Open WebUI cards get a Pictures button that sends Open WebUI its ComfyUI picture settings again. (#88)
+- Picture prompts from Open WebUI go to ComfyUI as you wrote them, instead of being rewritten by the chat model first. (#88)
+- New Storage › Pictures page: look through the pictures ComfyUI made and was given, download them, and move old ones to the trash. (#88)
+
 ## 0.13.35 - 2026-11-11
 
 - Chat and agent apps can now use Ollama or vLLM as well as Llama Swap as their model server. (#74)
