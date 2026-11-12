@@ -577,6 +577,8 @@ def answer_keys(t: Template) -> list[str]:
         keys.append("server")
     if t.connects == "openwebui":
         keys += ["comfyui", "speech"]
+    elif t.connects == "sillytavern":
+        keys.append("comfyui")
     for s in slots(t):
         keys += [f"{s.key}_file", f"{s.key}_ctx"]
     if slots(t):
@@ -733,8 +735,8 @@ def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
         out["server.env"] = _anythingllm_env(_server_url(server, m) if info else "", info or {})
     elif t.connects == "librechat":
         out["librechat.yaml"] = LIBRECHAT_YAML
-    elif t.connects == "sillytavern" and info:
-        out |= _sillytavern_files(_server_url(server, m), info)
+    elif t.connects == "sillytavern" and (info or a.get("comfyui")):
+        out |= _sillytavern_files(_server_url(server, m) if info else "", info, _sillytavern_images(a, m))
     elif t.connects == "opencode" and info:
         out["config/opencode.json"] = _opencode_config(info)
     for name, _ in t.files:
@@ -888,15 +890,38 @@ def _server_env(a: dict, m: Machine) -> dict[str, str]:
     return {"LLM_BASE_URL": _server_url(server, m), "LLM_API_KEY": m.servers[server]["api_key"]} if server else {}
 
 
-def _sillytavern_files(url: str, info: dict) -> dict[str, str]:
+def _sillytavern_files(url: str, info: dict | None, images: dict | None = None) -> dict[str, str]:
     """SillyTavern's first user's settings, connected to the model server: a Custom (OpenAI-compatible)
-    chat completion source that connects when the page opens. SillyTavern fills in everything else
-    from its defaults and moves the key into its own secrets format on its first start."""
-    settings = {"main_api": "openai", "power_user": {"auto_connect": True},
-                "oai_settings": {"chat_completion_source": "custom", "custom_url": url,
-                                 "custom_model": info.get("default_model") or "chat"}}
-    return {"data/default-user/settings.json": json.dumps(settings, indent=4) + "\n",
-            "data/default-user/secrets.json": json.dumps({"api_key_custom": info["api_key"]}, indent=4) + "\n"}
+    chat completion source that connects when the page opens, and ComfyUI for its Image Generation
+    extension when one was picked. SillyTavern fills in everything else from its defaults and moves
+    the key into its own secrets format on its first start."""
+    settings: dict = {}
+    out = {}
+    if info:
+        settings = {"main_api": "openai", "power_user": {"auto_connect": True},
+                    "oai_settings": {"chat_completion_source": "custom", "custom_url": url,
+                                     "custom_model": info.get("default_model") or "chat"}}
+        out["data/default-user/secrets.json"] = json.dumps({"api_key_custom": info["api_key"]}, indent=4) + "\n"
+    if images:
+        settings["extension_settings"] = {"sd": images}
+    out["data/default-user/settings.json"] = json.dumps(settings, indent=4) + "\n"
+    return out
+
+
+def _sillytavern_images(a: dict, m: Machine) -> dict | None:
+    """SillyTavern's Image Generation settings for the ComfyUI picked in the form: its own default
+    workflow (which takes the checkpoint, size and steps from these), and interactive mode, so asking
+    for a picture in the chat ("send me a picture of...") makes one."""
+    comfy = str(a.get("comfyui", "")).strip()
+    if not comfy:
+        return None
+    if comfy not in m.instances:
+        raise ConfigError(f"no instance '{comfy}'")
+    env = comfyui_env(comfy, m)
+    w, h = env["IMAGE_SIZE"].split("x")
+    return {"source": "comfy", "comfy_url": env["COMFYUI_BASE_URL"], "comfy_workflow": "Default_Comfy_Workflow.json",
+            "model": env.get("IMAGE_GENERATION_MODEL", ""), "width": int(w), "height": int(h), "steps": 25,
+            "scale": 7, "sampler": "euler", "scheduler": "normal", "interactive_mode": True}
 
 
 OPENCODE_PROVIDER = "local"

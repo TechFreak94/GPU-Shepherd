@@ -229,7 +229,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             "server": ({tpl.NEW_SERVER: "Install a Llama Swap server with it"} | {k: v["name"] for k, v in m.servers.items()})
             if t.connects else {},
             "comfyui": {i.id: i.name for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"}
-            if t.connects == "openwebui" else {},
+            if t.connects in ("openwebui", "sillytavern") else {},
             "speech": tpl.speech_servers(m) if t.connects == "openwebui" else {},
             "model_slots": {f"{s.key}_file": s.label for s in tpl.slots(t)},
         }

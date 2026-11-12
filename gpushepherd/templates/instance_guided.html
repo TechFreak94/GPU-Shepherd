@@ -113,13 +113,15 @@
           <option value="" {{ "selected" if not f.server }}>None for now</option>
         </select>
         <div class="hint">{% if servers %}Its address and API key are filled in for you.{% else %}There is no model server yet, so a new one is installed alongside it.{% endif %}</div></div>
-      {% if t.connects == "openwebui" %}
+      {% if t.connects in ("openwebui", "sillytavern") %}
       <div><label for="comfyui">Make images with</label>
         <select id="comfyui" name="comfyui">
           <option value="">Nothing (no image generation)</option>
           {% for id, name in comfy %}<option value="{{ id }}" {{ "selected" if f.comfyui == id }}>{{ name }} ({{ id }})</option>{% endfor %}
         </select>
         <div class="hint">Pick your ComfyUI instance to generate images from the chat.</div></div>
+      {% endif %}
+      {% if t.connects == "openwebui" %}
       <div><label for="speech">Voice with</label>
         <select id="speech" name="speech">
           <option value="">Nothing (no voice input or read-aloud)</option>

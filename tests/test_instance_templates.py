@@ -324,6 +324,18 @@ def test_sillytavern():
     assert json.loads(seed["data/default-user/secrets.json"]) == {"api_key_custom": "sk-abc"}
     assert tpl.seed_files(t, f | {"server": ""}, m) == {}          # no server: SillyTavern's own defaults
     assert tpl.app_env(t, "llm", m)["LLM_API_KEY"] == "sk-abc"
+    assert "extension_settings" not in settings and "comfyui" in tpl.answer_keys(t)
+    # with a ComfyUI: its Image Generation extension makes pictures there, asked for in the chat
+    m.instances["comfyui"] = Instance(id="comfyui", name="ComfyUI", image="yanwk/comfyui-boot",
+                                      ports=[PortMap(host=8188, container=8188)])
+    m.checkpoints["comfyui"] = ["sd_xl_base_1.0.safetensors"]
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["comfyui"] == "comfyui"
+    sd = json.loads(tpl.seed_files(t, f, m)["data/default-user/settings.json"])["extension_settings"]["sd"]
+    assert sd["source"] == "comfy" and sd["comfy_url"] == "http://comfyui:8188" and sd["interactive_mode"]
+    assert sd["model"] == "sd_xl_base_1.0.safetensors" and sd["width"] == 1024 and sd["sampler"] == "euler"
+    only = tpl.seed_files(t, f | {"server": ""}, m)
+    assert list(only) == ["data/default-user/settings.json"] and "oai_settings" not in only["data/default-user/settings.json"]
 
 
 def test_opencode():
