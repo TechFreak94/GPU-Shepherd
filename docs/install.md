@@ -25,8 +25,12 @@ Other ways to install: [Docker Compose by hand](#docker-compose-without-the-inst
 | CPU | x86-64, 4 cores |
 | RAM | 32 GB (64 GB recommended for the largest models, which keep most of their layers in system RAM) |
 | Storage | 128 GB free for models and app data; an SSD is highly preferred |
-| GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+) |
+| GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+); or AMD GPUs (RX 400 series or newer) with the `amdgpu` driver, experimental |
 | Access | A user with `sudo`, and internet access (Docker images and models are large downloads) |
+
+**AMD GPUs (experimental):** on a machine with AMD GPUs and no NVIDIA ones, the installer skips the
+NVIDIA driver, Container Toolkit and GPU test, and removes the NVIDIA GPU request from `compose.yaml`.
+Install the *Llama Swap (Vulkan)* app from the App Center. It is untried on real AMD hardware.
 
 You do **not** need to install Docker, the NVIDIA Container Toolkit or (on most distros) the NVIDIA
 driver first: the installer checks for each one, shows what is missing and installs it after you

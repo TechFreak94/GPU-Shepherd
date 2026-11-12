@@ -101,11 +101,12 @@ For instances of kind `llama-swap`.
 |---|---|
 | `GET /api/v1/instances/{id}/models` | `models`, `auto_aliases`, `settings` (`threads`, `llama_server`, `health_timeout`, `api_key`), `loaded` (model → state), `loading`, and the .gguf `files` it can see. |
 | `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto names follow. |
-| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). |
+| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). `?files=true` also deletes its files from disk (`409` while it is loaded; files another model uses are kept). |
 | `GET /api/v1/instances/{id}/suggestions` | The [suggested models](advanced.md#suggested-models), best fit first: `key`, `name`, `uses`, `fits` and `fit` (how it fits this machine), `state` (`ready`, `downloading`, `starting`, `failed`, `missing`), `status`, `pct`, `in_catalog`, and its `files` with their URLs. |
 | `POST /api/v1/instances/{id}/suggestions/{key}/add` | Add it with its makers' settings, downloading it if needed (`201`; `409` if the server has it). |
 | `POST /api/v1/instances/{id}/suggestions/{key}/download` | Download or resume its files in the background (`202`). |
 | `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. |
+| `POST /api/v1/instances/{id}/suggestions/{key}/delete` | Delete the files of a downloaded suggestion the server doesn't have. |
 | `POST /api/v1/instances/{id}/models/{model}/load` | Load it now, in the background (`202`). |
 | `POST /api/v1/instances/{id}/models/{model}/unload` | Unload it; `_all` as the model unloads every model. `409` while the server is answering. |
 | `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto name: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
@@ -139,8 +140,8 @@ For instances of kind `llama-swap`.
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`, `image_check_hours`. |
-| `PATCH /api/v1/settings` | Change `bind_address`, `network`, `trash_days` and/or `image_check_hours` (the others are YAML only). |
+| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`, `image_check_hours`, `hf_suggestions`. |
+| `PATCH /api/v1/settings` | Change `bind_address`, `network`, `trash_days`, `image_check_hours` and/or `hf_suggestions` (suggest models trending on Hugging Face) (the others are YAML only). |
 | `POST /api/v1/settings/password` | `{"current": "...", "new": "..."}` (10+ characters). |
 | `POST /api/v1/token` | Make a new API token and answer it as `token`; the one used for this request stops working. |
 
@@ -152,7 +153,7 @@ Deleting an instance or cleaning up a file moves it to the trash first, so it ca
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/storage` | Free space per `disks`, the `folders` and their sizes, app `images` and what uses them, `files` worth a look (`why`: `unused`, `partial` or `duplicate`), `leftover_folders`, `orphans` (containers without an instance) and the `trash`. |
+| `GET /api/v1/storage` | Free space per `disks` (each named by its mount point), the `folders` and their sizes, app `images` and what uses them, `files` worth a look (`why`: `unused`, `partial` or `duplicate`), `leftover_folders`, `orphans` (containers without an instance) and the `trash`. |
 | `POST /api/v1/storage/images` | Remove the app images no instance uses (they download again when needed). |
 | `POST /api/v1/storage/orphans` | Remove containers left without an instance. Their data folders are not touched. |
 | `POST /api/v1/storage/files` | `{"paths": [...]}`: move model files from `files` to the trash. |

@@ -35,8 +35,9 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 
 | Field | YAML | What it does |
 |---|---|---|
+| Kind of GPU | `gpu.vendor` | `nvidia` (CUDA, the default) or `amd` (Vulkan, or ROCm). Each kind is planned on its own: an app only gets GPUs of its kind. AMD support is experimental and untried on real cards. |
 | GPU use | `gpu.mode` | `none`: no GPU. `fixed`: always exactly the GPUs listed. `elastic`: needs at least *Minimum GPUs*, takes every free GPU up to *Maximum GPUs* (a Llama Swap server: only as many as its models can use), and gives them back when something else needs one. |
-| Use GPUs / Preferred GPUs | `gpu.gpus` | Fixed: the GPUs it always uses (by `nvidia-smi` index). Elastic: optional, the GPUs it takes first when it has a choice. |
+| Use GPUs / Preferred GPUs | `gpu.gpus` | Fixed: the GPUs it always uses (by `nvidia-smi` index; AMD GPUs are numbered from 100, shown as *AMD GPU 0*, *AMD GPU 1*...). Elastic: optional, the GPUs it takes first when it has a choice. |
 | Minimum GPUs | `gpu.min_gpus` | Elastic only. Fewer than this and it can't start. |
 | Maximum GPUs | `gpu.max_gpus` | Elastic only. `0` = no limit. `1` makes "one GPU, whichever is free". |
 | Priority (0-100) | `gpu.priority` | When there aren't enough GPUs, higher priority keeps theirs and lower ones are moved or stopped (after you confirm). The instance you are starting always wins. |
@@ -47,6 +48,10 @@ Rule of thumb: apps that use one GPU (ComfyUI, speech models) are fixed or elast
 of 1; Llama Swap servers that split a model across GPUs are elastic with no maximum. The
 [README](../README.md#how-gpu-sharing-works) walks through how a plan is made. At boot, Llama Swap
 servers get their GPUs first, so chat works after a reboot even when one GPU can't hold every app.
+
+AMD GPUs reach a container as their `/dev/dri` render nodes, which Vulkan needs, so a built-in graphics
+chip is left alone. A ROCm image also needs `/dev/kfd`: add it under *Devices* (`devices`, host device
+paths passed in as they are, in the editor's Advanced section). Don't list GPUs there; pick them under GPUs.
 
 A container only sees the GPUs it was given. When its GPUs change it is re-created, so anything it
 needs to keep must be in a mounted folder.
@@ -240,10 +245,25 @@ enough expert layers go to RAM to leave a quarter of the GPUs' memory for the co
 GPUs that is 14 of Qwen3.6 35B-A3B's 40 layers and 38 of Qwen3 Coder Next's 48. Tune them on the
 model's Edit page.
 
+Besides the built-in list, GPU Shepherd asks Hugging Face once a day which GGUF models are trending
+(from unsloth, ggml-org, bartowski and LM Studio) and suggests up to ten that fit this machine and
+won't be slow, in a Q4 file where there is one. They carry a *Hugging Face* tag, are cached in
+`hf-models.json` in the data folder, and the built-in list is used when Hugging Face can't be reached.
+**Settings > Suggested models** turns this off (`hf_suggestions`) or asks now.
+
+### Deleting model files
+
+The Models page shows each model's size on disk, the memory it needs to run and whether that fits the
+GPUs and RAM, with the total at the bottom. **Remove** takes a model out of the list and leaves its file;
+**Delete file** also deletes the `.gguf` and its vision projector and draft files, after a confirm. It is
+refused while the model is loaded, and a file another model (on any server) still uses is kept. A
+downloaded suggested model you never added has **Delete files** too. A read-only models folder is
+handled by the helper container. Command: `models delete --files`; API: `DELETE .../models/{id}?files=true`.
+
 ### Add a model from a link
 
 **Add a model from a link** on the Models page takes the link to a `.gguf` file (for example a
-Hugging Face `.../resolve/main/Model-Q4_K_M.gguf` address) and optionally the link to its vision
+Hugging Face `.../resolve/main/Model-Q4_K_M.gguf` address, or the file's page) and optionally the link to its vision
 projector (`mmproj`). It checks that the model can fit this machine's GPUs plus RAM, downloads it
 in the background like a suggested model, and lists it with them (tagged *your link*, with a
 **Forget** button). Command: `gpu-shepherd models add-link`; API: `POST .../models/from-link`.
@@ -304,6 +324,7 @@ Saved in `settings.yaml` (mode 600, it holds the password hash).
 | API token | - | For the [JSON API](api.md) and the `gpu-shepherd` commands. Kept in the `api-token` file in the data folder (mode 600), not in `settings.yaml`. *Make a new token* replaces it. |
 | Look for new app versions every | `image_check_hours` | Hours between checks of the registries for newer releases of the apps' images, 12 by default; `0` = only when you press *Check now*. See [App image updates](#app-image-updates). |
 | Mount new drives automatically | `auto_mount_drives` | On by default (always off on WSL2). A drive that is attached while GPU Shepherd runs and already holds data is mounted for you (see [Other disks](#other-disks)). |
+| Suggest models from Hugging Face | `hf_suggestions` | On by default. Once a day, adds trending GGUF models that fit this machine to the [suggested models](#suggested-models). Under *Suggested models*, with *Check now*. |
 | Empty the trash after | `trash_days` | Days before the [trash](#storage-and-trash) empties itself, 30 by default; `0` keeps things until you empty it. |
 | - | `admin_user` | The login name, `admin` by default. YAML only. |
 | - | `container_prefix` | Prefix for container names, `shepherd-` by default. YAML only; change it only with every instance stopped. |
@@ -337,7 +358,7 @@ and token speed doesn't change.
 
 ## Storage and trash
 
-The **Storage** page shows free space on each disk it uses (with a warning when one is low), the size
+The **Storage** page shows free space on each disk it uses, named by where the drive is mounted (`/mnt/disk-1`, not a folder on it) (with a warning when one is low), the size
 of each folder, the app images and which instance uses them, and what is worth a look: model files in
 no model list, unfinished downloads, the same file twice, app data folders with no instance, and
 containers with no instance. Folders that aren't mounted into GPU Shepherd's container at the same
@@ -397,6 +418,7 @@ servers, the models you picked), so every field above can be changed afterwards.
 | vLLM | the GPUs you pick (fixed count) | `vllm/vllm-openai` serving one Hugging Face model as `chat`, downloaded on first start into the models folder's `huggingface/` subfolder, a fresh `VLLM_API_KEY`, and 8 GB of shared memory for splitting a model across GPUs. It keeps the model in GPU memory only (no system RAM) and the GPU count it was installed with: install it again with another count to change it. Needs driver 580 or newer. |
 | SillyTavern | none | `ghcr.io/sillytavern/sillytavern` with `config`, `data`, `plugins` and `extensions` in its app data folder, a user name and password you choose (basic authentication, so it can be reached from other machines), and a connection to the model server (Chat Completion, Custom). |
 | Open Notebook | none | `lfnovo/open_notebook` with its data in the app data folder, a password you choose, fresh `SURREAL_PASS` and `OPEN_NOTEBOOK_ENCRYPTION_KEY` secrets, and its database: a second instance `<id>-surrealdb` (`surrealdb/surrealdb`, no port on the host) that it *starts with*. |
+| Llama Swap (Vulkan) | every free AMD GPU (elastic, no maximum) | llama-swap's `:vulkan` image (llama.cpp's Vulkan build, no ROCm), tuned for several 8 GB cards such as the RX 580: models split layer by layer, 16K context for chat, f16 KV cache. Experimental, untried on real AMD GPUs; an `amdgpu` driver is needed. Otherwise as the Llama Swap below. |
 | Llama Swap | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
 | Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one. When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model, split for books (`CHUNK_SIZE` 1500, `CHUNK_OVERLAP` 200, `RAG_TOP_K` 8) and with Qwen3 Embedding's query instruction (`RAG_EMBEDDING_QUERY_PREFIX`). Open WebUI only reads these at its first start; later they are in its Admin Panel › Documents. *Voice with* picks a Speaches instance for speech to text and text to speech (`AUDIO_STT_*`, `AUDIO_TTS_*` with engine `openai`). |
