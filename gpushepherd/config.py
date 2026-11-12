@@ -6,6 +6,7 @@ Layout of the data directory (SHEPHERD_DATA_DIR):
     instances/<id>.yaml        one file per instance (a container the app manages)
     catalogs/<id>.yaml         model catalogue for each model-server instance
     linked-models.yaml         models added from a link on a Models page (listed with the suggested ones)
+    hf-models.json             models trending on Hugging Face, refreshed daily (suggested when they fit)
     generated/<id>/...         files the app renders for containers (do not edit)
 
 Everything the UI saves lands in these files, so they can be backed up, diffed and kept in
@@ -401,6 +402,7 @@ class Settings(BaseModel):
     trash_days: int = Field(default=30, ge=0, le=3650)   # empty trash entries older than this (0 = never)
     auto_mount_drives: bool = True        # mount a newly attached drive that has data on it (see drives.py)
     image_check_hours: int = Field(default=12, ge=0, le=720)   # look for new app releases this often (0 = only by hand)
+    hf_suggestions: bool = True           # also suggest models trending on Hugging Face (hf_models.py)
 
 
 # --------------------------------------------------------------------------- store

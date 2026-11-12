@@ -24,7 +24,7 @@
 
 <div class="card scroll" id="catalog" {% if loading %}hx-get="/instances/{{ inst.id }}/models" hx-select="#catalog" hx-swap="outerHTML" hx-trigger="every 3s"{% endif %}>
   <table class="table">
-    <thead><tr><th>Model</th><th>File</th><th title="Context is the total memory for conversation; slots are requests answered at once, each getting context ÷ slots">Context and slots</th><th title="Clients can ask for a model by any of its tags">Tags</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Model</th><th>File</th><th title="Context is the total memory for conversation; slots are requests answered at once, each getting context ÷ slots">Context and slots</th><th title="Size of its files, the memory it needs to run (weights plus the cache for its context), and how that fits your GPUs and RAM">On this machine</th><th title="Clients can ask for a model by any of its tags">Tags</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {% for m in cat.models %}
       <tr>
@@ -34,6 +34,8 @@
           {% if failures.get(m.id) and m.id not in loaded %}<div class="small warn-text" style="font-family:inherit">Didn't start: {{ failures[m.id] }}</div>{% endif %}</td>
         <td class="small">{{ "{:,}".format(m.ctx_size) }} tokens<br><span class="muted">{{ m.parallel }} slot{{ "s" if m.parallel != 1 }}</span>
           {% if running and placement.get(m.id) %}<br><span class="muted">Runs on {{ gpu_text(placement[m.id]) }}</span>{% endif %}</td>
+        {% set rs = resources.get(m.id) %}
+        <td class="small {{ '' if not rs or rs.ok else 'warn-text' }}">{% if rs %}{% if rs.disk_gb %}{{ rs.disk_gb }} GB on disk<br><span class="muted">needs {{ rs.need_gb }} GB to run</span><br>{% endif %}{{ rs.text }}{% endif %}</td>
         <td class="small">{% for a in m.aliases %}<span class="tag">{{ a }}</span>{% endfor %}
           {% for alias, target in resolved.items() if target == m.id %}<span class="tag accent">{{ alias }}</span>{% endfor %}</td>
         <td class="small">
@@ -49,13 +51,17 @@
             {% else %}<button hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/load" hx-swap="none" {{ "disabled" if m.id in loading }}>Load</button>{% endif %}
           {% endif %}
           <a class="btn" href="/instances/{{ inst.id }}/models/edit?model={{ m.id|urlencode }}">Edit</a>
-          <button class="danger" hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/delete" hx-confirm="Remove {{ m.id }} from the catalogue? The file stays on disk.">Remove</button>
+          <button hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/delete" hx-confirm="Remove {{ m.id }} from the catalogue? The file stays on disk.">Remove</button>
+          <button class="danger" hx-post="/instances/{{ inst.id }}/models/{{ m.id }}/delete?files=true"
+            hx-confirm="Delete {{ m.id }} and its file{{ 's' if m.mmproj or m.mtp_draft }} from disk ({{ m.file }})? It is removed from this catalogue too, and can't be undone.{{ ' It is loaded now: unload it first.' if m.id in loaded }}"
+            title="Frees the disk space: removes it from the catalogue and deletes the downloaded file">Delete file</button>
         </div></td>
       </tr>
     {% else %}
-      <tr><td colspan="6" class="muted">No models yet. Add a suggested model below, or add one from a .gguf file in the models folder.</td></tr>
+      <tr><td colspan="7" class="muted">No models yet. Add a suggested model below, or add one from a .gguf file in the models folder.</td></tr>
     {% endfor %}
     </tbody>
+    {% if cat.models %}<tfoot><tr><td colspan="7" class="small muted">{{ resources.values()|sum(attribute="disk_gb")|round(1) }} GB of model files on disk in this catalogue. Only one model not kept loaded is in memory at a time.</td></tr></tfoot>{% endif %}
   </table>
 </div>
 

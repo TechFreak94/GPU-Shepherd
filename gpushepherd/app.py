@@ -534,6 +534,19 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Problem as err:
             return problem(err)
 
+    @app.post("/settings/hf-models")
+    @threaded
+    def settings_hf_models(request: Request):
+        raw = request.state.form
+        try:
+            if raw.get("refresh") == "1":
+                return toast(Response(status_code=204), svc.refresh_hf_models())
+            resp = toast(Response(status_code=204), svc.set_hf_suggestions(raw.get("on") == "1"))
+            resp.headers["HX-Refresh"] = "true"
+            return resp
+        except Problem as err:
+            return problem(err)
+
     @app.post("/ui/instances/{iid}/{action}")
     @threaded
     def instance_action(request: Request, iid: str, action: str):
@@ -637,7 +650,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
                       f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in have)
                      for s, fit in sorted(((s, model_library.fit(s, tpl.gpu_mem_gb(t, m), m.ram_gb))
-                                           for s in model_library.SUGGESTIONS if keys & set(s.uses)),
+                                           for s in model_library.SUGGESTIONS + m.suggestions if keys & set(s.uses)),
                                           key=lambda x: x[1].rank)] if wants_files else []
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
@@ -809,9 +822,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
                                                              [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat), "tuning": svc.tuning(iid),
+                "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
                 "pending": bool(running and st.config_hash != engine.config_hash(inst)),
-                "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
+                "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst), **hf_ctx()}
 
     @app.get("/instances/{iid}/models", response_class=HTMLResponse)
     def models_page(request: Request, iid: str):
@@ -820,12 +833,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Problem as err:
             return RedirectResponse(with_msg("/", err.msg), status_code=303)
 
+    def hf_ctx() -> dict:
+        return {"hf_on": store.settings().hf_suggestions, "hf_checked": svc.hf_checked()}
+
     @app.get("/instances/{iid}/suggestions", response_class=HTMLResponse)
     def suggestions_part(request: Request, iid: str):
         try:
             inst, _ = svc.server(iid)
             return page(request, "partials/suggestions.html", inst=inst, suggestions=svc.suggestions(iid),
-                        download_dir=svc.models_dir(inst))
+                        download_dir=svc.models_dir(inst), **hf_ctx())
         except Problem as err:
             return problem(err)
 
@@ -843,6 +859,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 msg = svc.discard_download(iid, key)
             elif op == "forget":
                 msg = svc.forget_link(iid, key)
+            elif op == "delete":
+                msg = svc.delete_download(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:
@@ -941,9 +959,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/models/{mid}/delete")
-    def delete_model(iid: str, mid: str):
+    def delete_model(iid: str, mid: str, files: bool = False):
         try:
-            msg = svc.delete_model(iid, mid)
+            msg = svc.delete_model(iid, mid, files)
         except Problem as err:
             return problem(err)
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
@@ -1161,7 +1179,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
                     error="", u=updates.status(store.root), api_token=auth.api_token(store),
-                    image_checked=svc.image_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
+                    image_checked=svc.image_checked(), hf_checked=svc.hf_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
 
     @app.post("/settings/password")
     @threaded
@@ -1506,5 +1524,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         svc.start_measuring()
         svc.watch_drives()
         svc.watch_images()
+        svc.watch_hf_models()
 
     return app

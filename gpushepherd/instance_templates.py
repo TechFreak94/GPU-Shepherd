@@ -544,6 +544,7 @@ class Machine:
     model_sizes: dict[str, float]      # container path of a .gguf file -> size in GB
     ram_gb: float = 0.0                # system RAM (0 = unknown)
     amd_gpu_mem_gb: list[float] = field(default_factory=list)   # the AMD GPUs, for apps that run on them
+    suggestions: tuple = ()            # suggested models besides the built-in ones (model_library.Suggestion)
 
 
 def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dict:
@@ -1092,7 +1093,7 @@ def _models(t: Template, a: dict, m: Machine) -> list[CatalogModel]:
             same.aliases.append(slot.alias)
             same.ctx_size = max(same.ctx_size, ctx_size)
             continue
-        known = model_library.for_file(file, MODELS_IN_CONTAINER)
+        known = model_library.for_file(file, MODELS_IN_CONTAINER, m.suggestions)
         if known and slot.role == known.role:     # a suggested model: its makers' settings
             x = model_library.catalog_model(known, mem, MODELS_IN_CONTAINER, ctx_size=ctx_size)
             if t.kv_cache:

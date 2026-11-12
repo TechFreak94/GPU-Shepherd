@@ -134,3 +134,23 @@ def test_model_folders_skip_nested_ones():
                                                                            container="/root/ComfyUI/models")]),
              "c": Instance(id="c", name="C", image="x", volumes=vols("/data/m"))}
     assert storage.model_folders(insts, "/models") == ["/data/m", "/srv/models"]
+
+
+def test_mount_point_names_the_whole_drive(tmp_path):
+    info = tmp_path / "mountinfo"
+    info.write_text(
+        "22 1 259:2 / / rw - ext4 /dev/nvme0n1p2 rw\n"
+        "40 22 8:17 / /mnt/disk-1 rw - ext4 /dev/sdb1 rw\n"
+        "41 22 8:33 /models /mnt/disk-2/models rw - ext4 /dev/sdc1 rw\n"
+        "42 22 8:49 / /mnt/my\\040drive rw - ext4 /dev/sdd1 rw\n"
+        "43 22 259:2 /var/lib/shepherd /data rw - ext4 /dev/nvme0n1p2 rw\n"
+        "44 22 259:2 /srv/shepherd /srv/shepherd rw - ext4 /dev/nvme0n1p2 rw\n")
+    mp = lambda p: storage.mount_point(p, str(info))  # noqa: E731
+    assert mp("/mnt/disk-1/models") == "/mnt/disk-1"
+    assert mp("/mnt/disk-1") == "/mnt/disk-1"
+    assert mp("/mnt/disk-10/models") == "/"            # not under /mnt/disk-1
+    assert mp("/mnt/disk-2/models/llm") == "/mnt/disk-2"  # a folder bound in on its own
+    assert mp("/mnt/my drive/models") == "/mnt/my drive"
+    assert mp("/data") == "/data"                      # bound from elsewhere: its own path
+    assert mp("/srv/shepherd") == "/"
+    assert storage.mount_point("/x/y", str(tmp_path / "missing")) == "/x/y"

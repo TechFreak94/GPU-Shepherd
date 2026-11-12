@@ -93,6 +93,17 @@
     <button type="button" hx-post="/ui/image-updates/check" title="Ask each app's image registry now">Check now</button></div>
 </form>
 
+<h3>Suggested models</h3>
+<div class="card">
+  <p class="small" style="margin-top:0">Besides its own picks, GPU Shepherd can suggest the GGUF models trending on Hugging Face
+    (from unsloth, ggml-org, bartowski and LM Studio), in a file size that runs well on this machine's GPUs and RAM. It asks once a day.
+    {% if s.hf_suggestions %}{% if hf_checked %}Last asked {{ hf_checked|ago }}.{% else %}Not asked yet.{% endif %}{% endif %}</p>
+  <div class="actions" style="margin-top:0">
+    <button type="button" hx-post="/settings/hf-models" hx-vals='{"on": "{{ 0 if s.hf_suggestions else 1 }}"}' hx-swap="none">{{ "Stop suggesting models from Hugging Face" if s.hf_suggestions else "Suggest models from Hugging Face" }}</button>
+    {% if s.hf_suggestions %}<button type="button" hx-post="/settings/hf-models" hx-vals='{"refresh": "1"}' hx-swap="none" title="Ask Hugging Face now">Check now</button>{% endif %}
+  </div>
+</div>
+
 <h3>Experimental</h3>
 <div class="card" id="unlock" hx-get="/ui/unlock/card" hx-trigger="every 10s">
   {% include "partials/unlock_card.html" %}

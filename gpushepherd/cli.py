@@ -507,7 +507,9 @@ def cmd_models(args, c: Client) -> int:
         m = apply_pairs(m, changes) | {"offload": sorted(offload.values(), key=lambda r: r["min_gpus"])}
         out(args, c.call("PUT", f"{base}/models/{args.model}", m))
     elif a == "delete":
-        out(args, c.call("DELETE", f"{base}/models/{args.model}"))
+        if args.files and not (args.yes or ask(f"Delete {args.model} and its model files from disk? This can't be undone.")):
+            return 1
+        out(args, c.call("DELETE", f"{base}/models/{args.model}" + ("?files=true" if args.files else "")))
     elif a == "load":
         out(args, c.post(f"{base}/models/{args.model}/load"))
     elif a == "unload":
@@ -958,11 +960,14 @@ def add_commands(sub) -> None:
     for name, what in (("list", "models, aliases, auto names and what is loaded"),
                        ("files", "the .gguf files the server can see")):
         msub.add_parser(name, help=what).add_argument("server")
-    for name, what in (("show", "one model's settings"), ("delete", "remove a model"),
+    for name, what in (("show", "one model's settings"), ("delete", "remove a model (--files: and its files on disk)"),
                        ("load", "load a model now")):
         q = msub.add_parser(name, help=what)
         q.add_argument("server")
         q.add_argument("model")
+        if name == "delete":
+            q.add_argument("--files", action="store_true", help="also delete the model's files from the models folder")
+            q.add_argument("-y", "--yes", action="store_true", help="don't ask")
     msub.add_parser("suggested", help="suggested models: how each fits this machine, downloaded or not") \
         .add_argument("server")
     for name, what in (("add-suggested", "add a suggested model with its settings, downloading it if needed"),
