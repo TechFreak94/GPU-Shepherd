@@ -15,6 +15,7 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       │     └─ connectors/llamaswap.py   render config, talk to llama-swap
                       ├─ instance_templates.py   the App Center's apps and what they build (pure)
                       ├─ model_library.py   suggested models, whether they fit, their settings (pure)
+                      ├─ hf_models.py  models trending on Hugging Face that fit this machine (daily, cached)
                       ├─ downloads.py  fetches suggested models in a helper container (curl)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop

@@ -196,7 +196,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `models tuning SERVER` | [Suggested adjustments](advanced.md#tuning) and what was decided about each. `models tuning-apply`, `tuning-dismiss` and `tuning-undo SERVER KEY` decide one. | Models › Suggested adjustments |
 | `models add-suggested SERVER KEY` | Add a suggested model with its makers' settings, downloading it if needed: `models add-suggested llm qwen3-coder-30b-a3b`. | Suggested models › Add |
 | `models download SERVER KEY`, `models stop-download SERVER KEY` | Download (or resume) a suggested model's files; stop a download (starting it again resumes). | Download / Stop |
-| `models delete SERVER MODEL` | Remove a model. | Models › Delete |
+| `models delete SERVER MODEL [--files] [-y]` | Remove a model; `--files` also deletes its files from disk (asks first, `-y` doesn't). | Models › Delete |
 | `models load SERVER MODEL`, `models unload SERVER [MODEL]` | Load a model now; unload one, or all of them. Unloading refuses while the server is answering. | Load / Unload |
 | `models auto-set SERVER ALIAS DEFAULT [N=MODEL...]` | Add or replace an auto name: `models auto-set llm coder small-coder 2=big-coder`. | Models › Auto names |
 | `models auto-delete SERVER ALIAS` | Remove an auto name. | Models › Auto names |
