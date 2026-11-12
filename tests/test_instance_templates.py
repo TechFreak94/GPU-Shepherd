@@ -425,3 +425,35 @@ def test_every_client_app_can_use_ollama():
         seeds = tpl.seed_files(t, a, m)
         assert any(url in v for v in [*inst.env.values(), *seeds.values()]), t.key
         assert tpl.connected_server(inst, m, seeds.get("server.env", "")) == "ollama", t.key
+
+
+def test_open_webui_gets_comfyui_workflows_it_can_fill_in():
+    import json
+    from gpushepherd.connectors import comfyui
+    comfy = Instance(id="comfy", name="C", image="yanwk/comfyui-boot", ports=[PortMap(host=8189, container=8188)])
+    m = machine(instances={"comfy": comfy})
+    m.checkpoints["comfy"] = ["sd15/old.safetensors", "sd_xl_base_1.0.safetensors"]
+    t = tpl.get("open-webui")
+    env = tpl.build(t, tpl.defaults(t, m, "/m", "/a") | {"server": ""}, m)[0].env
+    assert env["COMFYUI_BASE_URL"] == env["IMAGES_EDIT_COMFYUI_BASE_URL"] == "http://comfy:8188"
+    assert env["IMAGE_GENERATION_MODEL"] == env["IMAGE_EDIT_MODEL"] == "sd_xl_base_1.0.safetensors"
+    assert env["IMAGE_SIZE"] == "1024x1024" and comfyui.size("v1-5-pruned.ckpt") == "512x512"
+    # every node the maps name is in its workflow, with the input they write
+    for wf, nodes in (("COMFYUI_WORKFLOW", "COMFYUI_WORKFLOW_NODES"),
+                      ("IMAGES_EDIT_COMFYUI_WORKFLOW", "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES")):
+        flow = json.loads(env[wf])
+        for n in json.loads(env[nodes]):
+            for nid in n["node_ids"]:
+                assert n["key"] in flow[nid]["inputs"], (wf, n)
+        assert any(x["class_type"] == "SaveImage" for x in flow.values())
+    assert {n["type"] for n in comfyui.EDIT_NODES} == {"prompt", "model", "image", "seed"}   # edits send no size
+    assert comfyui.from_env(env)["COMFYUI_WORKFLOW_NODES"] == comfyui.GENERATE_NODES
+
+
+def test_comfyui_checkpoints_on_disk(tmp_path):
+    from gpushepherd.connectors import comfyui
+    (tmp_path / "checkpoints" / "sub").mkdir(parents=True)
+    (tmp_path / "checkpoints" / "sub" / "a.safetensors").write_bytes(b"")
+    (tmp_path / "checkpoints" / "notes.txt").write_text("")
+    assert comfyui.checkpoints(tmp_path) == ["sub/a.safetensors"] and comfyui.checkpoints(tmp_path / "no") == []
+    assert comfyui.pick_checkpoint([]) == "" and comfyui.pick_checkpoint(["a", "b-XL"]) == "b-XL"

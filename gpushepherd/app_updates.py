@@ -35,7 +35,7 @@ class Update:
     env: dict[str, str] = field(default_factory=dict)  # kind "env": variables to add
     model: CatalogModel | None = None          # kind "model": the model's new settings
     file_text: str = ""                        # kind "file": the settings file's new text
-    kind: str = "env"                          # env | embed-model | model | file
+    kind: str = "env"                          # env | embed-model | model | file | images
 
 
 def _key(prefix: str, *parts: str) -> str:
@@ -66,6 +66,10 @@ def for_instance(inst: Instance, m: tpl.Machine, catalog: Catalog | None = None,
                         f"Embedding Model: {missing.get('RAG_EMBEDDING_MODEL', '')}. Then re-upload documents "
                         "you added before, so they are embedded by the new model."]
         out.append(u)
+    if t.connects == "openwebui":
+        u = _images(inst, m)
+        if u:
+            out.append(u)
     if t.connects == "anythingllm" and server and settings_file is not None:
         u = _anythingllm(inst, server, m, settings_file)
         if u:
@@ -73,6 +77,34 @@ def for_instance(inst: Instance, m: tpl.Machine, catalog: Catalog | None = None,
     if inst.kind == "llama-swap" and catalog is not None:
         out += _server(inst, catalog, m)
     return [u for u in out if u.key not in inst.skipped_updates]
+
+
+def _images(inst: Instance, m: tpl.Machine) -> Update | None:
+    """Open WebUI making and editing pictures with ComfyUI: finish the connection it has (an install
+    from before the workflows only had the address), or offer one when a ComfyUI is installed."""
+    url = inst.env.get("COMFYUI_BASE_URL", "")
+    comfys = tpl.comfyui_instances(m)
+    if url:
+        comfy = next((c for c in comfys if tpl.comfyui_env(c, m)["COMFYUI_BASE_URL"] == url.rstrip("/")), "")
+    else:
+        comfy = comfys[0] if comfys and inst.env.get("ENABLE_IMAGE_GENERATION", "").lower() != "false" else ""
+    if not comfy:
+        return None
+    missing = {k: v for k, v in tpl.comfyui_env(comfy, m).items() if k not in inst.env}
+    if not missing:
+        return None
+    name = m.instances[comfy].name
+    title = f"Make and edit pictures in chats with {name}" if not url else f"Finish connecting {name} for pictures"
+    lines = [f"Turns on making pictures and editing them in chats with {name}, with its workflows and node "
+             "mapping filled in"]
+    if "IMAGE_GENERATION_MODEL" in missing:
+        lines.append(f"Uses the checkpoint {missing['IMAGE_GENERATION_MODEL']} at {missing.get('IMAGE_SIZE', '')}")
+    elif "IMAGE_GENERATION_MODEL" not in inst.env:
+        lines.append(f"{name} has no checkpoint yet: pick one later in Open WebUI, Admin Panel, Settings, Images")
+    return Update(inst.id, _key("images", comfy, *sorted(missing)), title, lines, env=missing, kind="images",
+                  manual=[] if "IMAGE_GENERATION_MODEL" in missing or "IMAGE_GENERATION_MODEL" in inst.env else
+                  ["Put a checkpoint in the models folder's comfyui/checkpoints/, then pick it in Open WebUI: "
+                   "Admin Panel, Settings, Images."])
 
 
 def _anythingllm(inst: Instance, server: str, m: tpl.Machine, text: str) -> Update | None:

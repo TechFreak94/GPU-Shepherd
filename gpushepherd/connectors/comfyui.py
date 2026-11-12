@@ -1,0 +1,135 @@
+"""ComfyUI as Open WebUI's image engine: making images from a chat, and editing them in it.
+
+Open WebUI sends ComfyUI a workflow in ComfyUI's API format, after writing the prompt, the model
+(checkpoint) and the rest into the nodes its node map names. Its built-in workflow only works with
+that map filled in, which Open WebUI's own settings page does but its environment variables don't,
+so GPU Shepherd hands it both, plus a second workflow for editing: a picture from the chat (one it
+made, or one the user attached) is uploaded to ComfyUI, scaled to about one megapixel and redrawn
+from the prompt (image to image). With both on, a chat can make a picture, then change it in the
+next message, and models that call tools get Open WebUI's generate and edit image tools.
+
+Both workflows use only ComfyUI's own nodes and a single checkpoint file (Stable Diffusion 1.5 or
+XL style, in the models folder's comfyui/checkpoints/), so nothing extra has to be installed.
+
+Open WebUI reads these variables only until its image settings are saved, so for an Open WebUI that
+already ran, GPU Shepherd also sends them through its API (connectors/openwebui.py, use_images).
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+CONTAINER_PORT = 8188
+CHECKPOINT_EXT = (".safetensors", ".ckpt")
+
+# text to image: Open WebUI's own default workflow, with a few more steps' worth of defaults
+GENERATE = {
+    "3": {"class_type": "KSampler", "inputs": {
+        "seed": 0, "steps": 25, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1,
+        "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
+    "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
+    "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+    "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "Prompt", "clip": ["4", 1]}},
+    "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry, low quality, watermark", "clip": ["4", 1]}},
+    "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+    "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "OpenWebUI", "images": ["8", 0]}},
+}
+GENERATE_NODES = [
+    {"type": "prompt", "key": "text", "node_ids": ["6"]},
+    {"type": "model", "key": "ckpt_name", "node_ids": ["4"]},
+    {"type": "width", "key": "width", "node_ids": ["5"]},
+    {"type": "height", "key": "height", "node_ids": ["5"]},
+    {"type": "n", "key": "batch_size", "node_ids": ["5"]},
+    {"type": "steps", "key": "steps", "node_ids": ["3"]},
+    {"type": "seed", "key": "seed", "node_ids": ["3"]},
+]
+
+# image to image: the picture is scaled to about a megapixel (any shape), then partly redrawn.
+# Open WebUI doesn't send a size or steps for edits, so neither is in the node map.
+EDIT = {
+    "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
+    "2": {"class_type": "LoadImage", "inputs": {"image": "example.png"}},
+    "3": {"class_type": "ImageScaleToTotalPixels", "inputs": {
+        "image": ["2", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 8}},
+    "4": {"class_type": "VAEEncode", "inputs": {"pixels": ["3", 0], "vae": ["1", 2]}},
+    "5": {"class_type": "CLIPTextEncode", "inputs": {"text": "Prompt", "clip": ["1", 1]}},
+    "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry, low quality, watermark", "clip": ["1", 1]}},
+    "7": {"class_type": "KSampler", "inputs": {
+        "seed": 0, "steps": 25, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 0.6,
+        "model": ["1", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["4", 0]}},
+    "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["1", 2]}},
+    "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "OpenWebUI-edit", "images": ["8", 0]}},
+}
+EDIT_NODES = [
+    {"type": "prompt", "key": "text", "node_ids": ["5"]},
+    {"type": "model", "key": "ckpt_name", "node_ids": ["1"]},
+    {"type": "image", "key": "image", "node_ids": ["2"]},
+    {"type": "seed", "key": "seed", "node_ids": ["7"]},
+]
+
+
+def base_url(iid: str, port: int | None = None) -> str:
+    """ComfyUI's address from another container on GPU Shepherd's network."""
+    return f"http://{iid}:{port or CONTAINER_PORT}"
+
+
+def checkpoints(models_dir: str | Path) -> list[str]:
+    """The checkpoint files in a ComfyUI models folder, as ComfyUI names them (relative to checkpoints/)."""
+    root = Path(models_dir) / "checkpoints"
+    try:
+        return sorted(str(p.relative_to(root)) for p in root.rglob("*")
+                      if p.is_file() and p.suffix.lower() in CHECKPOINT_EXT)
+    except OSError:
+        return []
+
+
+def pick_checkpoint(names: list[str]) -> str:
+    """The checkpoint to make pictures with: an SDXL one if there is one (the Starter's), else the first."""
+    return next((n for n in names if "xl" in n.lower()), names[0] if names else "")
+
+
+def size(checkpoint: str) -> str:
+    """The picture size a checkpoint is trained for: 1024 for SDXL-style ones, 512 for older ones."""
+    return "512x512" if checkpoint and "xl" not in checkpoint.lower() else "1024x1024"
+
+
+def settings(url: str, checkpoint: str = "") -> dict:
+    """Open WebUI's image settings (the names its API and environment use) for making and editing
+    pictures with the ComfyUI at `url`. Without a checkpoint the model is left for the user to pick
+    in Open WebUI (Admin Panel, Settings, Images lists ComfyUI's)."""
+    out = {"ENABLE_IMAGE_GENERATION": True, "IMAGE_GENERATION_ENGINE": "comfyui", "COMFYUI_BASE_URL": url,
+           "COMFYUI_WORKFLOW": json.dumps(GENERATE, separators=(",", ":")), "COMFYUI_WORKFLOW_NODES": GENERATE_NODES,
+           "IMAGE_SIZE": size(checkpoint), "IMAGE_STEPS": 25,
+           "ENABLE_IMAGE_EDIT": True, "IMAGE_EDIT_ENGINE": "comfyui", "IMAGES_EDIT_COMFYUI_BASE_URL": url,
+           "IMAGES_EDIT_COMFYUI_WORKFLOW": json.dumps(EDIT, separators=(",", ":")),
+           "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES": EDIT_NODES}
+    if checkpoint:
+        out |= {"IMAGE_GENERATION_MODEL": checkpoint, "IMAGE_EDIT_MODEL": checkpoint}
+    return out
+
+
+def openwebui_env(url: str, checkpoint: str = "") -> dict[str, str]:
+    """settings() as Open WebUI's environment variables."""
+    return {k: ("true" if v is True else json.dumps(v, separators=(",", ":")) if isinstance(v, list) else str(v))
+            for k, v in settings(url, checkpoint).items()}
+
+
+def from_env(env: dict[str, str]) -> dict:
+    """The image settings in an Open WebUI's environment, typed as its API wants them."""
+    keys = settings("x", "x")
+    out: dict = {}
+    for k, v in env.items():
+        if k not in keys:
+            continue
+        if isinstance(keys[k], bool):
+            out[k] = v.strip().lower() == "true"
+        elif isinstance(keys[k], int):
+            out[k] = int(v) if v.strip().isdigit() else keys[k]
+        elif isinstance(keys[k], list):
+            try:
+                out[k] = json.loads(v)
+            except ValueError:
+                out[k] = []
+        else:
+            out[k] = v
+    return out

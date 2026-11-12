@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 import gpushepherd
 from gpushepherd.config import Store
@@ -66,3 +67,11 @@ def test_preset_downloads_are_well_formed(name):
             used.add(words[1])
     assert used == set(groups)
     assert "default" in groups.values()
+
+
+def test_starter_open_webui_makes_pictures_as_the_app_center_sets_it_up():
+    from gpushepherd.connectors import comfyui
+    env = yaml.safe_load((Path(__file__).parent.parent / "gpushepherd/presets/starter/instances/webui.yaml")
+                         .read_text())["env"]
+    want = comfyui.openwebui_env("http://comfyui:8188", "sd_xl_base_1.0.safetensors")
+    assert {k: env.get(k) for k in want} == want

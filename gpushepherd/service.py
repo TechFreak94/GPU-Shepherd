@@ -30,7 +30,7 @@ from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge 
 from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
-from .connectors import instance_url, llamaswap, openwebui
+from .connectors import comfyui, instance_url, llamaswap, openwebui
 from .backend import BackendError
 from .downloads import IMAGE as HELPER_IMAGE, KIND as DOWNLOAD_KIND, Downloads
 from .engine import Engine
@@ -900,9 +900,14 @@ class Shepherd:
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
         gpus, ram = gpu_mod.query()[0], host.ram_gb()
         nvidia = [g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"]
-        return tpl.Machine(gpu_mem_gb=nvidia, instances=instances, servers=servers, model_sizes={}, ram_gb=ram,
-                           amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"],
-                           suggestions=self.hf_picks(nvidia, ram))
+        m = tpl.Machine(gpu_mem_gb=nvidia, instances=instances, servers=servers, model_sizes={}, ram_gb=ram,
+                        amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"],
+                        suggestions=self.hf_picks(nvidia, ram))
+        for cid in tpl.comfyui_instances(m):        # the checkpoints Open WebUI can make pictures with
+            v = next((v for v in instances[cid].volumes if v.container.rstrip("/").endswith("ComfyUI/models")), None)
+            if v:
+                m.checkpoints[cid] = comfyui.checkpoints(v.host)
+        return m
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common
@@ -1089,6 +1094,8 @@ class Shepherd:
             inst.env = inst.env | u.env
             self.store.save_instance(inst)
             msg = f"Updated {inst.name}'s settings."
+            if u.kind == "images":
+                return msg + " " + self._send_images(inst) + (" " + " ".join(u.manual) if u.manual else "")
         st = self.backend.states().get(iid)
         if st and st.running and not msg.endswith("to use it."):
             msg += " Restart it to use them."
@@ -2486,6 +2493,20 @@ class Shepherd:
             raise Problem(f"couldn't sign in to {inst.name}: {data.get('error') or logins.last_line(out)}", status=409)
         port = inst.ports[0].container if inst.ports else openwebui.CONTAINER_PORT
         return self.openwebui_client(instance_url(inst, port), data["token"])
+
+    def _send_images(self, inst: Instance) -> str:
+        """Hand a running Open WebUI the image settings in its environment through its API: it reads
+        the variables only until its image settings are first saved."""
+        if not self._running(inst.id):
+            return (f"Start {inst.name} to use them; if its image settings were changed in Open WebUI before, "
+                    "apply this again while it runs, or set them in Open WebUI: Admin Panel, Settings, Images.")
+        try:
+            self._openwebui(inst).use_images(comfyui.from_env(inst.env))
+        except (Problem, openwebui.OpenWebUIError) as err:
+            return (f"Restart {inst.name} to use them. GPU Shepherd couldn't also set them in Open WebUI "
+                    f"({err}), so if pictures don't work after the restart, set them in Open WebUI: "
+                    "Admin Panel, Settings, Images.")
+        return f"{inst.name} makes and edits pictures now: turn on Image in a chat's message box."
 
     def _embed_server(self, inst: Instance, m: tpl.Machine) -> str:
         """The model server whose embeddings model Open WebUI should use: the one it is connected to."""

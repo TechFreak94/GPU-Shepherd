@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import model_library
+from .connectors import comfyui
 from .config import (Catalog, CatalogModel, ConfigError, GpuPolicy, Instance, OffloadRule, PortMap, VolumeMap,
                      MODEL_ID, SLUG, gpu_label, gpu_vendor)
 
@@ -195,7 +196,7 @@ TEMPLATES: tuple[Template, ...] = (
         key="open-webui", tag="Chat UI", badge="OW", title="Open WebUI", group="Chat and agents",
         blurb="A ChatGPT-style web chat for your model servers, with image generation through ComfyUI.",
         points=("No GPU needed", "Connects to a model server for you, API key included",
-                "Optional: make images with ComfyUI"),
+                "Optional: make images with ComfyUI, and edit them in the chat"),
         default_id="webui", default_name="Open WebUI", description="Chat with your model servers",
         image="ghcr.io/open-webui/open-webui:main", container_port=8080, host_port=3000, gpu="none",
         env={"ENABLE_OLLAMA_API": "false"},
@@ -545,6 +546,7 @@ class Machine:
     ram_gb: float = 0.0                # system RAM (0 = unknown)
     amd_gpu_mem_gb: list[float] = field(default_factory=list)   # the AMD GPUs, for apps that run on them
     suggestions: tuple = ()            # suggested models besides the built-in ones (model_library.Suggestion)
+    checkpoints: dict[str, list[str]] = field(default_factory=dict)   # ComfyUI instance id -> its checkpoint files
 
 
 def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dict:
@@ -552,7 +554,7 @@ def defaults(t: Template, m: Machine, models_dir: str, appdata_root: str) -> dic
     taken_ports = {p.host for i in m.instances.values() for p in i.ports}
     iid = free_id(t.default_id, set(m.instances))
     name = t.default_name if iid == t.default_id else f"{t.default_name} {iid.rsplit('-', 1)[-1]}"
-    comfy = next((i.id for i in m.instances.values() if "comfyui" in (i.image + i.id).lower()), "")
+    comfy = next(iter(comfyui_instances(m)), "")
     speech = next(iter(speech_servers(m)), "")
     return {"name": name, "id": iid, "port": free_port(t.host_port, taken_ports), "gpu": t.gpu,
             "models_dir": models_dir, "appdata_dir": str(Path(appdata_root) / iid),
@@ -1049,11 +1051,20 @@ def _openwebui(a: dict, m: Machine) -> dict[str, str]:
     if comfy:
         if comfy not in m.instances:
             raise ConfigError(f"no instance '{comfy}'")
-        ports = m.instances[comfy].ports
-        port = ports[0].container if ports else 8188
-        env |= {"ENABLE_IMAGE_GENERATION": "true", "IMAGE_GENERATION_ENGINE": "comfyui",
-                "COMFYUI_BASE_URL": f"http://{comfy}:{port}"}
+        env |= comfyui_env(comfy, m)
     return env
+
+
+def comfyui_instances(m: Machine) -> list[str]:
+    """The ComfyUI instances Open WebUI can make pictures with."""
+    return [i.id for i in m.instances.values() if "comfyui" in (i.image + i.id).lower()]
+
+
+def comfyui_env(comfy: str, m: Machine) -> dict[str, str]:
+    """Open WebUI's settings for making and editing pictures with a ComfyUI instance."""
+    ports = m.instances[comfy].ports
+    url = comfyui.base_url(comfy, ports[0].container if ports else None)
+    return comfyui.openwebui_env(url, comfyui.pick_checkpoint(m.checkpoints.get(comfy, [])))
 
 
 def speech_servers(m: Machine) -> dict[str, str]:
