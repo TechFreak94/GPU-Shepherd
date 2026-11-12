@@ -816,9 +816,20 @@ def cmd_knowledge(args, c: Client) -> int:
         need(1, "upload FOLDER-OR-FILE...  (from any computer: --url http://server:8080 --token TOKEN)")
         upload_documents(c, [Path(i) for i in items])
     elif a == "send":
-        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep]")
+        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep] [--sync]")
         out(args, c.post("/api/v1/knowledge/send", {"instance": items[0], "name": args.name, "split": args.split,
-                                                "embeddings": args.embeddings}))
+                                                "embeddings": args.embeddings, "sync": True if args.sync else None}))
+    elif a == "sync-off":
+        out(args, c.call("DELETE", "/api/v1/knowledge/sync"))
+    elif a == "in":
+        need(1, "in open-webui  (what is in its knowledge bases)")
+
+        def bases(k):
+            table([[b["name"][:50], "" if b["files"] is None else b["files"],
+                    "" if b["sent"] is None else b["sent"], b["missing"] or "",
+                    "sync" if b["sync"] else "gone" if b.get("gone") else "yes" if b["ours"] else ""] for b in k["bases"]],
+                  ["KNOWLEDGE BASE", "FILES", "SENT", "NOT YET", "GPU SHEPHERD"])
+        out(args, c.get(f"/api/v1/knowledge/openwebui/{quote(items[0])}"), bases)
     elif a == "skill":
         need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd knowledge)")
         out(args, c.post(f"/api/v1/knowledge/{quote(items[0])}/skill", {"server": args.server}))
@@ -1028,14 +1039,16 @@ def add_commands(sub) -> None:
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
     p = sub.add_parser("knowledge", aliases=["books"],
                        help="documents (ebooks, manuals, notes) for chat apps and agents: list, status, folder PATH, scan, "
-                            "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
+                            "upload FOLDER..., send OPEN-WEBUI [--sync], sync-off, in OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
                             "skill-delete SKILL, ocr, delete KEY|duplicates|unreadable, clear [documents converted skills apps]")
-    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "stop", "skill",
+    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "sync-off", "in", "stop", "skill",
                                                  "skill-show", "skill-install", "skill-delete", "ocr", "delete", "clear"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="clear: without asking")
     p.add_argument("--name", default="Documents", help="send: the knowledge base's name (default Documents)")
     p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the documents folder")
+    p.add_argument("--sync", action="store_true",
+                   help="send: keep that knowledge base in sync (every scan sends new documents, takes out deleted ones)")
     p.add_argument("--embeddings", choices=("server", "keep"),
                    help="send: use the model server's embeddings model in Open WebUI, or keep the one it has")
     p.add_argument("--server", default="", help="skill: the model server that writes it (default: the first)")

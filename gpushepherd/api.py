@@ -698,11 +698,27 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def knowledge_send(request: Request):
         """Put the ready documents into an Open WebUI knowledge base: {"instance", "name", "split",
-        "embeddings": "server" | "keep"}."""
+        "embeddings": "server" | "keep", "sync": true | false}. sync true keeps it in sync from now on:
+        every scan sends new documents and takes out the ones gone from the documents folder."""
         d = body(request)
+        sync = d.get("sync")
         return JSONResponse({"message": svc.send_documents(str(d.get("instance", "")), str(d.get("name", "") or "Documents"),
-                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")))},
+                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")),
+                                                        None if sync is None else bool(sync))},
                             status_code=202)
+
+    @r.delete("/api/v1/knowledge/sync")
+    @handle
+    def knowledge_sync_stop(request: Request):
+        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
+        return {"message": svc.stop_sync()}
+
+    @r.get("/api/v1/knowledge/openwebui/{iid}")
+    @handle
+    def knowledge_openwebui(request: Request, iid: str):
+        """What is in an Open WebUI's knowledge: {"bases": [{"id", "name", "files", "ours", "sent", "missing",
+        "sync", "path"}], "sync", "stale"}. "path" is the knowledge base's page in Open WebUI."""
+        return svc.openwebui_knowledge(iid)
 
     @r.post("/api/v1/knowledge/{key}/skill")
     @handle

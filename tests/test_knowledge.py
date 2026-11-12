@@ -1,4 +1,5 @@
 """Books: finding and reading ebooks, sending them to Open WebUI, and skills made from them."""
+import os
 import shutil
 import time
 import zipfile
@@ -200,6 +201,10 @@ def test_make_skill_with_a_model():
 
 class FakeOpenWebUI:
     made: dict = {}
+    files: dict = {}
+    others: list = []
+    removed: list = []
+    deleted: list = []
     uploads: list = []
     embedding_now = {"engine": "", "model": "sentence-transformers/all-MiniLM-L6-v2", "url": ""}
     switched: list = []
@@ -223,6 +228,29 @@ class FakeOpenWebUI:
         return f"f{len(self.uploads)}"
 
     def add(self, kid, fid):
+        self.files.setdefault(kid, []).append(fid)
+
+    def knowledge_bases(self):
+        return dict(self.made)
+
+    def knowledge_list(self):
+        return [{"id": k, "name": n, "description": "", "files": None} for n, k in self.made.items()] + self.others
+
+    def file_count(self, kid):
+        return len(self.files.get(kid, []))
+
+    def remove(self, kid, fid):
+        self.removed.append((kid, fid))
+        if fid in self.files.get(kid, []):
+            self.files[kid].remove(fid)
+
+    def delete_file(self, fid):
+        self.deleted.append(fid)
+
+    def knowledge_empty(self, kid):
+        return not self.files.get(kid)
+
+    def delete_knowledge(self, kid):
         pass
 
 
@@ -244,6 +272,7 @@ def stack(tmp_path, monkeypatch):
     app = create_app(data_dir=str(tmp_path), backend=backend, demo=True, autostart=False)
     svc = app.state.svc
     FakeOpenWebUI.made, FakeOpenWebUI.uploads, FakeOpenWebUI.switched = {}, [], []
+    FakeOpenWebUI.files, FakeOpenWebUI.others, FakeOpenWebUI.removed, FakeOpenWebUI.deleted = {}, [], [], []
     svc.openwebui_client = FakeOpenWebUI
     token = auth.api_token(Store(tmp_path))
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
@@ -477,6 +506,25 @@ def test_open_webui_client(monkeypatch):
     assert sent["RAG_EMBEDDING_MODEL"] == sent["embedding_model"] == "embed" and sent["RAG_EMBEDDING_QUERY_PREFIX"] == "Query: "
 
 
+def test_open_webui_lists_knowledge_bases_and_counts_files(monkeypatch):
+    import httpx
+
+    def request(method, url, headers=None, timeout=None, **kw):
+        path = url.removeprefix("http://w:8080")
+        reply = {"/api/v1/knowledge/?page=1": [{"id": "k1", "name": "A", "files": [{"id": "f1"}, {"id": "f2"}]},
+                                               {"id": "k2", "name": "B", "description": "notes"},
+                                               {"id": "k3", "name": "C", "data": {"file_ids": ["f3"]}}],
+                 "/api/v1/knowledge/k2": {"id": "k2", "name": "B"},              # newer: files a page at a time
+                 "/api/v1/knowledge/k2/files?page=1": {"items": [{"id": "f4"}], "total": 7}}
+        return httpx.Response(200, json=reply[path]) if path in reply else httpx.Response(404, json={})
+    monkeypatch.setattr(httpx, "request", request)
+    ow = openwebui.OpenWebUI("http://w:8080/", "tok")
+    assert ow.knowledge_list() == [{"id": "k1", "name": "A", "description": "", "files": 2},
+                                   {"id": "k2", "name": "B", "description": "notes", "files": None},
+                                   {"id": "k3", "name": "C", "description": "", "files": 1}]
+    assert ow.file_count("k2") == 7 and ow.file_count("nope") is None
+
+
 # --------------------------------------------------------------------------- reading what EPUBs in the wild get wrong
 
 def odd_epub(path: Path, opf: str | None, files: dict[str, str], container: bool = True) -> Path:
@@ -579,7 +627,7 @@ def test_an_older_install_is_moved_into_the_knowledge_folder(tmp_path):
     assert (other / "books").is_dir() and str(lib.folder()) == "/srv/mine"
 
 
-def test_storage_reasons_clear_and_old_names(stack):
+def test_storage_reasons_clear_and_old_names(stack, monkeypatch):
     app, client, backend, data = stack
     svc = app.state.svc
     folder = data / "knowledge" / "documents"
@@ -610,11 +658,11 @@ def test_storage_reasons_clear_and_old_names(stack):
     assert installed.is_dir()
 
     removed, deleted, gone = [], [], []
-    FakeOpenWebUI.knowledge_bases = lambda self: dict(self.made)
-    FakeOpenWebUI.remove = lambda self, kid, fid: removed.append((kid, fid))
-    FakeOpenWebUI.delete_file = lambda self, fid: deleted.append(fid)
-    FakeOpenWebUI.knowledge_empty = lambda self, kid: True
-    FakeOpenWebUI.delete_knowledge = lambda self, kid: gone.append(kid)
+    monkeypatch.setattr(FakeOpenWebUI, "knowledge_bases", lambda self: dict(self.made))
+    monkeypatch.setattr(FakeOpenWebUI, "remove", lambda self, kid, fid: removed.append((kid, fid)))
+    monkeypatch.setattr(FakeOpenWebUI, "delete_file", lambda self, fid: deleted.append(fid))
+    monkeypatch.setattr(FakeOpenWebUI, "knowledge_empty", lambda self, kid: True)
+    monkeypatch.setattr(FakeOpenWebUI, "delete_knowledge", lambda self, kid: gone.append(kid))
     page = browser(app).get("/knowledge?show=failed").text
     assert page.count("bad.epub") + page.count("worse.epub") >= 2 and "bread.epub" not in page
     assert browser(app).get("/books", follow_redirects=False).headers["location"] == "/knowledge"
@@ -700,7 +748,7 @@ def test_scanned_pdfs_are_read_with_ocr(tmp_path, monkeypatch):
     assert lib.scan() == {"ready": 2}                         # kept at the next scan
 
 
-def test_delete_one_document(stack):
+def test_delete_one_document(stack, monkeypatch):
     app, client, backend, data = stack
     svc = app.state.svc
     folder = data / "knowledge" / "documents"
@@ -717,9 +765,9 @@ def test_delete_one_document(stack):
     svc.library.update(lambda d: d["books"][key].sent.update({"webui/Documents": "f9"}))
     start(app, client, "webui")
     removed, deleted = [], []
-    FakeOpenWebUI.knowledge_bases = lambda self: {"Documents": "kb7"}
-    FakeOpenWebUI.remove = lambda self, kid, fid: removed.append((kid, fid))
-    FakeOpenWebUI.delete_file = lambda self, fid: deleted.append(fid)
+    monkeypatch.setattr(FakeOpenWebUI, "knowledge_bases", lambda self: {"Documents": "kb7"})
+    monkeypatch.setattr(FakeOpenWebUI, "remove", lambda self, kid, fid: removed.append((kid, fid)))
+    monkeypatch.setattr(FakeOpenWebUI, "delete_file", lambda self, fid: deleted.append(fid))
     r = browser(app).post(f"/knowledge/{key}/delete", headers={"HX-Request": "true"})
     assert r.status_code == 204 and "Deleted" in r.headers["HX-Redirect"]
     assert not (folder / "Cooking").exists() and (folder / "keep.epub").exists()
@@ -751,3 +799,63 @@ def test_delete_all_duplicates_and_unreadable(stack):
     assert not (folder / "bad.epub").exists() and (folder / "old.mobi").exists()
     assert sorted(b.status for b in svc.library.books()) == ["ready", "skipped"]
     assert client.post("/api/v1/knowledge/delete", json={"status": "failed"}).status_code == 409
+
+
+def test_sync_keeps_an_open_webui_knowledge_base_up_to_date(stack):
+    app, client, backend, data = stack
+    svc = app.state.svc
+    folder = data / "knowledge" / "documents"
+    epub(folder / "bread.epub", title="Bread")
+    epub(folder / "py.epub", title="Python", chapters=[("Y", "python " + WORDS)])
+    start(app, client, "webui")
+    client.post("/api/v1/knowledge/scan")
+    finish(svc)
+    r = client.post("/api/v1/knowledge/send", json={"instance": "webui", "name": "Library", "sync": True})
+    assert r.status_code == 202 and not finish(svc).error
+    assert client.get("/api/v1/knowledge").json()["sync"] == {"instance": "webui", "name": "Library", "split": False,
+                                                              "embeddings": True}
+    sent = {b.name: b.sent["webui/Library"] for b in svc.library.books()}
+    # a new document, one deleted by hand and one changed: the scan brings Open WebUI up to date
+    epub(folder / "soup.epub", title="Soup", chapters=[("S", "soup " + WORDS)])
+    (folder / "bread.epub").unlink()
+    epub(folder / "py.epub", title="Python", chapters=[("Y", "python three " + WORDS)])
+    os.utime(folder / "py.epub", (time.time() + 5, time.time() + 5))
+    client.post("/api/v1/knowledge/scan")
+    t = finish(svc)
+    assert not t.error, t.error
+    assert "Sent 2 documents" in t.result and "took out 2 old copies" in t.result, t.result
+    gone = {sent["Bread - Ann Author"], sent["Python - Ann Author"]}
+    assert set(FakeOpenWebUI.deleted) == gone and {f for _, f in FakeOpenWebUI.removed} == gone
+    assert FakeOpenWebUI.uploads[-2:] == ["Python - Ann Author.md", "Soup - Ann Author.md"]
+    assert all("webui/Library" in b.sent for b in svc.library.books()) and not svc.library.load()["stale"]
+    # what is in Open WebUI, next to what GPU Shepherd sent there
+    FakeOpenWebUI.others = [{"id": "x1", "name": "Notes", "description": "mine", "files": 4}]
+    k = client.get("/api/v1/knowledge/openwebui/webui").json()
+    assert [(b["name"], b["files"], b["ours"], b["sent"], b["missing"], b["sync"]) for b in k["bases"]] == [
+        ("Library", 2, True, 2, 0, True), ("Notes", 4, False, None, 0, False)]
+    html = browser(app).get("/knowledge/openwebui/webui").text
+    assert "/workspace/knowledge/kb0" in html and "made in Open WebUI" in html and ">sync<" in html
+    assert "Sync on" in browser(app).get("/knowledge").text
+    # the knowledge base deleted in Open WebUI: the next sync makes it again
+    FakeOpenWebUI.made.clear()
+    client.post("/api/v1/knowledge/scan")
+    assert "Sent 2 documents" in finish(svc).result
+    # stopped: deleting a document notes its copy, the next sync takes it out
+    assert "Stopped syncing" in client.delete("/api/v1/knowledge/sync").json()["message"]
+    assert client.delete("/api/v1/knowledge/sync").status_code == 409
+    epub(folder / "tea.epub", title="Tea", chapters=[("T", "tea " + WORDS)])
+    client.post("/api/v1/knowledge/scan")
+    assert finish(svc).result.startswith("Found the documents") and "Tea - Ann Author.md" not in FakeOpenWebUI.uploads
+    assert client.post("/api/v1/instances/webui/stop").status_code in (200, 202)
+    for _ in range(500):
+        if not app.state.jobs.busy:
+            break
+        time.sleep(0.01)
+    soup = next(b for b in svc.library.books() if b.name.startswith("Soup"))
+    assert "next send or sync" in client.delete(f"/api/v1/knowledge/{soup.key}").json()["message"]
+    assert svc.library.load()["stale"] == [{"target": "webui/Library", "fid": soup.sent["webui/Library"]}]
+    start(app, client, "webui")
+    client.post("/api/v1/knowledge/send", json={"instance": "webui", "name": "Library"})
+    t = finish(svc)
+    assert "took out 1 old copy" in t.result and soup.sent["webui/Library"] in FakeOpenWebUI.deleted
+    assert not client.get("/api/v1/knowledge").json()["sync"]

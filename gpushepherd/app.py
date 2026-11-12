@@ -1280,7 +1280,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         raw = request.state.form
         emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
         return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
-                                                 bool(raw.get("split")), emb))
+                                                 bool(raw.get("split")), emb, True if raw.get("sync") else None))
+
+    @app.post("/knowledge/sync/stop")
+    def knowledge_sync_stop():
+        return knowledge_done(svc.stop_sync)
+
+    @app.get("/knowledge/openwebui/{iid}", response_class=HTMLResponse)
+    def knowledge_openwebui(request: Request, iid: str):
+        """What is in an Open WebUI's knowledge (loaded into the Knowledge page after it shows: signing in takes a moment)."""
+        try:
+            k, err = svc.openwebui_knowledge(iid), ""
+        except Problem as e:
+            k, err = None, e.msg
+        inst = svc.store.instances()[0].get(iid)
+        base = base_url(request, inst.open_url_port, "/").rstrip("/") if inst and inst.open_url_port else ""
+        return templates.TemplateResponse(request, "partials/knowledge_openwebui.html", {"k": k, "err": err, "base": base})
 
     @app.post("/knowledge/ocr")
     def knowledge_ocr():
