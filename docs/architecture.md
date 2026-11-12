@@ -12,9 +12,10 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       │     ├─ scheduler.py   pure GPU planner (no I/O)
                       │     ├─ gpu.py         nvidia-smi
                       │     ├─ backend.py     DockerBackend (docker SDK) / FakeBackend
-                      │     └─ connectors/llamaswap.py   render config, talk to llama-swap
+                      │     └─ connectors/   llamaswap.py (render config, talk to llama-swap), openwebui.py (its knowledge, embeddings and image settings through its API), comfyui.py (the workflows and node maps Open WebUI makes and edits pictures with)
                       ├─ instance_templates.py   the App Center's apps and what they build (pure)
                       ├─ model_library.py   suggested models, whether they fit, their settings (pure)
+                      ├─ hf_models.py  models trending on Hugging Face that fit this machine (daily, cached)
                       ├─ downloads.py  fetches suggested models in a helper container (curl)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
@@ -25,6 +26,8 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       ├─ tuning.py     measured VRAM and speed -> suggested adjustments (offered, never forced)
                       ├─ first_run.py  creates a preset on the first start without install.sh
                       ├─ app_updates.py  settings installed apps are missing from their current template
+                      ├─ knowledge.py / knowledge_skills.py   documents -> text, the library on disk; drafting agent skills from a document
+                      ├─ tailscale.py  Tailscale on the host (Settings > Remote access): status files written by update.sh's service
                       ├─ logins.py     apps' accounts: read them, scripts that set a new password (pure)
                       ├─ credits.py    open-source projects and licenses for the Credits dialog
                       ├─ auth.py       scrypt password hashing, first-run password, API token

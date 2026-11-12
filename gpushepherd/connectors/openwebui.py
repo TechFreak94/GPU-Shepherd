@@ -96,6 +96,43 @@ class OpenWebUI:
                 break
         return found
 
+    def knowledge_list(self) -> list[dict]:
+        """Every knowledge base: {"id", "name", "description", "files"} (files: how many, None when
+        this version doesn't say in the list; see file_count)."""
+        out: list[dict] = []
+        seen: set[str] = set()
+        for page in range(1, 1000):
+            data = self._call("GET", f"/api/v1/knowledge/?page={page}")
+            items = data.get("items", []) if isinstance(data, dict) else data or []
+            for k in items:
+                if isinstance(k, dict) and k.get("id") and k["id"] not in seen:
+                    seen.add(k["id"])
+                    files = k.get("files")
+                    if files is None and isinstance(k.get("data"), dict):
+                        files = k["data"].get("file_ids")
+                    out.append({"id": k["id"], "name": k.get("name", ""), "description": k.get("description") or "",
+                                "files": len(files) if isinstance(files, list) else None})
+            if not isinstance(data, dict) or not items or len(seen) >= int(data.get("total") or 0):
+                break
+        return out
+
+    def file_count(self, kid: str) -> int | None:
+        """How many files a knowledge base has (None when it can't tell). Older versions list them
+        with the knowledge base, newer ones a page at a time."""
+        data = self._call("GET", f"/api/v1/knowledge/{kid}", ok404=True)
+        if isinstance(data, dict):
+            files = data.get("files")
+            if files is None and isinstance(data.get("data"), dict):
+                files = data["data"].get("file_ids")
+            if isinstance(files, list):
+                return len(files)
+        page = self._call("GET", f"/api/v1/knowledge/{kid}/files?page=1", ok404=True)
+        if isinstance(page, dict) and page.get("total") is not None:
+            return int(page["total"])
+        if isinstance(page, list):
+            return len(page)
+        return None
+
     def knowledge_id(self, name: str, description: str = "") -> str:
         """The id of the knowledge base called `name`, made if there isn't one."""
         found = self.knowledge_bases().get(name)
@@ -177,3 +214,16 @@ class OpenWebUI:
         if query_prefix:
             body["RAG_EMBEDDING_QUERY_PREFIX"] = query_prefix
         self._call("POST", "/api/v1/retrieval/embedding/update", json=body)
+
+    def images(self) -> dict:
+        """Open WebUI's image settings (making and editing pictures)."""
+        data = self._call("GET", "/api/v1/images/config", ok404=True)
+        return data if isinstance(data, dict) else {}
+
+    def use_images(self, values: dict) -> None:
+        """Change some image settings, keeping the rest (Open WebUI wants them all in one go)."""
+        current = self.images()
+        if not current:
+            raise OpenWebUIError("this Open WebUI has no image settings to change: update it to a newer version")
+        self._call("POST", "/api/v1/images/config/update", json=current | values)
+

@@ -6,7 +6,7 @@ gets both. Everything is configured from the browser - no compose files to edit.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-> Status: **Alpha** (0.x). It works on one Docker host with NVIDIA GPUs. Expect rough edges and
+> Status: **Alpha** (0.x). It works on one Docker host with NVIDIA GPUs (AMD GPUs are experimental). Expect rough edges and
 > breaking changes to the config format before 1.0.
 
 ## Why
@@ -21,8 +21,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 - **App Center**: install a Llama Swap server (with a chat model, a coding model, an embeddings model for
   chatting with your documents, or any mix), Ollama, vLLM, Open WebUI, LibreChat, AnythingLLM,
-  Hermes Agent, SillyTavern, Open Notebook, Langflow (marked *Experimental*), ComfyUI, InvokeAI or
-  Speaches (speech to text and text to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
+  Hermes Agent, OpenCode, SillyTavern, Open Notebook, Langflow (marked *Experimental*), ComfyUI, InvokeAI or
+  Speaches (speech to text and text to speech, which Open WebUI can use for voice). Open WebUI
+  and SillyTavern can make pictures with a ComfyUI you pick (Open WebUI edits them too). Apps that need a helper container get it too:
   LibreChat comes with its MongoDB database and Open Notebook with its SurrealDB database; they
   start and stop with the app. Each card
   shows the app's license and project page. **Logins** on an app's card lists its accounts and
@@ -61,7 +62,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Suggested models**: a short list of current chat, coding and embeddings models (Qwen3.5,
   Qwen3.6, Qwen3.8, Gemma 4, Qwen3 Coder, Qwen3 Embedding), each saying whether it fits this
   machine's GPUs and RAM. One click downloads it in the background and adds it with its makers'
-  settings: sampling, thinking on or off, image input, MTP and the GPU / RAM split.
+  settings: sampling, thinking on or off, image input, MTP and the GPU / RAM split. Models trending on
+  Hugging Face that fit your machine are suggested too (Settings turns that off). The model table
+  shows each model's size on disk and the memory it needs, and **Delete file** frees the disk space.
 
   ![Suggested models](docs/screenshots/suggested-models.png)
 - **Model settings**: thinking on or off, MTP (multi-token prediction, up to twice as fast),
@@ -81,14 +84,24 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Light or dark**: follows your device, or pick Light or Dark with the theme button at the top.
 
   ![Dark theme](docs/screenshots/dashboard-dark.png)
-- **Storage and trash**: free space per disk, folder sizes, unused app images and model files, and a
+- **Storage and trash**: free space per disk (each named by where it is mounted), folder sizes, unused app images and model files, and a
   trash that deleting an instance or a file goes to first, so you can put it back.
 - **Knowledge**: put your documents (ebooks, manuals, notes: EPUB, PDF, DOCX, TXT, Markdown) in the
   documents folder and a scan reads each one into text, using the best format of each and skipping
   duplicates. Ones it can't read (DRM, scanned PDFs) are listed with the reason. Send them to an Open
-  WebUI knowledge base to chat with them, or have the model server draft an agent skill from one for
+  WebUI knowledge base to chat with them (**Keep it in sync** sends new documents and takes out
+  deleted or changed ones after every scan; the page lists each Open WebUI's knowledge bases), or have the model server draft an agent skill from one for
   Hermes Agent. Load documents from the browser: drop files, a whole folder or zips on the page (no
   SSH needed). The page shows where it is all kept, and can clear it all out to start over.
+
+  ![Knowledge: sending documents to Open WebUI, kept in sync](docs/screenshots/knowledge.png)
+- **Remote access**: Settings > Remote access sets up [Tailscale](https://tailscale.com) on the server
+  (install, log in, HTTPS) and shows the addresses to open the dashboard and apps at from your phone
+  or laptop, without opening ports.
+
+  ![Remote access](docs/screenshots/remote-access.png)
+- **Power menu**: the power icon at the top restarts GPU Shepherd (apps keep running), restarts the
+  whole server or shuts it down.
 - **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
   Separately, GPU Shepherd checks the registries for newer **releases of each app's image** and
   updates the app on a button, or by itself if you choose.
@@ -176,7 +189,7 @@ installer's output, `nvidia-smi` and your distro; leave out passwords and tokens
 | CPU | x86-64, 4 cores |
 | RAM | 32 GB (64 GB recommended for the largest models, which keep most of their layers in system RAM) |
 | Storage | 128 GB free for models and app data; an SSD is highly preferred |
-| GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+) |
+| GPU | 1 or more discrete NVIDIA GPUs, GeForce GTX 1070 or newer (Pascal, compute capability 6.1+). AMD GPUs (RX 400 series or newer, amdgpu driver) work through Vulkan, experimentally |
 
 Less may run, but isn't supported: with under 32 GB of RAM, plan on models that fit in GPU memory.
 
@@ -396,7 +409,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and
 - Import an existing `docker compose` project as instances.
 - Scheduled actions (e.g. give the LLM every GPU overnight).
 - Live log streaming, Prometheus metrics, multiple users.
-- AMD (ROCm) and multi-host support.
+- Tested AMD support (it exists, but only through Vulkan and untried on real cards), ROCm images, and multi-host support.
 
 ## License
 

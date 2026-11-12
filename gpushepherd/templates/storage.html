@@ -82,6 +82,21 @@
   {% endif %}
 </div>
 
+<h3>Pictures</h3>
+<div class="card">
+  <p class="small muted" style="margin-top:0">What ComfyUI made (pictures from Open WebUI and SillyTavern included) and the pictures it was given to edit. They stay after a chat is deleted.</p>
+  {% if pictures %}
+  <table class="table">
+    <tr><th>App</th><th>Folder</th><th>Pictures</th><th>Size</th></tr>
+    {% for a in pictures %}{% for f in a.folders %}
+    <tr><td>{{ a.name }}</td><td>{{ f.label }}</td>
+      <td>{% if f.visible %}{{ f.count }}{% else %}<span class="muted">not visible</span>{% endif %}</td><td>{% if f.visible %}{{ f.size|gb }}{% endif %}</td></tr>
+    {% endfor %}{% endfor %}
+  </table>
+  <div class="actions"><a class="btn" href="/storage/pictures">Look through and clear out…</a></div>
+  {% else %}<p class="muted small" style="margin:0">No ComfyUI is installed.</p>{% endif %}
+</div>
+
 <h3>Folders</h3>
 <div class="card">
   {% if st.folders %}

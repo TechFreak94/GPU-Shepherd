@@ -169,6 +169,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         data = body(request)
         return {"message": svc.tuning_decide(iid, str(data.get("key", "")), str(data.get("action", "")))}
 
+    @r.post("/api/v1/instances/{iid}/send-images")
+    @handle
+    def send_images(request: Request, iid: str):
+        return {"message": svc.send_images(iid)}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     def instance_action(request: Request, iid: str, action: str):
@@ -229,7 +234,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             "server": ({tpl.NEW_SERVER: "Install a Llama Swap server with it"} | {k: v["name"] for k, v in m.servers.items()})
             if t.connects else {},
             "comfyui": {i.id: i.name for i in m.instances.values() if i.kind == "container" and i.gpu.mode != "none"}
-            if t.connects == "openwebui" else {},
+            if t.connects in ("openwebui", "sillytavern") else {},
             "speech": tpl.speech_servers(m) if t.connects == "openwebui" else {},
             "model_slots": {f"{s.key}_file": s.label for s in tpl.slots(t)},
         }
@@ -284,8 +289,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
 
     @r.delete("/api/v1/instances/{iid}/models/{mid}")
     @handle
-    def delete_model(request: Request, iid: str, mid: str):
-        return {"message": svc.delete_model(iid, mid)}
+    def delete_model(request: Request, iid: str, mid: str, files: bool = False):
+        return {"message": svc.delete_model(iid, mid, files)}
 
     @r.post("/api/v1/instances/{iid}/models/{mid}/{op}")
     @handle
@@ -314,6 +319,8 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return {"message": svc.discard_download(iid, key)}
         if op == "forget":
             return {"message": svc.forget_link(iid, key)}
+        if op == "delete":
+            return {"message": svc.delete_download(iid, key)}
         raise Problem("unknown operation", status=404)
 
     @r.post("/api/v1/instances/{iid}/models/from-link")
@@ -415,7 +422,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         return {"admin_user": s.admin_user, "bind_address": s.bind_address, "network": s.network,
                 "container_prefix": s.container_prefix, "data_dir": str(store.root),
                 "host_data_dir": str(engine.host_data_dir), "trash_days": s.trash_days,
-                "image_check_hours": s.image_check_hours}
+                "image_check_hours": s.image_check_hours, "hf_suggestions": s.hf_suggestions}
 
     @r.get("/api/v1/settings")
     def get_settings():
@@ -425,7 +432,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def patch_settings(request: Request):
         data = body(request)
-        unknown = set(data) - {"bind_address", "network", "trash_days", "image_check_hours"}
+        unknown = set(data) - {"bind_address", "network", "trash_days", "image_check_hours", "hf_suggestions"}
         if unknown:
             raise Problem(f"unknown or read-only setting(s): {', '.join(sorted(unknown))}")
         msgs = []
@@ -439,6 +446,10 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             if not hours.isdigit():
                 raise Problem("image_check_hours must be a whole number of hours (0 = only when asked)")
             msgs.append(svc.set_image_check_hours(int(hours)))
+        if "hf_suggestions" in data:
+            if not isinstance(data["hf_suggestions"], bool):
+                raise Problem("hf_suggestions must be true or false")
+            msgs.append(svc.set_hf_suggestions(data["hf_suggestions"]))
         if {"bind_address", "network"} & set(data):
             msgs.append(svc.set_containers(data.get("bind_address"), data.get("network")))
         return {"message": " ".join(msgs), "settings": settings_json()}
@@ -524,6 +535,27 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             return {"message": svc.trash_leftover(str(data.get("name", "")))}
         raise Problem("unknown clean-up (images, orphans, files or leftovers)", status=404)
 
+    @r.get("/api/v1/pictures")
+    @handle
+    def get_pictures(request: Request):
+        return svc.pictures()
+
+    @r.get("/api/v1/pictures/{iid}/{kind}")
+    @handle
+    def get_picture_page(request: Request, iid: str, kind: str, page: int = 1):
+        return svc.picture_page(iid, kind, page)
+
+    @r.post("/api/v1/pictures/{iid}/{kind}/trash")
+    @handle
+    def trash_pictures(request: Request, iid: str, kind: str):
+        data = body(request)
+        names, days = data.get("names"), data.get("older_than")
+        if names is not None and not (isinstance(names, list) and all(isinstance(n, str) for n in names)):
+            raise Problem('send {"names": [...]} or {"older_than": DAYS}')
+        if days is not None and (not isinstance(days, int) or isinstance(days, bool) or days < 0):
+            raise Problem("older_than is a number of days (0 = all)")
+        return {"message": svc.trash_pictures(iid, kind, names or None, days)}
+
     @r.get("/api/v1/trash")
     @handle
     def get_trash(request: Request):
@@ -576,6 +608,22 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def power(request: Request, action: str):
         """restart (GPU Shepherd only), reboot or shutdown (the server)."""
         return JSONResponse({"message": svc.power(action)}, status_code=202)
+
+    # ------------------------------------------------------------------ Tailscale (on the host)
+    @r.get("/api/v1/tailscale")
+    def get_tailscale():
+        """This machine's Tailscale state, as the host last reported it."""
+        ts = svc.tailscale_status()
+        return {"installed": ts.installed, "state": ts.backend, "connected": ts.connected, "name": ts.name,
+                "ips": ts.ips, "tailnet": ts.tailnet, "https": ts.https, "https_available": bool(ts.cert_domains),
+                "login_url": ts.auth_url, "dashboard_urls": ts.dashboard_urls, "busy": ts.busy, "run": ts.run,
+                "message": ts.message, "checked_at": ts.at, "service": ts.service, "wsl": ts.wsl, "command": ts.command}
+
+    @r.post("/api/v1/tailscale/{action}")
+    @handle
+    def tailscale_request(request: Request, action: str):
+        """refresh, install, up (log in or connect), down, https-on, https-off or logout; the host does it."""
+        return JSONResponse({"message": svc.request_tailscale(action)}, status_code=202)
 
     @r.post("/api/v1/updates/credentials")
     @handle
@@ -692,11 +740,27 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def knowledge_send(request: Request):
         """Put the ready documents into an Open WebUI knowledge base: {"instance", "name", "split",
-        "embeddings": "server" | "keep"}."""
+        "embeddings": "server" | "keep", "sync": true | false}. sync true keeps it in sync from now on:
+        every scan sends new documents and takes out the ones gone from the documents folder."""
         d = body(request)
+        sync = d.get("sync")
         return JSONResponse({"message": svc.send_documents(str(d.get("instance", "")), str(d.get("name", "") or "Documents"),
-                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")))},
+                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")),
+                                                        None if sync is None else bool(sync))},
                             status_code=202)
+
+    @r.delete("/api/v1/knowledge/sync")
+    @handle
+    def knowledge_sync_stop(request: Request):
+        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
+        return {"message": svc.stop_sync()}
+
+    @r.get("/api/v1/knowledge/openwebui/{iid}")
+    @handle
+    def knowledge_openwebui(request: Request, iid: str):
+        """What is in an Open WebUI's knowledge: {"bases": [{"id", "name", "files", "ours", "sent", "missing",
+        "sync", "path"}], "sync", "stale"}. "path" is the knowledge base's page in Open WebUI."""
+        return svc.openwebui_knowledge(iid)
 
     @r.post("/api/v1/knowledge/{key}/skill")
     @handle

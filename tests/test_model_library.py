@@ -262,3 +262,48 @@ def test_slow_dense_models_are_offered_last():
     assert set(order[-2:]) == {"devstral-2-123b", "devstral-2-123b-iq3"}
     rules = ml.offload(big, [8.0, 8.0])
     assert [r.gpu_layers for r in rules] == [8, 17]
+
+
+@pytest.mark.parametrize("link", [
+    "https://huggingface.co/someone/X-GGUF/resolve/main/X-Q8_0.gguf",
+    "https://huggingface.co/someone/X-GGUF/resolve/main/X-Q8_0.gguf?download=true",
+    "https://huggingface.co/someone/X-GGUF/blob/main/X-Q8_0.gguf",
+    "https://huggingface.co/someone/X-GGUF/raw/main/X-Q8_0.gguf",
+    "https://huggingface.co/someone/X-GGUF?show_file_info=X-Q8_0.gguf",
+    "https://huggingface.co/someone/X-GGUF/?show_file_info=X-Q8_0.gguf",
+    "https://hf.co/someone/X-GGUF/blob/main/X-Q8_0.gguf",
+    "  https://www.huggingface.co/someone/X-GGUF?show_file_info=X-Q8_0.gguf#top ",
+])
+def test_gguf_link_accepts_hugging_face_page_links(link):
+    assert ml.gguf_link(link) == "https://huggingface.co/someone/X-GGUF/resolve/main/X-Q8_0.gguf"
+
+
+def test_gguf_link_keeps_folders_and_revisions():
+    assert (ml.gguf_link("https://huggingface.co/a/B-GGUF?show_file_info=Q4_K_M/B-Q4_K_M.gguf")
+            == "https://huggingface.co/a/B-GGUF/resolve/main/Q4_K_M/B-Q4_K_M.gguf")
+    assert (ml.gguf_link("https://huggingface.co/a/B-GGUF/blob/abc123/B.gguf")
+            == "https://huggingface.co/a/B-GGUF/resolve/abc123/B.gguf")
+    assert ml.gguf_link("https://example.com/x/B.gguf?x=1") == "https://example.com/x/B.gguf"
+
+
+@pytest.mark.parametrize("link", [
+    "https://huggingface.co/someone/X-GGUF",
+    "https://huggingface.co/someone/X-GGUF?show_file_info=README.md",
+    "https://huggingface.co/someone/X-GGUF?show_file_info=X-00001-of-00002.gguf",
+    "ftp://huggingface.co/someone/X-GGUF/resolve/main/X.gguf",
+])
+def test_gguf_link_still_refuses_what_it_cannot_download(link):
+    with pytest.raises(ValueError):
+        ml.gguf_link(link)
+
+
+def test_models_added_from_a_link_say_how_much_ram_they_need():
+    hf = "https://huggingface.co/someone"
+    dense = ml.from_link(f"{hf}/Big-GGUF/resolve/main/Big-70B-Q4_K_M.gguf", gb=40)
+    f = ml.fit(dense, [8.0, 8.0], 64)
+    assert f.ok and f.slow and f.ram_gb == 32 and f.text.startswith("2 GPUs + about 32 GB of RAM: slow")
+    assert not ml.fit(dense, [8.0, 8.0], 32).ok and "GB of RAM beside your GPUs" in ml.fit(dense, [8.0, 8.0], 32).text
+    assert ml.fit(dense, [24.0, 24.0], 64).text == "Fits on 2 GPUs"
+    moe = ml.from_link(f"{hf}/Coder-GGUF/resolve/main/Coder-30B-A3B-Q4_K_M.gguf", gb=18)
+    f = ml.fit(moe, [8.0], 64)
+    assert moe.moe and f.ok and not f.slow and f.text.startswith("One GPU + about")

@@ -4,7 +4,7 @@ import yaml
 from gpushepherd import app_updates as au, instance_templates as tpl
 from gpushepherd.config import Catalog, CatalogModel, Instance, PortMap, VolumeMap
 
-from test_api import run, stack  # noqa: F401 - fixtures
+from test_api import run, stack, wait  # noqa: F401 - fixtures
 
 
 def machine(embed="embed"):
@@ -97,3 +97,133 @@ def test_apply_all_follows_on_to_the_updates_it_brings(stack):  # noqa: F811
     assert r.status_code == 200 and "Applied" in r.headers["HX-Trigger"]
     assert client.get("/api/v1/app-updates").json() == []         # the server's model, then the chat app's settings
     assert "up to date" in client.post("/api/v1/app-updates/apply-all").json()["message"]
+
+
+def comfy_machine(tmp_path, checkpoint="sd_xl_base_1.0.safetensors"):
+    m = machine()
+    m.instances["comfyui"] = Instance(id="comfyui", name="ComfyUI", image="yanwk/comfyui-boot:cu130-slim-v2",
+                                      ports=[PortMap(host=8188, container=8188)])
+    m.checkpoints["comfyui"] = [checkpoint] if checkpoint else []
+    return m
+
+
+def test_open_webui_is_offered_pictures_with_comfyui(tmp_path):
+    m = comfy_machine(tmp_path)
+    base = {"OPENAI_API_BASE_URLS": "http://llm:8080/v1", "OPENAI_API_KEYS": "sk-abc", "DEFAULT_MODELS": "chat",
+            "ENABLE_OLLAMA_API": "false", **{k: "x" for k in ("RAG_EMBEDDING_ENGINE", "RAG_OPENAI_API_BASE_URL",
+                                                                "RAG_OPENAI_API_KEY", "RAG_EMBEDDING_MODEL")}}
+    webui = Instance(id="webui", name="Open WebUI", image="ghcr.io/open-webui/open-webui:main", env=base)
+    [u] = au.for_instance(webui, m)                       # not connected yet: offered
+    assert u.kind == "images" and u.title.startswith("Make and edit pictures")
+    assert u.env["COMFYUI_BASE_URL"] == "http://comfyui:8188" and u.env["IMAGE_EDIT_ENGINE"] == "comfyui"
+    assert u.env["IMAGE_GENERATION_MODEL"] == "sd_xl_base_1.0.safetensors" and not u.manual
+    # an install from before the workflows only has the address: finished, nothing it has is changed
+    old = webui.model_copy(update={"env": base | {"ENABLE_IMAGE_GENERATION": "true", "IMAGE_GENERATION_ENGINE":
+                                                  "comfyui", "COMFYUI_BASE_URL": "http://comfyui:8188",
+                                                  "IMAGE_SIZE": "768x768"}})
+    [u] = au.for_instance(old, m)
+    assert u.title.startswith("Finish connecting") and "IMAGE_SIZE" not in u.env and "COMFYUI_WORKFLOW_NODES" in u.env
+    assert au.for_instance(old.model_copy(update={"env": old.env | u.env}), m) == []
+    # pictures turned off, or another image server: left alone
+    assert au.for_instance(webui.model_copy(update={"env": base | {"ENABLE_IMAGE_GENERATION": "false"}}), m) == []
+    assert au.for_instance(webui.model_copy(update={"env": base | {"COMFYUI_BASE_URL": "http://elsewhere:1"}}), m) == []
+    # no checkpoint yet: everything but the model, and where to pick one
+    [u] = au.for_instance(webui, comfy_machine(tmp_path, ""))
+    assert "IMAGE_GENERATION_MODEL" not in u.env and "checkpoints/" in u.manual[0]
+
+
+def test_applying_the_pictures_update_sets_a_running_open_webui(stack):  # noqa: F811
+    app, client, backend, data = stack
+    from gpushepherd.connectors import comfyui
+    svc = app.state.svc
+    sent = []
+
+    class Client:
+        def __init__(self, base, token):
+            pass
+
+        def use_images(self, values):
+            sent.append(values)
+    svc.openwebui_client = Client
+    backend.exec_reply = lambda name, cmd, env: (0, '{"token": "tok"}')
+    ckpt = data / "models" / "comfyui" / "checkpoints"
+    ckpt.mkdir(parents=True)
+    (ckpt / "sd_xl_base_1.0.safetensors").write_bytes(b"x")
+    f = data / "instances" / "comfyui.yaml"
+    f.write_text(f.read_text().replace("/srv/models", str(data / "models")))
+    [u] = [u for u in svc.app_updates() if u.iid == "webui" and u.kind == "images"]
+    assert set(u.env) == {"IMAGE_GENERATION_MODEL", "IMAGE_EDIT_MODEL"} and u.title.startswith("Finish")
+    msg = svc.apply_app_update("webui", u.key)
+    assert "Start Open WebUI" in msg and not sent                 # stopped: the variables do it at its start
+    env = svc.instance("webui").env
+    assert env["COMFYUI_WORKFLOW_NODES"].startswith("[") and env["ENABLE_IMAGE_EDIT"] == "true"
+    assert client.post("/api/v1/instances/webui/start").status_code in (200, 202)
+    wait(app)
+    msg = svc._send_images(svc.instance("webui"))
+    assert "makes and edits pictures" in msg, msg
+    [values] = sent
+    assert values["ENABLE_IMAGE_EDIT"] is True and values["IMAGE_STEPS"] == 25
+    assert values["IMAGE_GENERATION_MODEL"] == "sd_xl_base_1.0.safetensors"
+    assert values["COMFYUI_WORKFLOW_NODES"] == comfyui.GENERATE_NODES and values["IMAGE_SIZE"] == "1024x1024"
+
+
+def test_own_comfyui_workflow_replaces_the_built_in_one(tmp_path):
+    import json
+    from gpushepherd.connectors import comfyui
+    own = tmp_path / comfyui.CUSTOM_DIR
+    own.mkdir()
+    flow = {"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "my-model.safetensors"}},
+            "5": {"class_type": "CLIPTextEncode", "inputs": {"text": "Prompt"}},
+            "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 768, "height": 1344, "batch_size": 1}},
+            "8": {"class_type": "KSampler", "inputs": {"seed": 0, "steps": 9}}}
+    nodes = [{"type": "prompt", "key": "text", "node_ids": ["5"]}, {"type": "model", "key": "unet_name", "node_ids": ["1"]},
+             {"type": "width", "key": "width", "node_ids": ["7"]}, {"type": "height", "key": "height", "node_ids": ["7"]},
+             {"type": "steps", "key": "steps", "node_ids": ["8"]}]
+    (own / "generate.json").write_text(json.dumps(flow))
+    (own / "generate-nodes.json").write_text(json.dumps(nodes))
+    (own / "edit.json").write_text(json.dumps(flow))
+    (own / "edit-nodes.json").write_text(json.dumps([{"type": "prompt", "key": "nope", "node_ids": ["5"]}]))
+    found = comfyui.custom(tmp_path)
+    assert set(found) == {"generate"}                     # the edit map names an input its workflow lacks
+    m = comfy_machine(tmp_path, "")
+    built_in = tpl.comfyui_env("comfyui", m)              # what an earlier app update set
+    webui = Instance(id="webui", name="Open WebUI", image="ghcr.io/open-webui/open-webui:main",
+                     env={"OPENAI_API_BASE_URLS": "http://llm:8080/v1", "OPENAI_API_KEYS": "sk-abc",
+                          "DEFAULT_MODELS": "chat", "ENABLE_OLLAMA_API": "false",
+                          **{k: "x" for k in ("RAG_EMBEDDING_ENGINE", "RAG_OPENAI_API_BASE_URL",
+                                              "RAG_OPENAI_API_KEY", "RAG_EMBEDDING_MODEL")}, **built_in})
+    assert au.for_instance(webui, m) == []
+    m.comfy_workflows["comfyui"] = found
+    [u] = au.for_instance(webui, m)
+    assert u.title == "Use your own ComfyUI workflow for pictures" and "COMFYUI_BASE_URL" not in u.env
+    assert json.loads(u.env["COMFYUI_WORKFLOW"]) == flow and u.env["IMAGE_GENERATION_MODEL"] == "my-model.safetensors"
+    assert u.env["IMAGE_SIZE"] == "768x1344" and u.env["IMAGE_STEPS"] == "9" and u.env["ENABLE_IMAGE_EDIT"] == "false"
+    assert comfyui.from_env(webui.env | u.env)["ENABLE_IMAGE_EDIT"] is False
+    assert au.for_instance(webui.model_copy(update={"env": webui.env | u.env}), m) == []
+
+
+def test_pictures_button_sends_the_settings_again(stack):  # noqa: F811
+    app, client, backend, data = stack
+    svc = app.state.svc
+    sent = []
+
+    class Client:
+        def __init__(self, base, token):
+            pass
+
+        def use_images(self, values):
+            sent.append(values)
+    svc.openwebui_client = Client
+    backend.exec_reply = lambda name, cmd, env: (0, '{"token": "tok"}')
+    r = client.post("/api/v1/instances/webui/send-images")
+    assert r.status_code == 409, r.text                                                # stopped
+    assert client.post("/api/v1/instances/llm/send-images").status_code == 400         # not an Open WebUI
+    assert client.post("/api/v1/instances/webui/start").status_code in (200, 202)
+    wait(app)
+    from fastapi.testclient import TestClient
+    b = TestClient(app)
+    b.post("/login", data={"user": "admin", "password": "correct-horse"})
+    assert 'send-images"' in b.get("/ui/dashboard").text
+    r = client.post("/api/v1/instances/webui/send-images")
+    assert r.status_code == 200 and "picture settings" in r.json()["message"]
+    assert sent[0]["COMFYUI_BASE_URL"] == "http://comfyui:8188" and sent[0]["ENABLE_IMAGE_GENERATION"] is True

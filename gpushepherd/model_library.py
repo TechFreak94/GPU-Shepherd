@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 from .config import CatalogModel, OffloadRule
 
@@ -265,18 +265,30 @@ def for_file(path: str, models_root: str = "/models", extra: tuple[Suggestion, .
 
 # --------------------------------------------------------------------------- models added from a link
 LINKED = "Added from a link."           # the blurb of a model added from a link
+ACTIVE = re.compile(r"(?:^|[-_.])A\d+(?:\.\d+)?B(?:$|[-_.])", re.I)   # "30B-A3B": a mixture of experts
 SPLIT = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.I)
 
 
+HF_HOSTS = ("huggingface.co", "www.huggingface.co", "hf.co")
+
+
 def gguf_link(url: str) -> str:
-    """A download link for a .gguf file, from what people copy: a Hugging Face file page (/blob/)
-    becomes its download link (/resolve/), and ?download=true and the like are dropped."""
+    """A download link for a .gguf file, from what people copy off Hugging Face: the file's page
+    (/blob/<rev>/ or /raw/<rev>/), the model page with a file picked (?show_file_info=<file>) or
+    the download link itself (/resolve/<rev>/), all become /resolve/; ?download=true and the like
+    are dropped."""
     parts = urlsplit(url.strip())
     if parts.scheme not in ("https", "http") or not parts.netloc:
         raise ValueError("The link must start with https:// (or http://)")
-    path = parts.path
-    if parts.netloc in ("huggingface.co", "www.huggingface.co"):
-        path = re.sub(r"^(/[^/]+/[^/]+)/blob/", r"\1/resolve/", path)
+    scheme, host, path = parts.scheme, parts.netloc, parts.path
+    if host.lower() in HF_HOSTS:
+        scheme, host = "https", "huggingface.co"
+        path = re.sub(r"/{2,}", "/", path)
+        picked = parse_qs(parts.query).get("show_file_info", [""])[0].strip("/")
+        repo = re.match(r"^/([^/]+)/([^/]+)/?$", path)
+        if repo and picked and repo.group(1) not in ("datasets", "spaces"):
+            path = f"{repo.group(0).rstrip('/')}/resolve/main/{quote(picked)}"
+        path = re.sub(r"^(/[^/]+/[^/]+)/(?:blob|raw)/", r"\1/resolve/", path)
         if "/resolve/" not in path:
             raise ValueError("Use the link of the .gguf file itself (on the model page: Files, then the file), "
                              "not the model page.")
@@ -284,7 +296,7 @@ def gguf_link(url: str) -> str:
         raise ValueError("The link must point at a .gguf file.")
     if SPLIT.search(path):
         raise ValueError("That model is split into several .gguf files; models in one file are supported.")
-    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+    return urlunsplit((scheme, host, path, "", ""))
 
 
 def _slug(text: str) -> str:
@@ -308,7 +320,8 @@ def from_link(url: str, name: str = "", gb: float = 0.0, mmproj_url: str = "", m
         if mmproj.name == file:
             raise ValueError("The vision projector must be a different file from the model.")
     return Suggestion(key=key or _slug(stem), name=name.strip() or stem, blurb=LINKED, uses=("chat", "coder"),
-                      model=File(name=file, url=url, gb=round(gb, 2)), page=page, mmproj=mmproj)
+                      model=File(name=file, url=url, gb=round(gb, 2)), page=page, mmproj=mmproj,
+                      moe=bool(ACTIVE.search(stem)), slow_ok=True)
 
 
 @dataclass(frozen=True)
@@ -359,6 +372,12 @@ def fit(s: Suggestion, gpu_mem_gb: list[float], ram_gb: float) -> Fit:
             return Fit(True, n, 0, f"Fits on {_gpus(n)}")
     if not s.moe:
         n, on_gpu = len(smallest), _dense_layers(s, sum(smallest)) if s.layers else 0
+        if not s.layers and s.slow_ok:       # layer count unknown (added from a link): the rest goes to RAM
+            ram = max(round(need - sum(smallest)), 1)
+            if ram_gb and ram > ram_gb * RAM_HEADROOM:
+                return Fit(False, n, ram, f"Too big: needs about {ram} GB of RAM beside your GPUs")
+            return Fit(True, n, ram, f"{_gpus(n)[0].upper()}{_gpus(n)[1:]} + about {ram} GB of RAM: "
+                       "slow unless it is a mixture of experts", True)
         if not s.layers or on_gpu < s.layers * DENSE_ON_GPU and not s.slow_ok:
             return Fit(False, n, 0, f"Too big for your GPUs (needs about {round(need)} GB)")
         ram = max(round(s.model_gb * (s.layers - on_gpu) / s.layers), 1)

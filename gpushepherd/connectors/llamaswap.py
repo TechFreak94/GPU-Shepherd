@@ -8,7 +8,7 @@ only sees the GPUs it was given, numbered from 0.
 the server currently has - e.g. "coder" = a big MoE model with 2 GPUs, a smaller one with 1.
 
 A model that needs fewer GPUs than the server has runs on just those (CUDA_VISIBLE_DEVICES in
-its llama-swap entry; see placement.py for which ones).
+its llama-swap entry, or GGML_VK_VISIBLE_DEVICES on AMD GPUs; see placement.py for which ones).
 """
 from __future__ import annotations
 
@@ -32,11 +32,12 @@ DETECT_SCRIPT = ("command -v llama-server || { [ -x /app/llama-server ] && echo 
 
 
 def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, list[int]] | None = None,
-           names: list[str] | None = None) -> str:
+           names: list[str] | None = None, visible_env: str = "CUDA_VISIBLE_DEVICES") -> str:
     """llama-swap's config. `devices`: model id -> the GPUs (0 = the server's first) it runs on,
     for models that use fewer than all of them (placement.place). `names`: what CUDA calls the
     server's GPUs, in order (their UUIDs on WSL2, where the container can see every GPU); without
-    them a model's GPUs are numbered from 0."""
+    them a model's GPUs are numbered from 0. `visible_env`: what tells llama.cpp which GPUs a model
+    uses (GGML_VK_VISIBLE_DEVICES for the Vulkan build on AMD GPUs)."""
     server = catalog.llama_server or "/app/llama-server"
     auto_for: dict[str, list[str]] = {}
     for auto in catalog.auto_aliases:
@@ -90,7 +91,7 @@ def render(catalog: Catalog, gpu_count: int, threads: int, devices: dict[str, li
         if m.ttl:
             entry["ttl"] = m.ttl
         if own:                              # the container sees only the server's GPUs, numbered from 0
-            entry["env"] = ["CUDA_VISIBLE_DEVICES=" + ",".join(names[p] if names else str(p) for p in own)]
+            entry["env"] = [f"{visible_env}=" + ",".join(names[p] if names else str(p) for p in own)]
         models[m.id] = entry
 
     cfg = {

@@ -114,7 +114,7 @@ def test_models_picked_while_installing():
 def test_renamed_apps():
     """The chat and coding model servers are one Llama Swap now; old keys and instances still find it."""
     assert tpl.get("llm-chat") is tpl.get("llm-coder") is tpl.get("llm-server")
-    assert [x.key for x in tpl.TEMPLATES if x.kind == "llama-swap"] == ["llm-server"]
+    assert [x.key for x in tpl.TEMPLATES if x.kind == "llama-swap"] == ["llm-server", "llm-server-vulkan"]
 
 
 def test_auto_offload():
@@ -179,7 +179,8 @@ def test_installed_counts_older_instances():
     got = {k: [i.id for i in v] for k, v in tpl.installed(old).items()}
     assert got == {"llm-server": ["b", "c"], "comfyui": ["a"], "open-webui": [], "hermes": ["d"],
                    "librechat": [], "anythingllm": [], "langflow": [], "ollama": [], "invokeai": [],
-                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": [], "opencode": []}
+                   "speaches": [], "vllm": [], "sillytavern": [], "open-notebook": [], "opencode": [],
+                   "llm-server-vulkan": []}
 
 
 def test_kind_tags():
@@ -323,6 +324,18 @@ def test_sillytavern():
     assert json.loads(seed["data/default-user/secrets.json"]) == {"api_key_custom": "sk-abc"}
     assert tpl.seed_files(t, f | {"server": ""}, m) == {}          # no server: SillyTavern's own defaults
     assert tpl.app_env(t, "llm", m)["LLM_API_KEY"] == "sk-abc"
+    assert "extension_settings" not in settings and "comfyui" in tpl.answer_keys(t)
+    # with a ComfyUI: its Image Generation extension makes pictures there, asked for in the chat
+    m.instances["comfyui"] = Instance(id="comfyui", name="ComfyUI", image="yanwk/comfyui-boot",
+                                      ports=[PortMap(host=8188, container=8188)])
+    m.checkpoints["comfyui"] = ["sd_xl_base_1.0.safetensors"]
+    f = tpl.defaults(t, m, "/m", "/a")
+    assert f["comfyui"] == "comfyui"
+    sd = json.loads(tpl.seed_files(t, f, m)["data/default-user/settings.json"])["extension_settings"]["sd"]
+    assert sd["source"] == "comfy" and sd["comfy_url"] == "http://comfyui:8188" and sd["interactive_mode"]
+    assert sd["model"] == "sd_xl_base_1.0.safetensors" and sd["width"] == 1024 and sd["sampler"] == "euler"
+    only = tpl.seed_files(t, f | {"server": ""}, m)
+    assert list(only) == ["data/default-user/settings.json"] and "oai_settings" not in only["data/default-user/settings.json"]
 
 
 def test_opencode():
@@ -424,3 +437,36 @@ def test_every_client_app_can_use_ollama():
         seeds = tpl.seed_files(t, a, m)
         assert any(url in v for v in [*inst.env.values(), *seeds.values()]), t.key
         assert tpl.connected_server(inst, m, seeds.get("server.env", "")) == "ollama", t.key
+
+
+def test_open_webui_gets_comfyui_workflows_it_can_fill_in():
+    import json
+    from gpushepherd.connectors import comfyui
+    comfy = Instance(id="comfy", name="C", image="yanwk/comfyui-boot", ports=[PortMap(host=8189, container=8188)])
+    m = machine(instances={"comfy": comfy})
+    m.checkpoints["comfy"] = ["sd15/old.safetensors", "sd_xl_base_1.0.safetensors"]
+    t = tpl.get("open-webui")
+    env = tpl.build(t, tpl.defaults(t, m, "/m", "/a") | {"server": ""}, m)[0].env
+    assert env["COMFYUI_BASE_URL"] == env["IMAGES_EDIT_COMFYUI_BASE_URL"] == "http://comfy:8188"
+    assert env["IMAGE_GENERATION_MODEL"] == env["IMAGE_EDIT_MODEL"] == "sd_xl_base_1.0.safetensors"
+    assert env["IMAGE_SIZE"] == "1024x1024" and comfyui.size("v1-5-pruned.ckpt") == "512x512"
+    assert env["ENABLE_IMAGE_PROMPT_GENERATION"] == "false"            # prompts go to ComfyUI as written
+    # every node the maps name is in its workflow, with the input they write
+    for wf, nodes in (("COMFYUI_WORKFLOW", "COMFYUI_WORKFLOW_NODES"),
+                      ("IMAGES_EDIT_COMFYUI_WORKFLOW", "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES")):
+        flow = json.loads(env[wf])
+        for n in json.loads(env[nodes]):
+            for nid in n["node_ids"]:
+                assert n["key"] in flow[nid]["inputs"], (wf, n)
+        assert any(x["class_type"] == "SaveImage" for x in flow.values())
+    assert {n["type"] for n in comfyui.EDIT_NODES} == {"prompt", "model", "image", "seed"}   # edits send no size
+    assert comfyui.from_env(env)["COMFYUI_WORKFLOW_NODES"] == comfyui.GENERATE_NODES
+
+
+def test_comfyui_checkpoints_on_disk(tmp_path):
+    from gpushepherd.connectors import comfyui
+    (tmp_path / "checkpoints" / "sub").mkdir(parents=True)
+    (tmp_path / "checkpoints" / "sub" / "a.safetensors").write_bytes(b"")
+    (tmp_path / "checkpoints" / "notes.txt").write_text("")
+    assert comfyui.checkpoints(tmp_path) == ["sub/a.safetensors"] and comfyui.checkpoints(tmp_path / "no") == []
+    assert comfyui.pick_checkpoint([]) == "" and comfyui.pick_checkpoint(["a", "b-XL"]) == "b-XL"

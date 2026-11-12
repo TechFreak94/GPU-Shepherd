@@ -26,11 +26,11 @@ import httpx
 from pydantic import ValidationError
 
 from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
-               instance_templates as tpl, logins, model_library, moves, storage, tuning, updates)
-from . import gpu_unlock
+               instance_templates as tpl, logins, model_library, moves, pictures as pics, storage, tuning, updates)
+from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
                      VolumeMap, friendly_errors)
-from .connectors import instance_url, llamaswap, openwebui
+from .connectors import comfyui, instance_url, llamaswap, openwebui
 from .backend import BackendError
 from .downloads import IMAGE as HELPER_IMAGE, KIND as DOWNLOAD_KIND, Downloads
 from .engine import Engine
@@ -137,6 +137,7 @@ class Shepherd:
     openwebui_client: object = openwebui.OpenWebUI   # (address, token) -> client; a stand-in in tests
     _library: kn.Library | None = None
     restarter: object = None            # () -> None: restarts this process (power "restart"); a stand-in in tests
+    hf: hf_models.Library | None = None    # suggested models from Hugging Face
 
     def __post_init__(self):
         if self.downloads is None:
@@ -159,6 +160,8 @@ class Shepherd:
             self.drive_log = drives.Memory(self.store.root)
         if self.image_log is None:
             self.image_log = image_updates.Records(self.store.root)
+        if self.hf is None:
+            self.hf = hf_models.Library(self.store.root)
         if self.restarter is None:
             self.restarter = restart_process
         self._auto_tried: set[tuple[str, str]] = set()     # (instance, version) automatic updates tried
@@ -817,7 +820,7 @@ class Shepherd:
     def _downloading(self, instances: dict[str, Instance]) -> set[str]:
         running = {n for n, h in self.backend.helpers(DOWNLOAD_KIND).items() if h.running}
         folders = storage.model_folders(instances, tpl.MODELS_IN_CONTAINER)
-        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS + self._linked()
+        return {str(Path(m) / s.path(f)) for s in model_library.SUGGESTIONS + self._extra()
                 if self.downloads.name(s) in running
                 for f in s.files for m in folders}
 
@@ -871,6 +874,82 @@ class Shepherd:
             self.backend.remove(n)
         return f"Removed {len(names)} container(s) left without an instance." if names else "Nothing to remove."
 
+    # ------------------------------------------------------------------ ComfyUI's pictures (pictures.py)
+    def pictures(self) -> list[dict]:
+        """Each app with ComfyUI picture folders, and how many pictures each holds and their size."""
+        instances, _ = self.store.instances()
+        out = []
+        for iid, inst in sorted(instances.items(), key=lambda kv: kv[1].name.lower()):
+            found = pics.folders(inst)
+            if not found:
+                continue
+            rows = []
+            for kind, label in pics.FOLDERS.items():
+                if kind not in found:
+                    continue
+                visible = Path(found[kind]).is_dir()
+                items = pics.scan(found[kind]) if visible else []
+                rows.append({"kind": kind, "label": label, "path": found[kind], "visible": visible,
+                             "count": len(items), "size": sum(p.size for p in items)})
+            out.append({"id": iid, "name": inst.name, "folders": rows})
+        return out
+
+    def _picture_folder(self, iid: str, kind: str) -> tuple[Instance, str]:
+        instances, _ = self.store.instances()
+        inst = instances.get(iid)
+        folder = pics.folders(inst).get(kind) if inst else None
+        if not folder:
+            raise Problem(f"{inst.name if inst else iid} has no ComfyUI {kind} folder" if inst else f"No app called '{iid}'",
+                          status=404)
+        return inst, folder
+
+    def picture_page(self, iid: str, kind: str, page: int = 1, per_page: int = pics.PER_PAGE) -> dict:
+        """One page of an app's pictures in one folder, newest first."""
+        inst, folder = self._picture_folder(iid, kind)
+        items = pics.scan(folder) if Path(folder).is_dir() else []
+        pages = max(1, -(-len(items) // per_page))
+        page = min(max(1, page), pages)
+        shown = items[(page - 1) * per_page: page * per_page]
+        return {"id": iid, "name": inst.name, "kind": kind, "label": pics.FOLDERS[kind], "path": folder,
+                "visible": Path(folder).is_dir(), "count": len(items), "size": sum(p.size for p in items),
+                "page": page, "pages": pages,
+                "pictures": [asdict(p) | {"video": p.video, "age_days": p.age_days} for p in shown]}
+
+    def picture_file(self, iid: str, kind: str, name: str) -> Path:
+        """A picture's file, to show or download."""
+        _, folder = self._picture_folder(iid, kind)
+        p = pics.path(folder, name)
+        if not p:
+            raise Problem(f"No picture called '{name}'", status=404)
+        return p
+
+    @checked
+    def trash_pictures(self, iid: str, kind: str, names: list[str] | None = None, older_than: int | None = None) -> str:
+        """Move pictures to the trash: the ones named, or all older than a number of days (0 = all)."""
+        inst, folder = self._picture_folder(iid, kind)
+        if names:
+            paths = [pics.path(folder, n) for n in names]
+            missing = [n for n, p in zip(names, paths) if not p]
+            if missing:
+                raise Problem(f"No picture called '{missing[0]}'", status=404)
+        elif older_than is not None and older_than >= 0:
+            cutoff = time.time() - older_than * pics.DAY
+            paths = [Path(folder) / p.name for p in pics.scan(folder) if p.modified < cutoff] if Path(folder).is_dir() else []
+        else:
+            raise Problem("Pick pictures, or a number of days.")
+        if not paths:
+            return "No pictures to move."
+        size = sum(p.stat().st_size for p in paths)
+        label = pics.FOLDERS[kind].lower()
+        title = (f"{paths[0].name} from {inst.name}" if len(paths) == 1
+                 else f"{len(paths)} {label} pictures from {inst.name}")
+        try:
+            self.trash.put_files(title, folder, [str(p) for p in paths])
+        except (OSError, BackendError) as err:
+            raise Problem(f"Could not move the pictures: {err}", status=500) from err
+        return (f"Moved {len(paths)} picture(s) ({gb(size)}) to the trash. "
+                "The space is freed when the trash is emptied.")
+
     # ------------------------------------------------------------------ App Center
     def machine(self) -> tpl.Machine:
         instances, _ = self.store.instances()
@@ -895,8 +974,20 @@ class Shepherd:
             if info:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        return tpl.Machine(gpu_mem_gb=[g.mem_total / 1024 for g in gpu_mod.query()[0]],
-                           instances=instances, servers=servers, model_sizes={}, ram_gb=host.ram_gb())
+        gpus, ram = gpu_mod.query()[0], host.ram_gb()
+        nvidia = [g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"]
+        m = tpl.Machine(gpu_mem_gb=nvidia, instances=instances, servers=servers, model_sizes={}, ram_gb=ram,
+                        amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"],
+                        suggestions=self.hf_picks(nvidia, ram))
+        for cid in tpl.comfyui_instances(m):        # the checkpoints Open WebUI can make pictures with
+            v = next((v for v in instances[cid].volumes if v.container.rstrip("/").endswith("ComfyUI/models")), None)
+            if v:
+                m.checkpoints[cid] = comfyui.checkpoints(v.host)
+            u = next((v for v in instances[cid].volumes if v.container.rstrip("/").endswith("ComfyUI/user")), None)
+            own = comfyui.custom(u.host) if u else {}
+            if own:
+                m.comfy_workflows[cid] = own
+        return m
 
     def default_models_dir(self, instances: dict[str, Instance]) -> str:
         """Where this machine keeps models: the folder another model server already uses, a common
@@ -977,10 +1068,11 @@ class Shepherd:
         """Start downloading the suggested models among `models` that aren't in the models folder yet."""
         out, folder = [], self.models_dir(server)
         for m in models:
-            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER, self._linked())
+            s = model_library.for_file(m.file, tpl.MODELS_IN_CONTAINER, self._extra())
             if s and folder and self.downloads.status(s, folder).state != "ready":
                 try:
                     self.downloads.start(s, folder)
+                    self.hf.keep(s)
                     out.append(s.name)
                 except ValueError as err:
                     log.warning("not downloading %s: %s", s.key, err)
@@ -1082,6 +1174,8 @@ class Shepherd:
             inst.env = inst.env | u.env
             self.store.save_instance(inst)
             msg = f"Updated {inst.name}'s settings."
+            if u.kind == "images":
+                return msg + " " + self._send_images(inst) + (" " + " ".join(u.manual) if u.manual else "")
         st = self.backend.states().get(iid)
         if st and st.running and not msg.endswith("to use it."):
             msg += " Restart it to use them."
@@ -1487,7 +1581,7 @@ class Shepherd:
 
     def _suggestions(self, iid: str) -> tuple[Instance, Catalog, list[tuning.Suggestion]]:
         inst, cat = self.server(iid)
-        gpus = sorted(gpu_mod.query()[0], key=lambda g: g.index)       # the most it may get
+        gpus = sorted((g for g in gpu_mod.query()[0] if g.vendor == inst.gpu.vendor), key=lambda g: g.index)
         if inst.gpu.mode == "fixed":
             gpus = [g for g in gpus if g.index in inst.gpu.gpus]
         elif inst.gpu.max_gpus:
@@ -1574,6 +1668,34 @@ class Shepherd:
         self.store.save_catalog(cat)
         return " ".join([f"Saved {model.id}.", *notes])
 
+    def model_resources(self, iid: str) -> dict[str, dict]:
+        """For each model in the catalogue: its size on disk, the memory it needs to run whole
+        (weights plus its context's cache) and how that fits this machine's GPUs and RAM."""
+        inst, cat = self.server(iid)
+        m = self.machine()
+        gpus = sorted(int(g * 2**30) for g in m.gpu_mem_gb)
+        ram = int(m.ram_gb * 2**30)
+        out = {}
+        for x in cat.models:
+            disk, need = budget.model_size(inst, x), budget.model_memory(inst, x)
+            if not disk:
+                out[x.id] = {"disk_gb": 0, "need_gb": 0, "ok": True, "text": "File not found, size unknown"}
+                continue
+            gb = lambda b: round(b / 2**30, 1)  # noqa: E731
+            if not gpus:
+                text, ok = f"Needs about {gb(need)} GB of GPU memory", True
+            else:
+                n = next((n for n in range(1, len(gpus) + 1) if sum(gpus[:n]) >= need), 0)
+                if n:
+                    text, ok = f"Fits on {'one GPU' if n == 1 else f'{n} GPUs'}", True
+                else:
+                    over = need - sum(gpus)
+                    ok = not ram or over <= ram * 0.8
+                    text = (f"All GPUs + about {gb(over)} GB of RAM" if ok
+                            else f"Too big: needs about {gb(over)} GB of RAM beside your GPUs")
+            out[x.id] = {"disk_gb": gb(disk), "need_gb": gb(need), "ok": ok, "text": text}
+        return out
+
     def check_model(self, inst: Instance, model: CatalogModel, new_file: bool = True) -> list[str]:
         """Warnings for a model added or changed by hand: its file isn't there, it is bigger than the
         GPUs, or it has a setting that breaks llama.cpp's own GPU split. A new file too big for the
@@ -1590,16 +1712,54 @@ class Shepherd:
             notes.insert(0, f"{model.file} isn't in the models folder yet, so {model.id} can't load until it is.")
         return notes
 
-    def delete_model(self, iid: str, mid: str) -> str:
-        _, cat = self.server(iid)
-        if mid not in {m.id for m in cat.models}:
+    def delete_model(self, iid: str, mid: str, files: bool = False) -> str:
+        """Take a model out of the catalogue. With `files`, also delete its .gguf files (and vision
+        projector / MTP draft) from the models folder, except any another model still uses."""
+        inst, cat = self.server(iid)
+        model = next((m for m in cat.models if m.id == mid), None)
+        if not model:
             raise Problem(f"no model '{mid}'", status=404)
+        if files and mid in self.loaded(iid, cat)[0]:
+            raise Problem(f"{mid} is loaded. Unload it first, then delete its files.", "warn", 409)
         try:
-            cat = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in cat.models if m.id != mid]})
+            new = Catalog.model_validate({**cat.model_dump(), "models": [m.model_dump() for m in cat.models if m.id != mid]})
         except ValidationError as err:
             raise Problem(f"Cannot delete {mid}: {friendly_errors(err)}", status=409) from err
-        self.store.save_catalog(cat)
-        return f"Deleted {mid}."
+        doomed, kept = (self._model_files_to_delete(inst, model, mid) if files else ([], []))
+        self.store.save_catalog(new)
+        if not files:
+            return f"Deleted {mid}."
+        try:
+            for host, rels in doomed:
+                self.downloads.delete_files(host, rels)
+        except BackendError as err:
+            raise Problem(f"Removed {mid} from the catalogue, but could not delete its files: {err}", status=500) from err
+        n = sum(len(r) for _, r in doomed)
+        text = f"Deleted {mid} and its {n} file{'s' if n != 1 else ''}." if n else f"Deleted {mid}."
+        return text + (f" Kept {', '.join(kept)}: another model uses it." if kept else "")
+
+    def _model_files_to_delete(self, inst: Instance, model: CatalogModel, mid: str) -> tuple[list[tuple[str, list[str]]], list[str]]:
+        """([(models folder, [paths inside it])], files kept) for deleting `model`'s files: only
+        files in a folder mounted into the server, and none another model (on any server) uses."""
+        used: set[str] = set()
+        for other, ocat in ((i, self.store.catalog(i.id)) for i in self.store.instances()[0].values() if i.kind == "llama-swap"):
+            for m in ocat.models:
+                if other.id == inst.id and m.id == mid:
+                    continue
+                used |= {str(p) for f in (m.file, m.mmproj, m.mtp_draft) if f and (p := budget.host_path(other, f))}
+        by_host: dict[str, list[str]] = {}
+        kept = []
+        for f in dict.fromkeys(x for x in (model.file, model.mmproj, model.mtp_draft) if x):
+            p = budget.host_path(inst, f)
+            vol = next((v for v in inst.volumes if f.startswith(v.container.rstrip("/") + "/")), None)
+            rel = f[len(vol.container.rstrip("/")) + 1:] if vol else ""
+            if not p or not vol or ".." in Path(rel).parts or not rel.endswith(".gguf"):
+                continue
+            if str(p) in used:
+                kept.append(Path(f).name)
+            else:
+                by_host.setdefault(vol.host, []).append(rel)
+        return list(by_host.items()), kept
 
     # ------------------------------------------------------------------ suggested models
     @staticmethod
@@ -1616,23 +1776,72 @@ class Shepherd:
         files = {x.file for x in cat.models}
         out = []
         linked = self._linked()
+        hf = self.hf_picks(m.gpu_mem_gb, m.ram_gb)
         helpers = self.downloads.helpers()        # one Docker listing for the whole list
-        for s in model_library.SUGGESTIONS + linked:
+        for s in model_library.SUGGESTIONS + linked + hf:
             f = model_library.fit(s, m.gpu_mem_gb, m.ram_gb)
             st = self.downloads.status(s, folder, helpers)
             out.append({"key": s.key, "name": s.name, "blurb": s.blurb, "uses": list(s.uses), "page": s.page,
                         "vision": s.vision, "moe": s.moe, "mtp": bool(s.mtp), "download_gb": s.download_gb,
                         "fits": f.ok, "fit": f.text, "rank": f.rank, "state": st.state, "status": st.text,
-                        "pct": st.pct, "partial": st.partial, "linked": s in linked, "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
+                        "pct": st.pct, "partial": st.partial, "linked": s in linked, "hf": s in hf, "license": s.license,
+                        "in_catalog": f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in files,
                         "files": [{"path": f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}", "url": x.url, "gb": x.gb}
                                   for x in s.files]})
         return sorted(out, key=lambda x: x.pop("rank"))
 
     def _suggestion(self, key: str) -> model_library.Suggestion:
-        s = model_library.get(key, self._linked())
+        s = model_library.get(key, self._extra())
         if not s:
             raise Problem(f"no suggested model '{key}'", status=404)
         return s
+
+    def hf_picks(self, gpu_mem_gb: list[float], ram_gb: float) -> tuple[model_library.Suggestion, ...]:
+        """Models from Hugging Face that run well on this machine (hf_models.py), and the ones kept
+        because they were added or downloaded. With the setting off, only the kept ones."""
+        models, kept = self.hf.state()
+        if not self.store.settings().hf_suggestions:
+            models = []
+        return hf_models.picks(models, kept, gpu_mem_gb, ram_gb, model_library.SUGGESTIONS + self._linked())
+
+    def _extra(self) -> tuple[model_library.Suggestion, ...]:
+        """Every suggestion besides the built-in ones: added from a link, and from Hugging Face."""
+        return self._linked() + self.hf_picks([g.mem_total / 1024 for g in gpu_mod.query()[0]], host.ram_gb())
+
+    def hf_checked(self) -> float:
+        return self.hf.checked
+
+    def refresh_hf_models(self, wait: bool = False) -> str:
+        """Ask Hugging Face for its trending models now (in the background unless `wait`)."""
+        if not wait:
+            threading.Thread(target=self.hf.refresh, daemon=True, name="hf-models-now").start()
+            return "Asking Hugging Face; the suggested models update within a minute or two."
+        n = self.hf.refresh()
+        return (f"Found {n} models trending on Hugging Face." if n
+                else "Could not reach Hugging Face; the last list (or the built-in picks) stays.")
+
+    def watch_hf_models(self, interval: float = 600.0, first: float = 30.0) -> None:
+        """Refresh the Hugging Face list about once a day, while the setting is on."""
+        def loop():
+            threading.Event().wait(first)
+            while True:
+                try:
+                    if self.store.settings().hf_suggestions and self.hf.due():
+                        self.hf.refresh()
+                except Exception as err:  # noqa: BLE001 - watching must never stop
+                    log.warning("Hugging Face model list: %s", err)
+                threading.Event().wait(interval)
+        threading.Thread(target=loop, daemon=True, name="hf-models").start()
+
+    @checked
+    def set_hf_suggestions(self, on: bool) -> str:
+        s = self.store.settings()
+        s.hf_suggestions = on
+        self.store.save_settings(Settings.model_validate(s.model_dump()))
+        if on and self.hf.due():
+            threading.Thread(target=self.hf.refresh, daemon=True, name="hf-models-now").start()
+        return ("Suggesting models trending on Hugging Face that fit this machine." if on
+                else "Only the built-in model suggestions are shown now (and Hugging Face models you added).")
 
     def _linked(self) -> tuple[model_library.Suggestion, ...]:
         """The models added from a link, set up like suggested ones."""
@@ -1658,7 +1867,7 @@ class Shepherd:
         if same:
             key = str(same.get("key"))       # the same link again
         else:
-            taken = {x.key for x in model_library.SUGGESTIONS + self._linked()}
+            taken = {x.key for x in model_library.SUGGESTIONS + self._extra()}
             key = tpl.free_id(s.key, taken)
             sizes = (_remote_gb(s.model.url), _remote_gb(s.mmproj.url) if s.mmproj else 0)
             m = self.machine()
@@ -1691,7 +1900,9 @@ class Shepherd:
         if self.downloads.status(s, folder).state == "ready":
             return f"{s.name} is already downloaded."
         try:
-            return self.downloads.start(s, folder)
+            msg = self.downloads.start(s, folder)
+            self.hf.keep(s)
+            return msg
         except ValueError as err:
             raise Problem(str(err), "warn", 507) from err
 
@@ -1705,6 +1916,23 @@ class Shepherd:
             return self.downloads.discard(self._suggestion(key), self.models_dir(inst))
         except BackendError as err:
             raise Problem(f"Could not delete the partial files: {err}", status=500) from err
+
+    def delete_download(self, iid: str, key: str) -> str:
+        """Delete a downloaded suggested model's files, when no model in a catalogue uses them."""
+        inst, _ = self.server(iid)
+        s = self._suggestion(key)
+        folder = self.models_dir(inst)
+        if self.downloads.status(s, folder).state != "ready":
+            raise Problem(f"{s.name} is not downloaded.", "info", 409)
+        for other in (i for i in self.store.instances()[0].values() if i.kind == "llama-swap"):
+            for m in self.store.catalog(other.id).models:
+                if {m.file, m.mmproj, m.mtp_draft} & {f"{tpl.MODELS_IN_CONTAINER}/{s.path(x)}" for x in s.files}:
+                    raise Problem(f"{m.id} on {other.name} uses it: delete it from the catalogue (with its file) instead.", "warn", 409)
+        try:
+            self.downloads.delete_files(folder, [s.path(x) for x in s.files])
+        except BackendError as err:
+            raise Problem(f"Could not delete the files: {err}", status=500) from err
+        return f"Deleted {s.name} from disk."
 
     @checked
     def add_suggestion(self, iid: str, key: str) -> str:
@@ -1722,6 +1950,7 @@ class Shepherd:
         if s.role == "embed" and "embed" not in taken:
             model.aliases = ["embed"]
         self.save_model(iid, model, check=False)
+        self.hf.keep(s)
         fetching = self.fetch_suggested(inst, [model])
         st = self.backend.states().get(iid)
         note = " Restart the server to use it." if st and st.running else ""
@@ -1994,6 +2223,51 @@ class Shepherd:
                         else "Saving: no card unlocked from the next boot. Reboot to put the cards back to normal."),
                 "uninstall": "Removing gpu-unlock. Reboot afterwards to put the cards back to normal."}[action]
 
+    # ------------------------------------------------------------------ Tailscale (on the host, through update.sh)
+    def tailscale_status(self, refresh: bool = False) -> tailscale.TailscaleStatus:
+        """This machine's Tailscale state as the host last reported it; with refresh, ask the host
+        for a new report when the last one is missing or old (and nothing else is waiting)."""
+        st = tailscale.status(self.store.root)
+        if refresh and tailscale.needs_refresh(st) and not updates.status(self.store.root).pending:
+            tailscale.request(self.store.root, "refresh")
+            st = tailscale.status(self.store.root)
+        return st
+
+    def request_tailscale(self, action: str) -> str:
+        """Install Tailscale and log this machine in to a tailnet, serve the dashboard over HTTPS on
+        its Tailscale name, disconnect, or log out. update.sh's service on the host does the work."""
+        if action not in tailscale.ACTIONS:
+            raise Problem("unknown action")
+        st = tailscale.status(self.store.root)
+        if st.image:
+            raise Problem("This install has no update service, so Tailscale can't be set up from here. Install Tailscale "
+                          "on the server (https://tailscale.com/download) and run: sudo tailscale up", "warn", 409)
+        if not st.service:
+            raise Problem(f"Setting up Tailscale from here needs dashboard updates. On the server run: "
+                          f"{st.command} --enable-dashboard-updates (or install it with: install.sh --tailscale)", "warn", 409)
+        if st.wsl and action in ("install", "up"):
+            raise Problem("In WSL2, install Tailscale for Windows instead: the apps answer on the Windows machine's "
+                          "Tailscale address.", "warn", 409)
+        if st.busy:
+            raise Problem("Tailscale is already being changed; wait for it to finish.", "warn", 409)
+        u = updates.status(self.store.root)
+        if u.busy:
+            raise Problem("An update or check is running; wait for it to finish.", "warn", 409)
+        if action != "install" and action != "refresh" and not st.installed:
+            raise Problem("Install Tailscale first.", "warn", 409)
+        if action == "https-on" and st.checked and st.connected and not st.cert_domains:
+            raise Problem("Turn on HTTPS certificates in Tailscale's admin console (DNS page) first, then try again.",
+                          "warn", 409)
+        tailscale.request(self.store.root, action)
+        log.info("tailscale: %s requested", action)
+        return {"refresh": "Asking the server…",
+                "install": "Installing Tailscale; a login link appears here in a minute.",
+                "up": "Connecting; if a login is needed, a link appears here.",
+                "down": "Disconnecting from your tailnet…",
+                "https-on": "Serving the dashboard over HTTPS…",
+                "https-off": "Turning HTTPS off…",
+                "logout": "Logging out of Tailscale…"}[action]
+
     # ------------------------------------------------------------------ knowledge
     @property
     def library(self) -> kn.Library:
@@ -2050,7 +2324,7 @@ class Shepherd:
                 "hermes": [{"id": i.id, "name": i.name} for i in hermes],
                 "servers": [{"id": k, "name": v["name"], "model": v.get("default_model", ""), "embed": v.get("embed", "")}
                             for k, v in m.servers.items()],
-                "sends": data.get("sends") or [], "skills": skills, "upload_mb": kn.UPLOAD_MB,
+                "sends": data.get("sends") or [], "sync": data.get("sync"), "skills": skills, "upload_mb": kn.UPLOAD_MB,
                 "zip_mb": kn.ZIP_MB}
 
     def _knowledge_busy(self) -> None:
@@ -2239,6 +2513,9 @@ class Shepherd:
         return "Stopping after the current document…"
 
     def scan_documents(self) -> str:
+        """Find and read the documents, in the background. With sync on (see send_documents), the
+        Open WebUI it syncs with is brought up to date afterwards: new documents go in, documents
+        gone from the folder (or changed) come out."""
         folder = self.library.folder()
         if not folder.is_dir():
             if folder == self.library.default_folder:
@@ -2249,12 +2526,41 @@ class Shepherd:
         def work(task: kn.Task) -> str:
             def progress(done, total, name):
                 task.progress(done, total, f"Reading {name}")
+            before = {k: (b.stamp, dict(b.sent)) for k, b in self.library.load()["books"].items() if b.sent}
             counts = self.library.scan(progress, lambda: task.stop)
+            self._note_stale(before)
             if task.stop:
                 raise InterruptedError
             parts = [f"{counts.get('ready', 0)} ready"] + [f"{n} {s}" for s, n in sorted(counts.items()) if s != "ready"]
-            return "Found the documents: " + ", ".join(parts) + "."
+            msg = "Found the documents: " + ", ".join(parts) + "."
+            sync = self.library.load().get("sync")
+            if not sync:
+                return msg
+            instances, _ = self.store.instances()
+            inst = instances.get(sync.get("instance", ""))
+            if not inst:
+                return msg
+            if not self._running(inst.id):
+                return msg + f" Start {inst.name} and scan again to sync it."
+            return msg + " " + self._sync_openwebui(task, inst, sync["name"], bool(sync.get("split")),
+                                                    bool(sync.get("embeddings")))
         return self._knowledge_work("Finding and reading documents", work)
+
+    def _note_stale(self, before: dict[str, tuple[str, dict]]) -> None:
+        """After a scan: copies in Open WebUI of documents that are gone from the folder, or were
+        changed (and read again), are noted as stale, to be taken out by the next sync or clear.
+        A changed document is sent again."""
+        def note(d):
+            stale = d.setdefault("stale", [])
+            for key, (stamp, sent) in before.items():
+                b = d["books"].get(key)
+                if b and b.stamp == stamp:
+                    continue
+                stale += [{"target": t, "fid": f} for t, f in sent.items()]
+                if b:
+                    b.sent = {}
+        if before:
+            self.library.update(note)
 
     # Open WebUI
     def _openwebui(self, inst: Instance) -> openwebui.OpenWebUI:
@@ -2268,6 +2574,37 @@ class Shepherd:
         port = inst.ports[0].container if inst.ports else openwebui.CONTAINER_PORT
         return self.openwebui_client(instance_url(inst, port), data["token"])
 
+    def _send_images(self, inst: Instance) -> str:
+        """Hand a running Open WebUI the image settings in its environment through its API: it reads
+        the variables only until its image settings are first saved."""
+        if not self._running(inst.id):
+            return (f"Start {inst.name} to use them; if it saved picture settings of its own before, press Pictures "
+                    "on its card once it runs, so it gets these.")
+        try:
+            self._openwebui(inst).use_images(comfyui.from_env(inst.env))
+        except (Problem, openwebui.OpenWebUIError) as err:
+            return (f"Restart {inst.name} to use them. GPU Shepherd couldn't also set them in Open WebUI "
+                    f"({err}), so if pictures don't work after the restart, set them in Open WebUI: "
+                    "Admin Panel, Settings, Images.")
+        return f"{inst.name} makes and edits pictures now: turn on Image in a chat's message box."
+
+    @checked
+    def send_images(self, iid: str) -> str:
+        """Send the picture settings GPU Shepherd keeps for an Open WebUI (its ComfyUI workflows, model,
+        size and steps) to it again, for when it has others saved: Open WebUI ignores the variables
+        once its image settings are saved, so an update applied while it was stopped never reached it."""
+        inst = self.instance(iid)
+        if not tpl.matches(tpl.get("open-webui"), inst) or not inst.env.get("COMFYUI_BASE_URL"):
+            raise Problem(f"{inst.name} isn't an Open WebUI connected to ComfyUI.")
+        if not self._running(iid):
+            raise Problem(f"Start {inst.name} first.", status=409)
+        try:
+            self._openwebui(inst).use_images(comfyui.from_env(inst.env))
+        except openwebui.OpenWebUIError as err:
+            raise Problem(f"couldn't set {inst.name}'s picture settings: {err}", status=409) from err
+        model = inst.env.get("IMAGE_GENERATION_MODEL")
+        return f"Sent {inst.name} its picture settings" + (f" (model {model})." if model else ".")
+
     def _embed_server(self, inst: Instance, m: tpl.Machine) -> str:
         """The model server whose embeddings model Open WebUI should use: the one it is connected to."""
         server = tpl.connected_server(inst, m)
@@ -2277,11 +2614,13 @@ class Shepherd:
 
     @checked
     def send_documents(self, iid: str, name: str = "Documents", split: bool = False,
-                   use_server_embeddings: bool | None = None) -> str:
+                       use_server_embeddings: bool | None = None, sync: bool | None = None) -> str:
         """Put the ready documents into an Open WebUI knowledge base (one per first-level folder with
         `split`), in the background. Documents already sent there are skipped, so it carries on after a stop.
         use_server_embeddings: True switches Open WebUI to the model server's embeddings model, False
-        keeps whatever it uses, None stops with a question when they differ."""
+        keeps whatever it uses, None stops with a question when they differ.
+        sync: True keeps that knowledge base in sync from now on (every scan sends new documents and
+        takes out the ones gone from the folder), False stops syncing, None leaves it as it is."""
         inst = self.instance(iid)
         if not tpl.matches(tpl.get("open-webui"), inst):
             raise Problem(f"{inst.name} isn't Open WebUI: documents go into Open WebUI's knowledge bases.")
@@ -2290,74 +2629,163 @@ class Shepherd:
         name = re.sub(r"\s+", " ", name or "").strip()[:80] or "Documents"
         if not any(b.status == "ready" for b in self.library.books()):
             raise Problem("No documents ready to send: add documents and scan the documents folder first.", status=409)
-        m = self.machine()
-        server = self._embed_server(inst, m)
+        self._knowledge_busy()
+        if sync is not None:
+            self.library.update(lambda d: d.__setitem__("sync", {
+                "instance": iid, "name": name, "split": split,
+                "embeddings": use_server_embeddings is not False} if sync else None))
 
         def work(task: kn.Task) -> str:
-            task.text = f"Signing in to {inst.name}"
-            ow = self._openwebui(inst)
-            if server:
-                info = m.servers[server]
-                emb = ow.embedding()
-                uses = emb["engine"] == "openai" and emb["model"] == info["embed"] and server in emb["url"]
-                if not uses and use_server_embeddings:
-                    ow.use_embedding(tpl._server_url(server, m), info["api_key"], info["embed"],
-                                     info.get("embed_query_prefix", ""))
-                elif not uses and use_server_embeddings is None:
-                    raise Problem(f"{inst.name} embeds documents with {emb['model'] or 'its own model'}"
-                                  f"{' on its CPU' if not emb['engine'] else ''}, not {info['name']}'s embeddings "
-                                  "model. Choose which to use, then send again.", status=409)
-            todo = [b for b in self.library.books() if b.status == "ready"]
-            kbs: dict[str, str] = {}
-            sent = skipped = failed = in_a_row = 0
-            for i, b in enumerate(todo):
-                if task.stop:
-                    raise InterruptedError
-                kb = f"{name} - {b.group}" if split and b.group else name
-                target = f"{iid}/{kb}"
-                if target in b.sent:
-                    skipped += 1
-                    continue
-                task.progress(i, len(todo), f"Sending {b.name}")
-                try:
-                    if kb not in kbs:
-                        kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
-                    fid = ow.upload(b.file_name, self.library.text(b.key))
-                    ow.add(kbs[kb], fid)
-                except (openwebui.OpenWebUIError, OSError) as err:
-                    if "answered 401" in str(err):          # the sign-in ran out: sign in again, then retry it
-                        ow = self._openwebui(inst)
-                        kbs.clear()
-                        try:
-                            kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
-                            fid = ow.upload(b.file_name, self.library.text(b.key))
-                            ow.add(kbs[kb], fid)
-                        except (openwebui.OpenWebUIError, OSError) as err2:
-                            err = err2
-                        else:
-                            err = None
-                    if err is not None:
-                        failed += 1
-                        in_a_row += 1
-                        task.errors.append(f"{b.name}: {err}")
-                        if in_a_row >= 5:
-                            raise openwebui.OpenWebUIError(f"stopped after 5 documents in a row failed; the last: {err}")
-                        continue
-                in_a_row = 0
-                sent += 1
-
-                def mark(d, key=b.key, fid=fid):
-                    if key in d["books"]:
-                        d["books"][key].sent[target] = fid
-                self.library.update(mark)
-            self.library.update(lambda d: d.__setitem__("sends", [
-                s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
-                {"instance": iid, "name": name, "split": split, "when": time.time()}]))
-            msg = f"Sent {sent} document{'s' if sent != 1 else ''} to {inst.name}"
-            msg += f" ({skipped} were there already)" if skipped else ""
-            msg += f"; {failed} failed." if failed else "."
-            return msg + " In a chat, type # and pick the knowledge base."
+            return self._sync_openwebui(task, inst, name, split, use_server_embeddings)
         return self._knowledge_work(f"Sending documents to {inst.name}", work)
+
+    def stop_sync(self) -> str:
+        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
+        sync = self.library.load().get("sync")
+        if not sync:
+            raise Problem("Sync isn't on.", "info", 409)
+        self.library.update(lambda d: d.__setitem__("sync", None))
+        return (f"Stopped syncing {sync['name']}. What is in it stays; send again to add new documents, "
+                "or turn sync back on.")
+
+    def _sync_openwebui(self, task: kn.Task, inst: Instance, name: str, split: bool,
+                        use_server_embeddings: bool | None) -> str:
+        """Take stale copies out of an Open WebUI, then send it the ready documents it doesn't have."""
+        iid = inst.id
+        m = self.machine()
+        server = self._embed_server(inst, m)
+        task.text = f"Signing in to {inst.name}"
+        ow = self._openwebui(inst)
+        if server:
+            info = m.servers[server]
+            emb = ow.embedding()
+            uses = emb["engine"] == "openai" and emb["model"] == info["embed"] and server in emb["url"]
+            if not uses and use_server_embeddings:
+                ow.use_embedding(tpl._server_url(server, m), info["api_key"], info["embed"],
+                                 info.get("embed_query_prefix", ""))
+            elif not uses and use_server_embeddings is None:
+                raise Problem(f"{inst.name} embeds documents with {emb['model'] or 'its own model'}"
+                              f"{' on its CPU' if not emb['engine'] else ''}, not {info['name']}'s embeddings "
+                              "model. Choose which to use, then send again.", status=409)
+        removed = self._take_out_stale(task, ow, iid)
+        there = ow.knowledge_bases()
+
+        def forget_gone(d):                      # knowledge bases deleted in Open WebUI: send to them again
+            for b in d["books"].values():
+                b.sent = {t: f for t, f in b.sent.items() if t.partition("/")[0] != iid or t.partition("/")[2] in there}
+        self.library.update(forget_gone)
+        todo = [b for b in self.library.books() if b.status == "ready"]
+        kbs: dict[str, str] = {}
+        sent = skipped = failed = in_a_row = 0
+        for i, b in enumerate(todo):
+            if task.stop:
+                raise InterruptedError
+            kb = f"{name} - {b.group}" if split and b.group else name
+            target = f"{iid}/{kb}"
+            if target in b.sent:
+                skipped += 1
+                continue
+            task.progress(i, len(todo), f"Sending {b.name}")
+            try:
+                if kb not in kbs:
+                    kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
+                fid = ow.upload(b.file_name, self.library.text(b.key))
+                ow.add(kbs[kb], fid)
+            except (openwebui.OpenWebUIError, OSError) as err:
+                if "answered 401" in str(err):          # the sign-in ran out: sign in again, then retry it
+                    ow = self._openwebui(inst)
+                    kbs.clear()
+                    try:
+                        kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
+                        fid = ow.upload(b.file_name, self.library.text(b.key))
+                        ow.add(kbs[kb], fid)
+                    except (openwebui.OpenWebUIError, OSError) as err2:
+                        err = err2
+                    else:
+                        err = None
+                if err is not None:
+                    failed += 1
+                    in_a_row += 1
+                    task.errors.append(f"{b.name}: {err}")
+                    if in_a_row >= 5:
+                        raise openwebui.OpenWebUIError(f"stopped after 5 documents in a row failed; the last: {err}")
+                    continue
+            in_a_row = 0
+            sent += 1
+
+            def mark(d, key=b.key, fid=fid):
+                if key in d["books"]:
+                    d["books"][key].sent[target] = fid
+            self.library.update(mark)
+        self.library.update(lambda d: d.__setitem__("sends", [
+            s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
+            {"instance": iid, "name": name, "split": split, "when": time.time()}]))
+        msg = f"Sent {sent} document{'s' if sent != 1 else ''} to {inst.name}"
+        msg += f" ({skipped} were there already)" if skipped else ""
+        msg += f", took out {removed} old cop{'ies' if removed != 1 else 'y'}" if removed else ""
+        msg += f"; {failed} failed." if failed else "."
+        return msg + " In a chat, type # and pick the knowledge base."
+
+    def _take_out_stale(self, task: kn.Task, ow, iid: str) -> int:
+        """Take the stale copies (see _note_stale) out of one Open WebUI. Returns how many."""
+        stale = [s for s in self.library.load().get("stale") or [] if s["target"].partition("/")[0] == iid]
+        if not stale:
+            return 0
+        task.text = "Taking out documents that are gone or changed"
+        ids = ow.knowledge_bases()
+        done = []
+        for s in stale:
+            kb = s["target"].partition("/")[2]
+            try:
+                if ids.get(kb):
+                    ow.remove(ids[kb], s["fid"])
+                ow.delete_file(s["fid"])
+            except openwebui.OpenWebUIError as err:
+                task.errors.append(f"taking out an old copy in {kb}: {err}")
+                continue
+            done.append(s)
+        self.library.update(lambda d: d.__setitem__("stale", [s for s in d.get("stale") or [] if s not in done]))
+        return len(done)
+
+    def openwebui_knowledge(self, iid: str) -> dict:
+        """What is in an Open WebUI's knowledge: its knowledge bases, how many files each has, and
+        for the ones GPU Shepherd sends to, how many documents are in it and how many aren't yet."""
+        inst = self.instance(iid)
+        if not tpl.matches(tpl.get("open-webui"), inst):
+            raise Problem(f"{inst.name} isn't Open WebUI.")
+        if not self._running(iid):
+            raise Problem(f"Start {inst.name} to see its knowledge.", status=409)
+        data = self.library.load()
+        ready = [b for b in data["books"].values() if b.status == "ready"]
+        sends = {s["name"]: s for s in data.get("sends") or [] if s.get("instance") == iid}
+        sync = data.get("sync") if (data.get("sync") or {}).get("instance") == iid else None
+        ours: dict[str, dict] = {}               # knowledge base -> {"sent", "missing", "send", "sync"}
+        for s in sends.values():
+            for b in ready:
+                kb = f"{s['name']} - {b.group}" if s.get("split") and b.group else s["name"]
+                row = ours.setdefault(kb, {"sent": 0, "missing": 0, "send": s["name"],
+                                           "sync": bool(sync and sync["name"] == s["name"])})
+                row["sent" if f"{iid}/{kb}" in b.sent else "missing"] += 1
+        try:
+            ow = self._openwebui(inst)
+            bases = ow.knowledge_list()
+            for k in bases[:50]:
+                if k["files"] is None:
+                    k["files"] = ow.file_count(k["id"])
+        except openwebui.OpenWebUIError as err:
+            raise Problem(f"couldn't read {inst.name}'s knowledge: {err}", status=502) from err
+        rows = []
+        for k in sorted(bases, key=lambda k: (k["name"] not in ours, k["name"].lower())):
+            mine = ours.pop(k["name"], None)
+            rows.append(k | {"ours": bool(mine), "sent": mine["sent"] if mine else None,
+                             "missing": mine["missing"] if mine else 0, "sync": bool(mine and mine["sync"]),
+                             "path": f"/workspace/knowledge/{k['id']}"})
+        for kb, mine in sorted(ours.items()):    # sent there before, but the knowledge base is gone
+            if mine["sent"]:
+                rows.append({"id": "", "name": kb, "description": "", "files": 0, "ours": True, "gone": True,
+                             "sent": mine["sent"], "missing": mine["missing"], "sync": mine["sync"], "path": ""})
+        return {"instance": iid, "name": inst.name, "bases": rows, "sync": sync,
+                "stale": sum(1 for s in data.get("stale") or [] if s["target"].partition("/")[0] == iid)}
 
     # skills
     def _skill_dir(self, slug: str) -> Path:
@@ -2475,10 +2903,10 @@ class Shepherd:
         instances, _ = self.store.instances()
         targets: dict[str, dict[str, list[str]]] = {}         # instance -> knowledge base -> file ids
         if "apps" in what:
-            for b in data["books"].values():
-                for target, fid in b.sent.items():
-                    iid, _, kb = target.partition("/")
-                    targets.setdefault(iid, {}).setdefault(kb, []).append(fid)
+            sent = [(t, f) for b in data["books"].values() for t, f in b.sent.items()]
+            for target, fid in sent + [(s["target"], s["fid"]) for s in data.get("stale") or []]:
+                iid, _, kb = target.partition("/")
+                targets.setdefault(iid, {}).setdefault(kb, []).append(fid)
             stopped = [instances[i].name for i in targets if i in instances and not self._running(i)]
             if stopped:
                 raise Problem(f"Start {', '.join(stopped)} first, so the documents can be taken out of it, or clear "
@@ -2515,6 +2943,9 @@ class Shepherd:
                         for b in d["books"].values():
                             b.sent = {t: f for t, f in b.sent.items() if not t.startswith(iid + "/")}
                         d["sends"] = [x for x in (d.get("sends") or []) if x.get("instance") != iid]
+                        d["stale"] = [x for x in (d.get("stale") or []) if not x["target"].startswith(iid + "/")]
+                        if (d.get("sync") or {}).get("instance") == iid:
+                            d["sync"] = None          # or the next scan would send it all again
                     self.library.update(unsent)
                 done.append(f"took {removed} document{'s' if removed != 1 else ''} out of Open WebUI")
             if "skills" in what:
@@ -2537,7 +2968,7 @@ class Shepherd:
             if "converted" in what:
                 task.text = "Deleting the converted text"
                 shutil.rmtree(self.library.text_dir, ignore_errors=True)
-                self.library.update(lambda d: d.update({"books": {}, "sends": [], "scanned": None}))
+                self.library.update(lambda d: d.update({"books": {}, "sends": [], "stale": [], "scanned": None}))
                 done.append("deleted the converted text and the list of documents")
             return "Cleared: " + ", ".join(done) + "."
         return self._knowledge_work("Clearing out knowledge", work)
@@ -2611,10 +3042,9 @@ class Shepherd:
             inst = instances.get(iid)
             if not inst:
                 continue
-            if not self._running(iid):
-                left.append(inst.name)
-                continue
             try:
+                if not self._running(iid):
+                    raise Problem(f"{inst.name} isn't running")
                 ow = self._openwebui(inst)
                 ids = ow.knowledge_bases()
                 for kb, fid in files:
@@ -2624,8 +3054,10 @@ class Shepherd:
             except (Problem, openwebui.OpenWebUIError) as err:
                 log.warning("knowledge: couldn't take %s out of %s: %s", b.name, inst.name, err)
                 left.append(inst.name)
-        return f"Deleted {b.name}." + (f" It is still in {', '.join(left)} (it wasn't running or answering): remove "
-                                       "it there by hand." if left else "")
+                self.library.update(lambda d, iid=iid, files=files: d.setdefault("stale", []).extend(
+                    {"target": f"{iid}/{kb}", "fid": fid} for kb, fid in files))
+        return f"Deleted {b.name}." + (f" It is still in {', '.join(left)} (it wasn't running or answering): the next "
+                                       "send or sync takes it out, or remove it there by hand." if left else "")
 
     @staticmethod
     def _empty_documents(folder: Path, own: bool) -> int:

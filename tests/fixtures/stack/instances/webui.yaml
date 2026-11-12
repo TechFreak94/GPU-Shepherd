@@ -11,8 +11,18 @@ env:
   DEFAULT_MODELS: chat
   ENABLE_OLLAMA_API: "false"
   ENABLE_IMAGE_GENERATION: "true"
-  IMAGE_GENERATION_ENGINE: comfyui
-  COMFYUI_BASE_URL: http://comfyui:8188
+  IMAGE_GENERATION_ENGINE: "comfyui"
+  COMFYUI_BASE_URL: "http://comfyui:8188"
+  ENABLE_IMAGE_PROMPT_GENERATION: "false"
+  COMFYUI_WORKFLOW: "{\"3\":{\"class_type\":\"KSampler\",\"inputs\":{\"seed\":0,\"steps\":25,\"cfg\":7,\"sampler_name\":\"euler\",\"scheduler\":\"normal\",\"denoise\":1,\"model\":[\"4\",0],\"positive\":[\"6\",0],\"negative\":[\"7\",0],\"latent_image\":[\"5\",0]}},\"4\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"model.safetensors\"}},\"5\":{\"class_type\":\"EmptyLatentImage\",\"inputs\":{\"width\":1024,\"height\":1024,\"batch_size\":1}},\"6\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":\"Prompt\",\"clip\":[\"4\",1]}},\"7\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":\"blurry, low quality, watermark\",\"clip\":[\"4\",1]}},\"8\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"samples\":[\"3\",0],\"vae\":[\"4\",2]}},\"9\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"OpenWebUI\",\"images\":[\"8\",0]}}}"
+  COMFYUI_WORKFLOW_NODES: "[{\"type\":\"prompt\",\"key\":\"text\",\"node_ids\":[\"6\"]},{\"type\":\"model\",\"key\":\"ckpt_name\",\"node_ids\":[\"4\"]},{\"type\":\"width\",\"key\":\"width\",\"node_ids\":[\"5\"]},{\"type\":\"height\",\"key\":\"height\",\"node_ids\":[\"5\"]},{\"type\":\"n\",\"key\":\"batch_size\",\"node_ids\":[\"5\"]},{\"type\":\"steps\",\"key\":\"steps\",\"node_ids\":[\"3\"]},{\"type\":\"seed\",\"key\":\"seed\",\"node_ids\":[\"3\"]}]"
+  IMAGE_SIZE: "1024x1024"
+  IMAGE_STEPS: "25"
+  ENABLE_IMAGE_EDIT: "true"
+  IMAGE_EDIT_ENGINE: "comfyui"
+  IMAGES_EDIT_COMFYUI_BASE_URL: "http://comfyui:8188"
+  IMAGES_EDIT_COMFYUI_WORKFLOW: "{\"1\":{\"class_type\":\"CheckpointLoaderSimple\",\"inputs\":{\"ckpt_name\":\"model.safetensors\"}},\"2\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"example.png\"}},\"3\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"2\",0],\"upscale_method\":\"lanczos\",\"megapixels\":1.0,\"resolution_steps\":8}},\"4\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"3\",0],\"vae\":[\"1\",2]}},\"5\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":\"Prompt\",\"clip\":[\"1\",1]}},\"6\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":\"blurry, low quality, watermark\",\"clip\":[\"1\",1]}},\"7\":{\"class_type\":\"KSampler\",\"inputs\":{\"seed\":0,\"steps\":25,\"cfg\":7,\"sampler_name\":\"euler\",\"scheduler\":\"normal\",\"denoise\":0.6,\"model\":[\"1\",0],\"positive\":[\"5\",0],\"negative\":[\"6\",0],\"latent_image\":[\"4\",0]}},\"8\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"samples\":[\"7\",0],\"vae\":[\"1\",2]}},\"9\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"OpenWebUI-edit\",\"images\":[\"8\",0]}}}"
+  IMAGES_EDIT_COMFYUI_WORKFLOW_NODES: "[{\"type\":\"prompt\",\"key\":\"text\",\"node_ids\":[\"5\"]},{\"type\":\"model\",\"key\":\"ckpt_name\",\"node_ids\":[\"1\"]},{\"type\":\"image\",\"key\":\"image\",\"node_ids\":[\"2\"]},{\"type\":\"seed\",\"key\":\"seed\",\"node_ids\":[\"7\"]}]"
 volumes:
   - {host: /opt/gpu-shepherd/appdata/open-webui, container: /app/backend/data}
 autostart: false

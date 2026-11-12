@@ -101,11 +101,12 @@ For instances of kind `llama-swap`.
 |---|---|
 | `GET /api/v1/instances/{id}/models` | `models`, `auto_aliases`, `settings` (`threads`, `llama_server`, `health_timeout`, `api_key`), `loaded` (model → state), `loading`, and the .gguf `files` it can see. |
 | `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto names follow. |
-| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). |
+| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). `?files=true` also deletes its files from disk (`409` while it is loaded; files another model uses are kept). |
 | `GET /api/v1/instances/{id}/suggestions` | The [suggested models](advanced.md#suggested-models), best fit first: `key`, `name`, `uses`, `fits` and `fit` (how it fits this machine), `state` (`ready`, `downloading`, `starting`, `failed`, `missing`), `status`, `pct`, `in_catalog`, and its `files` with their URLs. |
 | `POST /api/v1/instances/{id}/suggestions/{key}/add` | Add it with its makers' settings, downloading it if needed (`201`; `409` if the server has it). |
 | `POST /api/v1/instances/{id}/suggestions/{key}/download` | Download or resume its files in the background (`202`). |
 | `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. |
+| `POST /api/v1/instances/{id}/suggestions/{key}/delete` | Delete the files of a downloaded suggestion the server doesn't have. |
 | `POST /api/v1/instances/{id}/models/{model}/load` | Load it now, in the background (`202`). |
 | `POST /api/v1/instances/{id}/models/{model}/unload` | Unload it; `_all` as the model unloads every model. `409` while the server is answering. |
 | `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto name: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
@@ -126,7 +127,9 @@ For instances of kind `llama-swap`.
 | `GET /api/v1/knowledge/files` | The document files already in the folder, `{path: size}`. |
 | `PUT /api/v1/knowledge/files?path=Folder/Book.epub` | Upload one document (raw body, streamed to disk; folders in `path` are kept; a `.zip` is unpacked into a folder named after it). No scan; call `scan` when done. |
 | `POST /api/v1/knowledge/scan`, `POST /api/v1/knowledge/stop` | Scan the folder for new documents (`202`), or stop the work running. |
-| `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep"}` (`202`). |
+| `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep", "sync": true}` (`202`). `sync` keeps it in sync: every scan then sends new documents and takes out copies of documents deleted or changed. |
+| `DELETE /api/v1/knowledge/sync` | Stop keeping a knowledge base in sync. |
+| `GET /api/v1/knowledge/openwebui/{id}` | A running Open WebUI's knowledge bases: `bases` (`name`, `files`, `ours`, `sent`, `missing`, `sync`), the `sync` setting and `stale` (old copies waiting to be taken out). |
 | `POST /api/v1/knowledge/{key}/skill` | Draft an agent skill from a document with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
 | `POST /api/v1/knowledge/ocr` | Read the scanned PDFs (status `scanned`) with OCR, in the background (`202`). |
 | `POST /api/v1/knowledge/delete` | Delete every duplicate or every document that can't be read, files and all: `{"status": "duplicate" \| "failed"}` (`202`). |
@@ -139,8 +142,8 @@ For instances of kind `llama-swap`.
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`, `image_check_hours`. |
-| `PATCH /api/v1/settings` | Change `bind_address`, `network`, `trash_days` and/or `image_check_hours` (the others are YAML only). |
+| `GET /api/v1/settings` | `admin_user`, `bind_address`, `network`, `container_prefix`, `data_dir`, `host_data_dir`, `trash_days`, `image_check_hours`, `hf_suggestions`. |
+| `PATCH /api/v1/settings` | Change `bind_address`, `network`, `trash_days`, `image_check_hours` and/or `hf_suggestions` (suggest models trending on Hugging Face) (the others are YAML only). |
 | `POST /api/v1/settings/password` | `{"current": "...", "new": "..."}` (10+ characters). |
 | `POST /api/v1/token` | Make a new API token and answer it as `token`; the one used for this request stops working. |
 
@@ -152,11 +155,14 @@ Deleting an instance or cleaning up a file moves it to the trash first, so it ca
 
 | Request | What it does |
 |---|---|
-| `GET /api/v1/storage` | Free space per `disks`, the `folders` and their sizes, app `images` and what uses them, `files` worth a look (`why`: `unused`, `partial` or `duplicate`), `leftover_folders`, `orphans` (containers without an instance) and the `trash`. |
+| `GET /api/v1/storage` | Free space per `disks` (each named by its mount point), the `folders` and their sizes, app `images` and what uses them, `files` worth a look (`why`: `unused`, `partial` or `duplicate`), `leftover_folders`, `orphans` (containers without an instance) and the `trash`. |
 | `POST /api/v1/storage/images` | Remove the app images no instance uses (they download again when needed). |
 | `POST /api/v1/storage/orphans` | Remove containers left without an instance. Their data folders are not touched. |
 | `POST /api/v1/storage/files` | `{"paths": [...]}`: move model files from `files` to the trash. |
 | `POST /api/v1/storage/leftovers` | `{"name": "..."}`: move an unused app data folder from `leftover_folders` to the trash. |
+| `GET /api/v1/pictures` | Each app with ComfyUI picture folders: `folders` (`kind` `output` = made, `input` = uploaded), with `count`, `size` and `path`. |
+| `GET /api/v1/pictures/{id}/{kind}?page=1` | One page of that folder's `pictures` (`name`, `size`, `modified`, `age_days`, `video`), newest first. |
+| `POST /api/v1/pictures/{id}/{kind}/trash` | `{"names": [...]}` or `{"older_than": DAYS}` (0 = all): move pictures to the trash. |
 | `GET /api/v1/storage/drives` | The machine's `drives` (device, label, size, filesystem, where mounted, whether it can be mounted and why not), an `error` if they can't be looked at, and `auto_mount`. |
 | `POST /api/v1/storage/drives/mount` | `{"device": "/dev/sdb1"}`: mount a drive that holds data (never formatted or written to). |
 | `PUT /api/v1/storage/drives/auto` | `{"enabled": true}`: mount newly attached drives by itself, or only when asked. |
@@ -176,6 +182,8 @@ Settings that an app's template gained after it was installed (the dashboard's *
 |---|---|
 | `GET /api/v1/app-updates` | A list of `instance`, `key`, `title`, `changes` and `afterwards` (what is left for you to do). |
 | `POST /api/v1/app-updates/{id}/{key}/apply` | Apply it. `/skip` stops it being offered again. |
+| `POST /api/v1/app-updates/apply-all` | Apply every offered update. |
+| `POST /api/v1/instances/{id}/send-images` | Send a running Open WebUI the ComfyUI picture settings GPU Shepherd keeps for it (workflows, model, size, steps), replacing the ones saved in it. |
 
 ### App image updates
 
@@ -186,6 +194,7 @@ New releases of the apps' Docker images (checked every `image_check_hours`, 12 b
 | `GET /api/v1/image-updates` | Newer releases of the apps' images: when `checked`, `every_hours`, and for each instance its `image`, `state`, `auto_update`, `error`, `checked` and `updated`. |
 | `POST /api/v1/image-updates/check` | Look in the registries now. |
 | `POST /api/v1/image-updates/{id}/update` | Download the new image and restart the app, waiting for running work (`202`, a job). |
+| `POST /api/v1/image-updates/update-all` | Download every new image, then restart the running apps one at a time (`202`, a job). |
 | `PUT /api/v1/instances/{id}/auto-update` | `{"on": true}`: let GPU Shepherd bring in new releases of this app's image by itself. |
 
 ## Tensor unlock
@@ -213,6 +222,10 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 | `POST /api/v1/updates/branch` | `{"branch": "feature-x"}`: follow that branch (one listed in `branches` of `GET /api/v1/updates`) and rebuild (`202`). |
 | `GET /api/v1/updates/log` | The log of the last check or update. |
 | `POST /api/v1/updates/credentials` | `{"user": "...", "token": "github_pat_..."}` to save a GitHub token for a private repository, or `{"clear": true}`. |
+| `GET /api/v1/tailscale` | Tailscale on the host: `installed`, `state` (`Running`, `NeedsLogin`, `Stopped`...), `connected`, `name`, `ips`, `tailnet`, `https`, `https_available`, `login_url` (while logging in), `dashboard_urls`, `busy`, `run`, `message`, `service`, `wsl`. |
+| `POST /api/v1/tailscale/{action}` | `refresh`, `install`, `up` (log in or connect), `down`, `https-on`, `https-off` or `logout` (`202`). Needs dashboard updates; the host does the work. |
+| `GET /api/v1/power` | What is running (`running`) and whether the host can restart or shut down (`host`, else `hint` says why). |
+| `POST /api/v1/power/{action}` | `restart` (GPU Shepherd; apps keep running), `reboot` or `shutdown` (the whole server; needs dashboard updates) (`202`). |
 | `GET /api/v1/changelog` | Releases, newest first: `version`, `date`, `items`, `running`, `new`. |
 
 ## Examples

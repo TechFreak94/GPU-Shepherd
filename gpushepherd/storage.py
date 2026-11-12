@@ -9,6 +9,7 @@ as such, without sizes.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ MAX_DEPTH = 6                # how deep a models folder is searched
 
 @dataclass
 class Disk:
-    path: str                # the first folder found on it
+    path: str                # where the disk is mounted (the first folder found on it if unknown)
     total: int
     free: int
     folders: list[str] = field(default_factory=list)   # GPU Shepherd's folders on this disk
@@ -59,6 +60,38 @@ class Scan:
 
     def by_why(self, why: str) -> list[ModelFile]:
         return [f for f in self.files if f.why == why]
+
+
+def _unescape(field: str) -> str:
+    """mountinfo writes spaces, tabs, newlines and backslashes in paths as \\ooo octal."""
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), field)
+
+
+def mount_point(path: str, mountinfo: str = "/proc/self/mountinfo") -> str:
+    """Where the disk holding `path` is mounted, e.g. /mnt/disk-1 for /mnt/disk-1/models, so a disk
+    is named after the whole drive rather than one folder on it. Inside a container a folder may be
+    bound in on its own (/mnt/disk-1/models seen at the same path, with "/models" as its root on the
+    drive): then the drive's own mount point is that path less the root. `path` itself if unknown."""
+    try:
+        lines = Path(mountinfo).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return path
+    path = os.path.abspath(path)
+    best, best_root = "", "/"
+    for line in lines:
+        fields = line.split(" ")
+        if len(fields) < 5:
+            continue
+        root, where = _unescape(fields[3]), _unescape(fields[4])
+        inside = where == "/" or path == where or path.startswith(where.rstrip("/") + "/")
+        if inside and len(where) >= len(best):
+            best, best_root = where, root
+    if not best:
+        return path
+    root = best_root.rstrip("/")
+    if root and best.endswith(root):
+        return best[:-len(root)] or "/"
+    return best
 
 
 def model_folders(instances: dict[str, Instance], llm_mount: str) -> list[str]:
@@ -107,8 +140,8 @@ def scan(data_dir: Path, instances: dict[str, Instance], catalogs: dict[str, lis
         try:
             dev = os.stat(p).st_dev
             if dev not in by_dev:
-                u = shutil.disk_usage(p)
-                by_dev[dev] = Disk(p, u.total, u.free)
+                u = shutil.disk_usage(p)    # the whole disk's numbers, from any folder on it
+                by_dev[dev] = Disk(mount_point(p), u.total, u.free)
             by_dev[dev].folders.append(p)
         except OSError:
             continue

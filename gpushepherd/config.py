@@ -6,6 +6,7 @@ Layout of the data directory (SHEPHERD_DATA_DIR):
     instances/<id>.yaml        one file per instance (a container the app manages)
     catalogs/<id>.yaml         model catalogue for each model-server instance
     linked-models.yaml         models added from a link on a Models page (listed with the suggested ones)
+    hf-models.json             models trending on Hugging Face, refreshed daily (suggested when they fit)
     generated/<id>/...         files the app renders for containers (do not edit)
 
 Everything the UI saves lands in these files, so they can be backed up, diffed and kept in
@@ -27,6 +28,20 @@ from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_valid
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+
+# GPU numbers: NVIDIA GPUs keep nvidia-smi's (0, 1...); AMD GPUs are numbered from AMD_BASE (100,
+# 101...), so neither kind renumbers the other when one goes missing (see gpu.py)
+AMD_BASE = 100
+VENDORS = ("nvidia", "amd")
+
+
+def gpu_vendor(index: int) -> str:
+    return "amd" if index >= AMD_BASE else "nvidia"
+
+
+def gpu_label(index: int) -> str:
+    """How a GPU is named on screen: GPU 0, or AMD GPU 0 for index 100."""
+    return f"AMD GPU {index - AMD_BASE}" if index >= AMD_BASE else f"GPU {index}"
 
 
 class ConfigError(ValueError):
@@ -79,6 +94,8 @@ class GpuPolicy(BaseModel):
                   back to a GPU as soon as one is free
     vram_gb       one-GPU elastic only: the most video memory it uses. Instances with a budget can
                   share a GPU, as many as fit in its memory; 0 = it needs a GPU of its own
+    vendor        which kind of GPU it runs on: nvidia (CUDA) or amd (Vulkan, or ROCm). Each kind
+                  is planned on its own: an app only ever gets GPUs of its kind
     """
     mode: Literal["none", "fixed", "elastic"] = "none"
     gpus: list[int] = []
@@ -87,6 +104,7 @@ class GpuPolicy(BaseModel):
     priority: int = Field(default=50, ge=0, le=100)
     cpu_fallback: bool = False
     vram_gb: float = Field(default=0, ge=0, le=1024)
+    vendor: Literal["nvidia", "amd"] = "nvidia"
 
     @model_validator(mode="after")
     def _check(self) -> "GpuPolicy":
@@ -96,6 +114,9 @@ class GpuPolicy(BaseModel):
             raise ValueError("max GPUs must be 0 (no limit) or at least min GPUs")
         if len(set(self.gpus)) != len(self.gpus):
             raise ValueError("a GPU is listed twice")
+        other = [g for g in self.gpus if gpu_vendor(g) != self.vendor]
+        if other:
+            raise ValueError(f"{', '.join(map(gpu_label, other))} is not an {self.vendor.upper()} GPU")
         if self.vram_gb and not (self.mode == "elastic" and self.max_gpus == 1):
             raise ValueError("only an instance that uses one GPU, whichever is free, can share a GPU "
                              "(a video memory budget)")
@@ -159,6 +180,9 @@ class Instance(BaseModel):
     requires: list[str] = []          # instances that start with it (e.g. its database)
     skipped_updates: list[str] = []   # app updates the user chose not to apply (see app_updates.py)
     auto_update: bool = False         # bring in a new release of its image by itself (image_updates.py)
+    # host devices passed in as they are, e.g. /dev/kfd for ROCm images (the AMD GPUs it is given
+    # come with their own /dev/dri nodes)
+    devices: list[str] = []
     # the name in its file when the app shows its App Center name instead (older "Chat UI" names);
     # restart checks use it, so the better name alone never asks for a restart
     _file_name: str | None = PrivateAttr(default=None)
@@ -192,6 +216,15 @@ class Instance(BaseModel):
         if len(hosts) != len(set(hosts)):
             raise ValueError("a host port is used twice")
         return self
+
+    @field_validator("devices")
+    @classmethod
+    def _devices(cls, v: list[str]) -> list[str]:
+        v = list(dict.fromkeys(x.strip().rstrip("/") for x in v if x.strip()))
+        for x in v:
+            if not re.match(r"^/dev/[A-Za-z0-9_./-]+$", x) or ".." in x:
+                raise ValueError(f"'{x}' is not a device path (like /dev/dri)")
+        return v
 
     @field_validator("requires")
     @classmethod
@@ -369,6 +402,7 @@ class Settings(BaseModel):
     trash_days: int = Field(default=30, ge=0, le=3650)   # empty trash entries older than this (0 = never)
     auto_mount_drives: bool = True        # mount a newly attached drive that has data on it (see drives.py)
     image_check_hours: int = Field(default=12, ge=0, le=720)   # look for new app releases this often (0 = only by hand)
+    hf_suggestions: bool = True           # also suggest models trending on Hugging Face (hf_models.py)
 
 
 # --------------------------------------------------------------------------- store

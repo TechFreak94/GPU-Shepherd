@@ -11,17 +11,18 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, tailscale, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
+                     gpu_label, gpu_vendor,
                      format_command, format_env, format_ports, format_volumes, parse_command, parse_env, parse_ports,
                      parse_volumes)
 from .connectors import llamaswap
@@ -275,6 +276,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "unknown" if unknown else "not created"),
                     "container": engine.container_name(inst.id), "has_logins": logins.method(inst) is not None,
+                    "sends_images": bool(inst.env.get("COMFYUI_BASE_URL")) and tpl.matches(tpl.get("open-webui"), inst),
                     "gpus": gpus, "assigned": assigned, "image": images.get(inst.id),
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
                     "usage": usage.get(engine.container_name(inst.id)),
@@ -485,6 +487,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 return problem(err)
         return logins_dialog(request, iid, result=result)
 
+    @app.post("/ui/instances/{iid}/send-images")
+    @threaded
+    def instance_send_images(request: Request, iid: str):
+        try:
+            msg = svc.send_images(iid)
+        except Problem as err:
+            return problem(err)
+        return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
+
     @app.post("/ui/instances/{iid}/update-image")
     def instance_update_image(request: Request, iid: str):
         try:
@@ -530,6 +541,19 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(Problem("Hours must be a whole number (0 checks only when you press Check now)."))
         try:
             return toast(Response(status_code=204), svc.set_image_check_hours(int(hours)))
+        except Problem as err:
+            return problem(err)
+
+    @app.post("/settings/hf-models")
+    @threaded
+    def settings_hf_models(request: Request):
+        raw = request.state.form
+        try:
+            if raw.get("refresh") == "1":
+                return toast(Response(status_code=204), svc.refresh_hf_models())
+            resp = toast(Response(status_code=204), svc.set_hf_suggestions(raw.get("on") == "1"))
+            resp.headers["HX-Refresh"] = "true"
+            return resp
         except Problem as err:
             return problem(err)
 
@@ -594,11 +618,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "drain_check": inst.drain.check, "drain_timeout": inst.drain.timeout,
                 "drain_on_timeout": inst.drain.on_timeout, "drain_port": inst.drain.port or "",
                 "drain_path": inst.drain.path, "drain_key": inst.drain.key, "app": inst.app,
-                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update}
+                "requires": ", ".join(inst.requires), "auto_update": inst.auto_update,
+                "devices": ", ".join(inst.devices), "gpu_vendor": inst.gpu.vendor}
 
     def editor(request: Request, form: dict, editing: bool, error: str = "", status: int = 200):
-        gpus, _ = engine.snapshot().gpus, None
-        gpu_count = max(len(gpus), 1)
+        gpus = engine.snapshot().gpus
+        listed = list(form.get("gpu_list") or [])
+        # NVIDIA GPUs 0..n (at least GPU 0), then the AMD ones, plus any the form lists that aren't here now
+        nvidia = [g.index for g in gpus if g.vendor == "nvidia"] + [x for x in listed if gpu_vendor(x) == "nvidia"]
+        indices = sorted(set(range(max(nvidia, default=0) + 1)) | {g.index for g in gpus} | set(listed))
         try:
             app_t = tpl.get(form.get("app") or "") if not editing else None
         except ConfigError:
@@ -606,7 +634,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         no_server = bool(app_t and app_t.connects) and not svc.has_model_server()
         return page(request, "instance_form.html", status=status, f=form, editing=editing, error=error, app_t=app_t,
                     no_server=no_server, model_servers=[x for x in tpl.TEMPLATES if tpl.is_model_server(x)],
-                    gpu_indices=list(range(max(gpu_count, max([0] + list(form.get("gpu_list") or [])) + 1))))
+                    gpu_indices=[(n, gpu_label(n)) for n in indices])
 
     # ------------------------------------------------------------------ automatic install (templates)
     machine, model_files = svc.machine, svc.model_files
@@ -631,13 +659,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         keys = {sl.key for sl in tpl.slots(t)}
         suggested = [(s, fit, [sl for sl in tpl.slots(t) if sl.key in s.uses],
                       f"{tpl.MODELS_IN_CONTAINER}/{s.path(s.model)}" in have)
-                     for s, fit in sorted(((s, model_library.fit(s, m.gpu_mem_gb, m.ram_gb))
-                                           for s in model_library.SUGGESTIONS if keys & set(s.uses)),
+                     for s, fit in sorted(((s, model_library.fit(s, tpl.gpu_mem_gb(t, m), m.ram_gb))
+                                           for s in model_library.SUGGESTIONS + m.suggestions if keys & set(s.uses)),
                                           key=lambda x: x[1].rank)] if wants_files else []
         return page(request, "instance_guided.html", status=status, t=t, f=f, error=error, files=files,
                     suggested=suggested, models_root=tpl.MODELS_IN_CONTAINER,
                     file_notes=notes, gpu_choices=choices, offload_choices=tpl.OFFLOAD_CHOICES,
-                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy, gpus=gpus,
+                    servers=[(k, v["name"]) for k, v in m.servers.items()], comfy=comfy,
+                    gpus=[g for g in gpus if g.vendor == t.vendor],
                     speech=list(tpl.speech_servers(m).items()),
                     new_server=tpl.NEW_SERVER, bundled=tpl.get(tpl.BUNDLED_SERVER), slots=tpl.slots(t),
                     companions=[tpl.get(c) for c in t.companions],
@@ -741,7 +770,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                           "volumes", "gpu_mode", "min_gpus", "max_gpus", "priority", "open_port",
                                           "open_path", "shm_size", "user_spec", "memory_limit", "editing",
                                           "drain_check", "drain_timeout", "drain_on_timeout", "drain_port",
-                                          "drain_path", "drain_key", "app", "requires", "vram_gb")}
+                                          "drain_path", "drain_key", "app", "requires", "vram_gb", "devices",
+                                          "gpu_vendor")}
         f["gpu_list"] = [int(x) for x in raw.getlist("gpu_list") if str(x).isdigit()]
         f["autostart"] = raw.get("autostart") == "on"
         f["cpu_fallback"] = raw.get("cpu_fallback") == "on"
@@ -756,7 +786,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                               min_gpus=int(f["min_gpus"] or 1), max_gpus=int(f["max_gpus"] or 0),
                               priority=int(f["priority"] or 50),
                               vram_gb=float(f["vram_gb"]) if str(f["vram_gb"]).strip() and f["gpu_mode"] == "elastic" else 0,
-                              cpu_fallback=f["cpu_fallback"] and (f["gpu_mode"] == "elastic")),
+                              cpu_fallback=f["cpu_fallback"] and (f["gpu_mode"] == "elastic"),
+                              vendor=f["gpu_vendor"] or "nvidia"),
                 autostart=f["autostart"], open_port=int(f["open_port"]) if str(f["open_port"]).strip() else None,
                 open_path=f["open_path"] or "/", shm_size=f["shm_size"] or None, user=f["user_spec"] or None,
                 memory_limit=f["memory_limit"] or None,
@@ -766,7 +797,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                   port=int(f["drain_port"]) if str(f["drain_port"]).strip() else None,
                                   path=f["drain_path"], key=f["drain_key"]),
                 app=str(f["app"]).strip(), requires=re.split(r"[\s,]+", str(f["requires"]).strip()),
-                auto_update=f["auto_update"])
+                auto_update=f["auto_update"], devices=re.split(r"[\s,]+", str(f["devices"]).strip()))
             msg = svc.save_instance(inst, editing)
         except (Problem, ConfigError, ValueError) as err:
             resp = editor(request, f, editing, error=err.msg if isinstance(err, Problem) else message(err))
@@ -791,7 +822,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         gpu_count = len(st.gpus) if running else 0
         loaded, err = svc.loaded(iid, cat)
         files, notes = llamaswap.local_model_files(inst)
-        preview_gpus = gpu_count or max(len(engine.snapshot().gpus), 1)
+        preview_gpus = gpu_count or max(len([g for g in engine.snapshot().gpus if g.vendor == inst.gpu.vendor]), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
@@ -801,9 +832,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
                                                              [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat), "tuning": svc.tuning(iid),
+                "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
                 "pending": bool(running and st.config_hash != engine.config_hash(inst)),
-                "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst)}
+                "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst), **hf_ctx()}
 
     @app.get("/instances/{iid}/models", response_class=HTMLResponse)
     def models_page(request: Request, iid: str):
@@ -812,12 +843,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         except Problem as err:
             return RedirectResponse(with_msg("/", err.msg), status_code=303)
 
+    def hf_ctx() -> dict:
+        return {"hf_on": store.settings().hf_suggestions, "hf_checked": svc.hf_checked()}
+
     @app.get("/instances/{iid}/suggestions", response_class=HTMLResponse)
     def suggestions_part(request: Request, iid: str):
         try:
             inst, _ = svc.server(iid)
             return page(request, "partials/suggestions.html", inst=inst, suggestions=svc.suggestions(iid),
-                        download_dir=svc.models_dir(inst))
+                        download_dir=svc.models_dir(inst), **hf_ctx())
         except Problem as err:
             return problem(err)
 
@@ -835,6 +869,8 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                 msg = svc.discard_download(iid, key)
             elif op == "forget":
                 msg = svc.forget_link(iid, key)
+            elif op == "delete":
+                msg = svc.delete_download(iid, key)
             else:
                 return PlainTextResponse("unknown operation", status_code=400)
         except Problem as err:
@@ -859,14 +895,14 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         files, notes = llamaswap.local_model_files(inst)
         f = m.model_dump() if m else CatalogModel(id="new", file="/models/new.gguf").model_dump() | {"id": "", "file": ""}
         f["aliases_text"] = ", ".join(f.get("aliases") or [])
-        f["offload_rows"] = offload_rows({r.min_gpus: r for r in (m.offload if m else [])})
+        f["offload_rows"] = offload_rows({r.min_gpus: r for r in (m.offload if m else [])}, inst.gpu.vendor)
         return page(request, "model_form.html", inst=inst, f=f, editing=bool(m), files=files, file_notes=notes,
                     error="")
 
-    def offload_rows(rules: dict) -> list[dict]:
-        """One form row per GPU count this machine can give a model server (1..number of GPUs),
-        plus any count a saved rule mentions. Values are strings, as the form posts them."""
-        top = max([len(engine.snapshot().gpus), 1] + [int(k) for k in rules])
+    def offload_rows(rules: dict, vendor: str = "nvidia") -> list[dict]:
+        """One form row per GPU count this machine can give a model server (1..number of its kind of
+        GPUs), plus any count a saved rule mentions. Values are strings, as the form posts them."""
+        top = max([len([g for g in engine.snapshot().gpus if g.vendor == vendor]), 1] + [int(k) for k in rules])
         rows = []
         for n in range(1, top + 1):
             r = rules.get(n)
@@ -909,7 +945,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                                "ttl", "gpus")}
         f |= {k: raw.get(k) == "on" for k in ("keep_loaded", "preload")}
         posted = posted_offload(raw)
-        f["offload_rows"] = offload_rows(posted)
+        f["offload_rows"] = offload_rows(posted, inst.gpu.vendor)
         try:
             model = CatalogModel(id=f["id"].strip(), name=f["name"].strip(), description=f["description"].strip(),
                                  file=f["file"], ctx_size=int(f["ctx_size"] or 32768),
@@ -933,9 +969,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
 
     @app.post("/instances/{iid}/models/{mid}/delete")
-    def delete_model(iid: str, mid: str):
+    def delete_model(iid: str, mid: str, files: bool = False):
         try:
-            msg = svc.delete_model(iid, mid)
+            msg = svc.delete_model(iid, mid, files)
         except Problem as err:
             return problem(err)
         return Response(status_code=204, headers={"HX-Redirect": with_msg(f"/instances/{iid}/models", msg)})
@@ -1147,13 +1183,46 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             return problem(err)
         return toast(unlock_card_page(request), msg)
 
+    # ------------------------------------------------------------------ Tailscale (on the host, through update.sh)
+    def tailscale_card_page(request: Request, refresh: bool = False) -> Response:
+        return page(request, "partials/tailscale_card.html", ts=svc.tailscale_status(refresh), ts_url=tailscale.URL,
+                    ts_admin=tailscale.ADMIN_DNS, here=request.url.hostname or "")
+
+    @app.get("/ui/tailscale/card", response_class=HTMLResponse)
+    def tailscale_card(request: Request):
+        if request.query_params.get("refresh") == "1":         # the Refresh button: ask the host now
+            try:
+                svc.request_tailscale("refresh")
+            except Problem as err:
+                return problem(err)
+        return tailscale_card_page(request)
+
+    @app.get("/ui/tailscale/log", response_class=HTMLResponse)
+    def tailscale_log(request: Request):
+        ts = svc.tailscale_status()
+        return page(request, "partials/logs.html", title="Tailscale log", refresh="/ui/tailscale/log" if ts.busy else "",
+                    text=tailscale.log_text(store.root) or "Nothing yet: the server writes here once a change starts.")
+
+    @app.post("/ui/tailscale/{action}")
+    @threaded
+    def tailscale_request(request: Request, action: str):
+        if action not in tailscale.ACTIONS:
+            return PlainTextResponse("unknown action", status_code=400)
+        try:
+            msg = svc.request_tailscale(action)
+        except Problem as err:
+            return problem(err)
+        return toast(tailscale_card_page(request), msg)
+
     # ------------------------------------------------------------------ settings
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):
         return page(request, "settings.html", s=store.settings(), docker=backend.ping(), data_dir=str(store.root),
                     host_data_dir=str(engine.host_data_dir), initial=auth.initial_password_file(store).exists(),
                     error="", u=updates.status(store.root), api_token=auth.api_token(store),
-                    image_checked=svc.image_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL)
+                    image_checked=svc.image_checked(), hf_checked=svc.hf_checked(), x=svc.unlock_status(), unlock_url=gpu_unlock.URL,
+                    ts=svc.tailscale_status(refresh=True), ts_url=tailscale.URL, ts_admin=tailscale.ADMIN_DNS,
+                    here=request.url.hostname or "")
 
     @app.post("/settings/password")
     @threaded
@@ -1254,7 +1323,22 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         raw = request.state.form
         emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
         return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
-                                                 bool(raw.get("split")), emb))
+                                                 bool(raw.get("split")), emb, True if raw.get("sync") else None))
+
+    @app.post("/knowledge/sync/stop")
+    def knowledge_sync_stop():
+        return knowledge_done(svc.stop_sync)
+
+    @app.get("/knowledge/openwebui/{iid}", response_class=HTMLResponse)
+    def knowledge_openwebui(request: Request, iid: str):
+        """What is in an Open WebUI's knowledge (loaded into the Knowledge page after it shows: signing in takes a moment)."""
+        try:
+            k, err = svc.openwebui_knowledge(iid), ""
+        except Problem as e:
+            k, err = None, e.msg
+        inst = svc.store.instances()[0].get(iid)
+        base = base_url(request, inst.open_url_port, "/").rstrip("/") if inst and inst.open_url_port else ""
+        return templates.TemplateResponse(request, "partials/knowledge_openwebui.html", {"k": k, "err": err, "base": base})
 
     @app.post("/knowledge/ocr")
     def knowledge_ocr():
@@ -1315,7 +1399,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)
     def storage_page(request: Request):
-        return page(request, "storage.html", st=svc.storage(), drives=drives_info())
+        return page(request, "storage.html", st=svc.storage(), drives=drives_info(), pictures=svc.pictures())
 
     def storage_done(action):
         """Run one clean-up, then show the Storage page again with what happened."""
@@ -1356,6 +1440,40 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def storage_purge(request: Request):
         raw = request.state.form        # no id = empty the whole trash
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
+
+    # ComfyUI's pictures: what each ComfyUI made and was given, to look through and clear out
+    @app.get("/storage/pictures", response_class=HTMLResponse)
+    def pictures_page(request: Request, app_id: str = Query("", alias="app"), folder: str = "output",
+                      page_no: int = Query(1, alias="page")):
+        apps = svc.pictures()
+        app_id = app_id or (apps[0]["id"] if apps else "")
+        if apps and folder not in {f["kind"] for a in apps if a["id"] == app_id for f in a["folders"]}:
+            folder = next((a["folders"][0]["kind"] for a in apps if a["id"] == app_id and a["folders"]), folder)
+        shown = svc.picture_page(app_id, folder, page_no) if app_id else None
+        return page(request, "pictures.html", apps=apps, shown=shown)
+
+    @app.get("/storage/pictures/{iid}/{kind}/file")
+    def picture_file(iid: str, kind: str, name: str = "", download: int = 0):
+        p = svc.picture_file(iid, kind, name)
+        return FileResponse(p, filename=p.name if download else None,
+                            content_disposition_type="attachment" if download else "inline",
+                            headers={"Cache-Control": "private, max-age=86400",
+                                     "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'",
+                                     "X-Content-Type-Options": "nosniff"})
+
+    @app.post("/storage/pictures/{iid}/{kind}/trash")
+    @threaded
+    def pictures_trash(request: Request, iid: str, kind: str):
+        raw = request.state.form
+        names = [str(n) for n in raw.getlist("name")]
+        days = str(raw.get("older_than", "")).strip()
+        try:
+            msg = svc.trash_pictures(iid, kind, names or None,
+                                     None if names or not days.isdigit() else int(days))
+        except Problem as err:
+            return problem(err)
+        back = f"/storage/pictures?app={quote(iid)}&folder={quote(kind)}"
+        return Response(status_code=204, headers={"HX-Redirect": f"{back}&msg={quote(msg, safe='')}"})
 
     def move_form(raw) -> tuple[str, str]:
         """(source, dest); with home=1 the dest is where the folder was before it was moved."""
@@ -1498,5 +1616,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         svc.start_measuring()
         svc.watch_drives()
         svc.watch_images()
+        svc.watch_hf_models()
 
     return app

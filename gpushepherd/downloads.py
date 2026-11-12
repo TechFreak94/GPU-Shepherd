@@ -174,6 +174,24 @@ class Downloads:
                                   [(models_dir, FOLDER, False)], _owner(models_dir))
         return f"Threw away the partial download of {s.name}."
 
+    def delete_files(self, models_dir: str, rels: list[str]) -> None:
+        """Delete finished model files (paths inside the models folder), then each one's folder if it
+        is left empty. Done here when the folder is writable, else by a helper container."""
+        root = Path(models_dir) if models_dir.startswith("/") else None
+        dirs = sorted({str(Path(r).parent) for r in rels if Path(r).parent != Path(".")})
+        if root and root.is_dir() and os.access(root, os.W_OK):
+            for rel in rels:
+                (root / rel).unlink(missing_ok=True)
+            for d in dirs:
+                try:
+                    (root / d).rmdir()
+                except OSError:      # still has files in it (or is gone): leave it
+                    pass
+        else:
+            script = "rm -f " + " ".join(shlex.quote(f"{FOLDER}/{r}") for r in rels)
+            script += "".join(f"; rmdir {shlex.quote(f'{FOLDER}/{d}')} 2>/dev/null" for d in dirs) + "; true"
+            self.backend.run_task(IMAGE, script, [(models_dir, FOLDER, False)], _owner(models_dir))
+
     def _tidy(self, name: str, helpers: dict | None = None) -> None:
         """Remove a finished download's helper: once the files are there, it has nothing to tell."""
         try:

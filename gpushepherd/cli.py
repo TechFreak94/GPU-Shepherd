@@ -397,6 +397,11 @@ def cmd_app_updates(args, c: Client) -> int:
     if args.action == "apply" and args.all:
         out(args, c.post("/api/v1/app-updates/apply-all"))
         return 0
+    if args.action == "send-images":
+        if not args.instance:
+            raise Failed("which Open WebUI? e.g. gpu-shepherd app-updates send-images webui")
+        out(args, c.post(f"/api/v1/instances/{args.instance}/send-images"))
+        return 0
     if not (args.instance and args.key):
         raise Failed(f"which update? e.g. gpu-shepherd app-updates {args.action} webui env-1a2b3c4d")
     out(args, c.post(f"/api/v1/app-updates/{args.instance}/{args.key}/{args.action}"))
@@ -507,7 +512,9 @@ def cmd_models(args, c: Client) -> int:
         m = apply_pairs(m, changes) | {"offload": sorted(offload.values(), key=lambda r: r["min_gpus"])}
         out(args, c.call("PUT", f"{base}/models/{args.model}", m))
     elif a == "delete":
-        out(args, c.call("DELETE", f"{base}/models/{args.model}"))
+        if args.files and not (args.yes or ask(f"Delete {args.model} and its model files from disk? This can't be undone.")):
+            return 1
+        out(args, c.call("DELETE", f"{base}/models/{args.model}" + ("?files=true" if args.files else "")))
     elif a == "load":
         out(args, c.post(f"{base}/models/{args.model}/load"))
     elif a == "unload":
@@ -680,6 +687,22 @@ def cmd_trash(args, c: Client) -> int:
     return 0
 
 
+def cmd_pictures(args, c: Client) -> int:
+    if not args.action or args.action == "list":
+        out(args, c.get("/api/v1/pictures"), lambda rows: table(
+            [[a["id"], f["kind"], f["count"] if f["visible"] else "not visible", gb(f["size"]), f["path"]]
+             for a in rows for f in a["folders"]], ["APP", "FOLDER", "PICTURES", "SIZE", "PATH"]))
+        return 0
+    if not args.app or args.older_than is None:
+        raise Failed("which app, and how old? e.g. gpu-shepherd pictures clean comfyui --older-than 30")
+    days = "every picture" if args.older_than == 0 else f"pictures older than {args.older_than} days"
+    if not (args.yes or ask(f"Move {days} in {args.app}'s {args.folder} folder to the trash?")):
+        print("Nothing moved. Add -y to move them without asking.")
+        return 1
+    out(args, c.post(f"/api/v1/pictures/{args.app}/{args.folder}/trash", {"older_than": args.older_than}))
+    return 0
+
+
 def cmd_password(args, c: Client) -> int:
     current = getpass.getpass("Current password: ")
     new = getpass.getpass("New password (10+ characters): ")
@@ -706,6 +729,44 @@ def cmd_power(args, c: Client) -> int:
         print("Nothing changed. Add -y to go ahead without asking.")
         return 1
     out(args, c.post(f"/api/v1/power/{a}"))
+    return 0
+
+
+def cmd_tailscale(args, c: Client) -> int:
+    a = args.action or "status"
+    if a != "status":
+        if a in ("down", "logout") and not (args.yes or ask("Take the server off your tailnet? Devices that reach it "
+                                                             "through Tailscale lose it until it connects again.")):
+            print("Nothing changed. Add -y to go ahead without asking.")
+            return 1
+        out(args, c.post(f"/api/v1/tailscale/{a}"))
+        if a not in ("install", "up"):
+            return 0
+        if args.json:
+            return 0
+        print("Waiting for the server (Ctrl+C stops waiting; the login goes on)…")
+        shown = ""
+        for _ in range(170):
+            time.sleep(2)
+            r = c.get("/api/v1/tailscale")
+            if r["login_url"] and r["login_url"] != shown:
+                shown = r["login_url"]
+                print("Log in to add the server to your tailnet: " + shown)
+            if not r["busy"]:
+                break
+    r = c.get("/api/v1/tailscale")
+
+    def show(r):
+        if not r["installed"]:
+            print("Tailscale: not installed" + ("" if r["service"] else f" (to set it up from here: {r['command']} --enable-dashboard-updates)"))
+            return
+        print(f"Tailscale: {r['state'] or 'unknown'}" + (f" as {r['name']}" if r["name"] else "")
+              + (f" ({', '.join(r['ips'])})" if r["ips"] else ""))
+        for u in r["dashboard_urls"]:
+            print("  dashboard: " + u)
+        if r["message"]:
+            print(r["message"])
+    out(args, r, show)
     return 0
 
 
@@ -814,9 +875,20 @@ def cmd_knowledge(args, c: Client) -> int:
         need(1, "upload FOLDER-OR-FILE...  (from any computer: --url http://server:8080 --token TOKEN)")
         upload_documents(c, [Path(i) for i in items])
     elif a == "send":
-        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep]")
+        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep] [--sync]")
         out(args, c.post("/api/v1/knowledge/send", {"instance": items[0], "name": args.name, "split": args.split,
-                                                "embeddings": args.embeddings}))
+                                                "embeddings": args.embeddings, "sync": True if args.sync else None}))
+    elif a == "sync-off":
+        out(args, c.call("DELETE", "/api/v1/knowledge/sync"))
+    elif a == "in":
+        need(1, "in open-webui  (what is in its knowledge bases)")
+
+        def bases(k):
+            table([[b["name"][:50], "" if b["files"] is None else b["files"],
+                    "" if b["sent"] is None else b["sent"], b["missing"] or "",
+                    "sync" if b["sync"] else "gone" if b.get("gone") else "yes" if b["ours"] else ""] for b in k["bases"]],
+                  ["KNOWLEDGE BASE", "FILES", "SENT", "NOT YET", "GPU SHEPHERD"])
+        out(args, c.get(f"/api/v1/knowledge/openwebui/{quote(items[0])}"), bases)
     elif a == "skill":
         need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd knowledge)")
         out(args, c.post(f"/api/v1/knowledge/{quote(items[0])}/skill", {"server": args.server}))
@@ -900,8 +972,8 @@ def cmd_token(args, c: Client | None) -> int:
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
-            "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash,
-            "password": cmd_password, "update": cmd_update, "power": cmd_power, "changelog": cmd_changelog, "token": cmd_token}
+            "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash, "pictures": cmd_pictures,
+            "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
 
 
 def add_commands(sub) -> None:
@@ -940,8 +1012,9 @@ def add_commands(sub) -> None:
     p.add_argument("answers", nargs="*", metavar="KEY=VALUE")
 
     p = sub.add_parser("app-updates", help="settings added to apps since they were installed: list, "
-                                           "apply INSTANCE KEY (or --all), skip INSTANCE KEY")
-    p.add_argument("action", nargs="?", choices=("list", "apply", "skip"))
+                                           "apply INSTANCE KEY (or --all), skip INSTANCE KEY, send-images INSTANCE "
+                                           "(an Open WebUI's picture settings, again)")
+    p.add_argument("action", nargs="?", choices=("list", "apply", "skip", "send-images"))
     p.add_argument("instance", nargs="?")
     p.add_argument("key", nargs="?")
     p.add_argument("--all", action="store_true", help="apply every update")
@@ -958,11 +1031,14 @@ def add_commands(sub) -> None:
     for name, what in (("list", "models, aliases, auto names and what is loaded"),
                        ("files", "the .gguf files the server can see")):
         msub.add_parser(name, help=what).add_argument("server")
-    for name, what in (("show", "one model's settings"), ("delete", "remove a model"),
+    for name, what in (("show", "one model's settings"), ("delete", "remove a model (--files: and its files on disk)"),
                        ("load", "load a model now")):
         q = msub.add_parser(name, help=what)
         q.add_argument("server")
         q.add_argument("model")
+        if name == "delete":
+            q.add_argument("--files", action="store_true", help="also delete the model's files from the models folder")
+            q.add_argument("-y", "--yes", action="store_true", help="don't ask")
     msub.add_parser("suggested", help="suggested models: how each fits this machine, downloaded or not") \
         .add_argument("server")
     for name, what in (("add-suggested", "add a suggested model with its settings, downloading it if needed"),
@@ -1023,14 +1099,16 @@ def add_commands(sub) -> None:
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
     p = sub.add_parser("knowledge", aliases=["books"],
                        help="documents (ebooks, manuals, notes) for chat apps and agents: list, status, folder PATH, scan, "
-                            "upload FOLDER..., send OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
+                            "upload FOLDER..., send OPEN-WEBUI [--sync], sync-off, in OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
                             "skill-delete SKILL, ocr, delete KEY|duplicates|unreadable, clear [documents converted skills apps]")
-    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "stop", "skill",
+    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "sync-off", "in", "stop", "skill",
                                                  "skill-show", "skill-install", "skill-delete", "ocr", "delete", "clear"))
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="clear: without asking")
     p.add_argument("--name", default="Documents", help="send: the knowledge base's name (default Documents)")
     p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the documents folder")
+    p.add_argument("--sync", action="store_true",
+                   help="send: keep that knowledge base in sync (every scan sends new documents, takes out deleted ones)")
     p.add_argument("--embeddings", choices=("server", "keep"),
                    help="send: use the model server's embeddings model in Open WebUI, or keep the one it has")
     p.add_argument("--server", default="", help="skill: the model server that writes it (default: the first)")
@@ -1038,6 +1116,12 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("list", "restore", "delete", "empty"))
     p.add_argument("id", nargs="?")
     p.add_argument("-y", "--yes", action="store_true", help="empty without asking")
+    p = sub.add_parser("pictures", help="ComfyUI's pictures: list, clean APP --older-than DAYS [--folder input]")
+    p.add_argument("action", nargs="?", choices=("list", "clean"))
+    p.add_argument("app", nargs="?")
+    p.add_argument("--folder", choices=("output", "input"), default="output", help="output = made, input = uploaded")
+    p.add_argument("--older-than", type=int, help="days (0 = every picture)")
+    p.add_argument("-y", "--yes", action="store_true", help="move them without asking")
     sub.add_parser("password", help="change the admin password (asks for it)")
     p = sub.add_parser("update", help="status, check, install, log, branch [NAME], set-token USER, clear-token")
     p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "branch", "set-token", "clear-token"))
@@ -1045,6 +1129,9 @@ def add_commands(sub) -> None:
     p.add_argument("-y", "--yes", action="store_true", help="install without asking")
     p = sub.add_parser("power", help="status; restart (GPU Shepherd only), reboot or shutdown (the server)")
     p.add_argument("action", nargs="?", choices=("status", "restart", "reboot", "shutdown"))
+    p.add_argument("-y", "--yes", action="store_true", help="don't ask first")
+    p = sub.add_parser("tailscale", help="status; install, up, down, https-on, https-off, logout, refresh (reach it from your other devices)")
+    p.add_argument("action", nargs="?", choices=("status", "refresh", "install", "up", "down", "https-on", "https-off", "logout"))
     p.add_argument("-y", "--yes", action="store_true", help="don't ask first")
     p = sub.add_parser("changelog", help="what changed in each version")
     p.add_argument("--limit", type=int, default=5, help="how many versions (default 5)")
