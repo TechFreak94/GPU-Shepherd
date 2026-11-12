@@ -143,7 +143,9 @@ def settings(url: str, checkpoint: str = "", own: dict | None = None) -> dict:
     from custom()). Without a model the user picks one in Open WebUI (Admin Panel, Settings, Images
     lists ComfyUI's)."""
     own = own or {}
-    out = {"ENABLE_IMAGE_GENERATION": True, "IMAGE_GENERATION_ENGINE": "comfyui", "COMFYUI_BASE_URL": url}
+    # the prompt goes to ComfyUI as written: Open WebUI would otherwise have the chat model rewrite it first
+    out = {"ENABLE_IMAGE_GENERATION": True, "IMAGE_GENERATION_ENGINE": "comfyui", "COMFYUI_BASE_URL": url,
+           "ENABLE_IMAGE_PROMPT_GENERATION": False}
     if "generate" in own:
         flow, nodes = own["generate"]
         w, h = _from_flow(flow, nodes, "width"), _from_flow(flow, nodes, "height")

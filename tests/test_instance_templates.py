@@ -450,6 +450,7 @@ def test_open_webui_gets_comfyui_workflows_it_can_fill_in():
     assert env["COMFYUI_BASE_URL"] == env["IMAGES_EDIT_COMFYUI_BASE_URL"] == "http://comfy:8188"
     assert env["IMAGE_GENERATION_MODEL"] == env["IMAGE_EDIT_MODEL"] == "sd_xl_base_1.0.safetensors"
     assert env["IMAGE_SIZE"] == "1024x1024" and comfyui.size("v1-5-pruned.ckpt") == "512x512"
+    assert env["ENABLE_IMAGE_PROMPT_GENERATION"] == "false"            # prompts go to ComfyUI as written
     # every node the maps name is in its workflow, with the input they write
     for wf, nodes in (("COMFYUI_WORKFLOW", "COMFYUI_WORKFLOW_NODES"),
                       ("IMAGES_EDIT_COMFYUI_WORKFLOW", "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES")):

@@ -262,3 +262,8 @@ nav button.theme svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke
   nav a,nav button.link{white-space:nowrap}
   nav button.theme{margin-left:auto}
 }
+.pics{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.pic{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pic img,.pic .vid{display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;background:var(--bar);border:1px solid var(--line)}
+.pic .vid{display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.pic label{display:flex;gap:6px;align-items:flex-start;overflow-wrap:anywhere}

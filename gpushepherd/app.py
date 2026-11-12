@@ -11,8 +11,8 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
@@ -276,6 +276,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             card = {"inst": inst, "state": st, "running": bool(st and st.running), "tag": tpl.tag_for(inst),
                     "status": (st.status if st else "unknown" if unknown else "not created"),
                     "container": engine.container_name(inst.id), "has_logins": logins.method(inst) is not None,
+                    "sends_images": bool(inst.env.get("COMFYUI_BASE_URL")) and tpl.matches(tpl.get("open-webui"), inst),
                     "gpus": gpus, "assigned": assigned, "image": images.get(inst.id),
                     "vram_used": sum(g.mem_used for g in assigned), "vram_total": sum(g.mem_total for g in assigned),
                     "usage": usage.get(engine.container_name(inst.id)),
@@ -485,6 +486,15 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
             except Problem:
                 return problem(err)
         return logins_dialog(request, iid, result=result)
+
+    @app.post("/ui/instances/{iid}/send-images")
+    @threaded
+    def instance_send_images(request: Request, iid: str):
+        try:
+            msg = svc.send_images(iid)
+        except Problem as err:
+            return problem(err)
+        return toast(page(request, "partials/dashboard.html", **dashboard_ctx(request)), msg)
 
     @app.post("/ui/instances/{iid}/update-image")
     def instance_update_image(request: Request, iid: str):
@@ -1389,7 +1399,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)
     def storage_page(request: Request):
-        return page(request, "storage.html", st=svc.storage(), drives=drives_info())
+        return page(request, "storage.html", st=svc.storage(), drives=drives_info(), pictures=svc.pictures())
 
     def storage_done(action):
         """Run one clean-up, then show the Storage page again with what happened."""
@@ -1430,6 +1440,40 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def storage_purge(request: Request):
         raw = request.state.form        # no id = empty the whole trash
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
+
+    # ComfyUI's pictures: what each ComfyUI made and was given, to look through and clear out
+    @app.get("/storage/pictures", response_class=HTMLResponse)
+    def pictures_page(request: Request, app_id: str = Query("", alias="app"), folder: str = "output",
+                      page_no: int = Query(1, alias="page")):
+        apps = svc.pictures()
+        app_id = app_id or (apps[0]["id"] if apps else "")
+        if apps and folder not in {f["kind"] for a in apps if a["id"] == app_id for f in a["folders"]}:
+            folder = next((a["folders"][0]["kind"] for a in apps if a["id"] == app_id and a["folders"]), folder)
+        shown = svc.picture_page(app_id, folder, page_no) if app_id else None
+        return page(request, "pictures.html", apps=apps, shown=shown)
+
+    @app.get("/storage/pictures/{iid}/{kind}/file")
+    def picture_file(iid: str, kind: str, name: str = "", download: int = 0):
+        p = svc.picture_file(iid, kind, name)
+        return FileResponse(p, filename=p.name if download else None,
+                            content_disposition_type="attachment" if download else "inline",
+                            headers={"Cache-Control": "private, max-age=86400",
+                                     "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'",
+                                     "X-Content-Type-Options": "nosniff"})
+
+    @app.post("/storage/pictures/{iid}/{kind}/trash")
+    @threaded
+    def pictures_trash(request: Request, iid: str, kind: str):
+        raw = request.state.form
+        names = [str(n) for n in raw.getlist("name")]
+        days = str(raw.get("older_than", "")).strip()
+        try:
+            msg = svc.trash_pictures(iid, kind, names or None,
+                                     None if names or not days.isdigit() else int(days))
+        except Problem as err:
+            return problem(err)
+        back = f"/storage/pictures?app={quote(iid)}&folder={quote(kind)}"
+        return Response(status_code=204, headers={"HX-Redirect": f"{back}&msg={quote(msg, safe='')}"})
 
     def move_form(raw) -> tuple[str, str]:
         """(source, dest); with home=1 the dest is where the folder was before it was moved."""

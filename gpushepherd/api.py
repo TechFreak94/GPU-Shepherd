@@ -169,6 +169,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         data = body(request)
         return {"message": svc.tuning_decide(iid, str(data.get("key", "")), str(data.get("action", "")))}
 
+    @r.post("/api/v1/instances/{iid}/send-images")
+    @handle
+    def send_images(request: Request, iid: str):
+        return {"message": svc.send_images(iid)}
+
     @r.post("/api/v1/instances/{iid}/{action}")
     @handle
     def instance_action(request: Request, iid: str, action: str):
@@ -529,6 +534,27 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             data = body(request)
             return {"message": svc.trash_leftover(str(data.get("name", "")))}
         raise Problem("unknown clean-up (images, orphans, files or leftovers)", status=404)
+
+    @r.get("/api/v1/pictures")
+    @handle
+    def get_pictures(request: Request):
+        return svc.pictures()
+
+    @r.get("/api/v1/pictures/{iid}/{kind}")
+    @handle
+    def get_picture_page(request: Request, iid: str, kind: str, page: int = 1):
+        return svc.picture_page(iid, kind, page)
+
+    @r.post("/api/v1/pictures/{iid}/{kind}/trash")
+    @handle
+    def trash_pictures(request: Request, iid: str, kind: str):
+        data = body(request)
+        names, days = data.get("names"), data.get("older_than")
+        if names is not None and not (isinstance(names, list) and all(isinstance(n, str) for n in names)):
+            raise Problem('send {"names": [...]} or {"older_than": DAYS}')
+        if days is not None and (not isinstance(days, int) or isinstance(days, bool) or days < 0):
+            raise Problem("older_than is a number of days (0 = all)")
+        return {"message": svc.trash_pictures(iid, kind, names or None, days)}
 
     @r.get("/api/v1/trash")
     @handle
