@@ -127,7 +127,9 @@ For instances of kind `llama-swap`.
 | `GET /api/v1/knowledge/files` | The document files already in the folder, `{path: size}`. |
 | `PUT /api/v1/knowledge/files?path=Folder/Book.epub` | Upload one document (raw body, streamed to disk; folders in `path` are kept; a `.zip` is unpacked into a folder named after it). No scan; call `scan` when done. |
 | `POST /api/v1/knowledge/scan`, `POST /api/v1/knowledge/stop` | Scan the folder for new documents (`202`), or stop the work running. |
-| `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep"}` (`202`). |
+| `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep", "sync": true}` (`202`). `sync` keeps it in sync: every scan then sends new documents and takes out copies of documents deleted or changed. |
+| `DELETE /api/v1/knowledge/sync` | Stop keeping a knowledge base in sync. |
+| `GET /api/v1/knowledge/openwebui/{id}` | A running Open WebUI's knowledge bases: `bases` (`name`, `files`, `ours`, `sent`, `missing`, `sync`), the `sync` setting and `stale` (old copies waiting to be taken out). |
 | `POST /api/v1/knowledge/{key}/skill` | Draft an agent skill from a document with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
 | `POST /api/v1/knowledge/ocr` | Read the scanned PDFs (status `scanned`) with OCR, in the background (`202`). |
 | `POST /api/v1/knowledge/delete` | Delete every duplicate or every document that can't be read, files and all: `{"status": "duplicate" \| "failed"}` (`202`). |
@@ -177,6 +179,7 @@ Settings that an app's template gained after it was installed (the dashboard's *
 |---|---|
 | `GET /api/v1/app-updates` | A list of `instance`, `key`, `title`, `changes` and `afterwards` (what is left for you to do). |
 | `POST /api/v1/app-updates/{id}/{key}/apply` | Apply it. `/skip` stops it being offered again. |
+| `POST /api/v1/app-updates/apply-all` | Apply every offered update. |
 
 ### App image updates
 
@@ -187,6 +190,7 @@ New releases of the apps' Docker images (checked every `image_check_hours`, 12 b
 | `GET /api/v1/image-updates` | Newer releases of the apps' images: when `checked`, `every_hours`, and for each instance its `image`, `state`, `auto_update`, `error`, `checked` and `updated`. |
 | `POST /api/v1/image-updates/check` | Look in the registries now. |
 | `POST /api/v1/image-updates/{id}/update` | Download the new image and restart the app, waiting for running work (`202`, a job). |
+| `POST /api/v1/image-updates/update-all` | Download every new image, then restart the running apps one at a time (`202`, a job). |
 | `PUT /api/v1/instances/{id}/auto-update` | `{"on": true}`: let GPU Shepherd bring in new releases of this app's image by itself. |
 
 ## Tensor unlock
@@ -216,6 +220,8 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 | `POST /api/v1/updates/credentials` | `{"user": "...", "token": "github_pat_..."}` to save a GitHub token for a private repository, or `{"clear": true}`. |
 | `GET /api/v1/tailscale` | Tailscale on the host: `installed`, `state` (`Running`, `NeedsLogin`, `Stopped`...), `connected`, `name`, `ips`, `tailnet`, `https`, `https_available`, `login_url` (while logging in), `dashboard_urls`, `busy`, `run`, `message`, `service`, `wsl`. |
 | `POST /api/v1/tailscale/{action}` | `refresh`, `install`, `up` (log in or connect), `down`, `https-on`, `https-off` or `logout` (`202`). Needs dashboard updates; the host does the work. |
+| `GET /api/v1/power` | What is running (`running`) and whether the host can restart or shut down (`host`, else `hint` says why). |
+| `POST /api/v1/power/{action}` | `restart` (GPU Shepherd; apps keep running), `reboot` or `shutdown` (the whole server; needs dashboard updates) (`202`). |
 | `GET /api/v1/changelog` | Releases, newest first: `version`, `date`, `items`, `running`, `new`. |
 
 ## Examples

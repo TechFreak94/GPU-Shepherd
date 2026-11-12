@@ -214,3 +214,16 @@ class OpenWebUI:
         if query_prefix:
             body["RAG_EMBEDDING_QUERY_PREFIX"] = query_prefix
         self._call("POST", "/api/v1/retrieval/embedding/update", json=body)
+
+    def images(self) -> dict:
+        """Open WebUI's image settings (making and editing pictures)."""
+        data = self._call("GET", "/api/v1/images/config", ok404=True)
+        return data if isinstance(data, dict) else {}
+
+    def use_images(self, values: dict) -> None:
+        """Change some image settings, keeping the rest (Open WebUI wants them all in one go)."""
+        current = self.images()
+        if not current:
+            raise OpenWebUIError("this Open WebUI has no image settings to change: update it to a newer version")
+        self._call("POST", "/api/v1/images/config/update", json=current | values)
+

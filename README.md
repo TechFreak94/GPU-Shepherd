@@ -21,8 +21,9 @@ each instance says what it needs, and starting or stopping anything re-plans who
 
 - **App Center**: install a Llama Swap server (with a chat model, a coding model, an embeddings model for
   chatting with your documents, or any mix), Ollama, vLLM, Open WebUI, LibreChat, AnythingLLM,
-  Hermes Agent, SillyTavern, Open Notebook, Langflow (marked *Experimental*), ComfyUI, InvokeAI or
-  Speaches (speech to text and text to speech, which Open WebUI can use for voice). Apps that need a helper container get it too:
+  Hermes Agent, OpenCode, SillyTavern, Open Notebook, Langflow (marked *Experimental*), ComfyUI, InvokeAI or
+  Speaches (speech to text and text to speech, which Open WebUI can use for voice). Open WebUI
+  and SillyTavern can make pictures with a ComfyUI you pick (Open WebUI edits them too). Apps that need a helper container get it too:
   LibreChat comes with its MongoDB database and Open Notebook with its SurrealDB database; they
   start and stop with the app. Each card
   shows the app's license and project page. **Logins** on an app's card lists its accounts and
@@ -88,9 +89,19 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Knowledge**: put your documents (ebooks, manuals, notes: EPUB, PDF, DOCX, TXT, Markdown) in the
   documents folder and a scan reads each one into text, using the best format of each and skipping
   duplicates. Ones it can't read (DRM, scanned PDFs) are listed with the reason. Send them to an Open
-  WebUI knowledge base to chat with them, or have the model server draft an agent skill from one for
+  WebUI knowledge base to chat with them (**Keep it in sync** sends new documents and takes out
+  deleted or changed ones after every scan; the page lists each Open WebUI's knowledge bases), or have the model server draft an agent skill from one for
   Hermes Agent. Load documents from the browser: drop files, a whole folder or zips on the page (no
   SSH needed). The page shows where it is all kept, and can clear it all out to start over.
+
+  ![Knowledge: sending documents to Open WebUI, kept in sync](docs/screenshots/knowledge.png)
+- **Remote access**: Settings > Remote access sets up [Tailscale](https://tailscale.com) on the server
+  (install, log in, HTTPS) and shows the addresses to open the dashboard and apps at from your phone
+  or laptop, without opening ports.
+
+  ![Remote access](docs/screenshots/remote-access.png)
+- **Power menu**: the power icon at the top restarts GPU Shepherd (apps keep running), restarts the
+  whole server or shuts it down.
 - **App updates**: when an app's setup gains something new, a banner shows what changes; apply or skip it.
   Separately, GPU Shepherd checks the registries for newer **releases of each app's image** and
   updates the app on a button, or by itself if you choose.
