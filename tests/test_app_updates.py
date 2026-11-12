@@ -165,3 +165,38 @@ def test_applying_the_pictures_update_sets_a_running_open_webui(stack):  # noqa:
     assert values["ENABLE_IMAGE_EDIT"] is True and values["IMAGE_STEPS"] == 25
     assert values["IMAGE_GENERATION_MODEL"] == "sd_xl_base_1.0.safetensors"
     assert values["COMFYUI_WORKFLOW_NODES"] == comfyui.GENERATE_NODES and values["IMAGE_SIZE"] == "1024x1024"
+
+
+def test_own_comfyui_workflow_replaces_the_built_in_one(tmp_path):
+    import json
+    from gpushepherd.connectors import comfyui
+    own = tmp_path / comfyui.CUSTOM_DIR
+    own.mkdir()
+    flow = {"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "my-model.safetensors"}},
+            "5": {"class_type": "CLIPTextEncode", "inputs": {"text": "Prompt"}},
+            "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 768, "height": 1344, "batch_size": 1}},
+            "8": {"class_type": "KSampler", "inputs": {"seed": 0, "steps": 9}}}
+    nodes = [{"type": "prompt", "key": "text", "node_ids": ["5"]}, {"type": "model", "key": "unet_name", "node_ids": ["1"]},
+             {"type": "width", "key": "width", "node_ids": ["7"]}, {"type": "height", "key": "height", "node_ids": ["7"]},
+             {"type": "steps", "key": "steps", "node_ids": ["8"]}]
+    (own / "generate.json").write_text(json.dumps(flow))
+    (own / "generate-nodes.json").write_text(json.dumps(nodes))
+    (own / "edit.json").write_text(json.dumps(flow))
+    (own / "edit-nodes.json").write_text(json.dumps([{"type": "prompt", "key": "nope", "node_ids": ["5"]}]))
+    found = comfyui.custom(tmp_path)
+    assert set(found) == {"generate"}                     # the edit map names an input its workflow lacks
+    m = comfy_machine(tmp_path, "")
+    built_in = tpl.comfyui_env("comfyui", m)              # what an earlier app update set
+    webui = Instance(id="webui", name="Open WebUI", image="ghcr.io/open-webui/open-webui:main",
+                     env={"OPENAI_API_BASE_URLS": "http://llm:8080/v1", "OPENAI_API_KEYS": "sk-abc",
+                          "DEFAULT_MODELS": "chat", "ENABLE_OLLAMA_API": "false",
+                          **{k: "x" for k in ("RAG_EMBEDDING_ENGINE", "RAG_OPENAI_API_BASE_URL",
+                                              "RAG_OPENAI_API_KEY", "RAG_EMBEDDING_MODEL")}, **built_in})
+    assert au.for_instance(webui, m) == []
+    m.comfy_workflows["comfyui"] = found
+    [u] = au.for_instance(webui, m)
+    assert u.title == "Use your own ComfyUI workflow for pictures" and "COMFYUI_BASE_URL" not in u.env
+    assert json.loads(u.env["COMFYUI_WORKFLOW"]) == flow and u.env["IMAGE_GENERATION_MODEL"] == "my-model.safetensors"
+    assert u.env["IMAGE_SIZE"] == "768x1344" and u.env["IMAGE_STEPS"] == "9" and u.env["ENABLE_IMAGE_EDIT"] == "false"
+    assert comfyui.from_env(webui.env | u.env)["ENABLE_IMAGE_EDIT"] is False
+    assert au.for_instance(webui.model_copy(update={"env": webui.env | u.env}), m) == []
