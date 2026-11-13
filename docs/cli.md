@@ -146,7 +146,7 @@ through `docker exec`:
 ```bash
 sudo docker exec gpu-shepherd gpu-shepherd status
 sudo docker exec gpu-shepherd gpu-shepherd start comfyui
-sudo docker exec gpu-shepherd gpu-shepherd --reset-password
+sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password
 ```
 
 A shorter way to type it: `alias gs='sudo docker exec -it gpu-shepherd gpu-shepherd'` (`-it` lets
@@ -161,7 +161,8 @@ it ask questions and follow a change as it runs). Options go before the command,
 | `--demo` | Fake GPUs and containers, no Docker needed; data goes to a temporary folder. Log in as `admin` / `demo-password`. The log prints the API token for commands. |
 | `--demo-preset NAME` | The preset the demo starts with. Default `starter`. |
 | `--demo-gpus N` | How many 8 GB GPUs the demo fakes, to try a bigger machine. Default 2. |
-| `--reset-password` | Give the admin a new password, print it and exit. |
+| `--reset-password` | Set a new admin password and exit: asks for one (run with `docker exec -it`), or makes one up and prints it. |
+| `--password-stdin` | With `--reset-password`: read the new password from standard input, for scripts. |
 | `--url URL` | Commands: the GPU Shepherd to manage, e.g. `http://server:8090`. Default `http://127.0.0.1:<port>`, or `$SHEPHERD_URL`. |
 | `--token TOKEN` | Commands: its API token. Default `$SHEPHERD_TOKEN`, or the `api-token` file in the data folder. |
 | `--json` | Commands: print the API's JSON answer instead of text, for scripts. |
@@ -237,11 +238,14 @@ gpu-shepherd status
 ### Reset the password
 
 ```bash
-sudo docker exec gpu-shepherd gpu-shepherd --reset-password
+sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password
 ```
 
-It prints a new password and also saves it in `INITIAL_PASSWORD.txt` in the data folder. It works
-at once, without a restart. Change it under Settings afterwards (that deletes the file).
+It asks for the new password (10 or more characters) twice. Press Enter without typing one to have
+a password made up instead: that one is printed and also saved in `INITIAL_PASSWORD.txt` in the
+data folder (change it under Settings afterwards, which deletes the file). Either way it works at
+once, without a restart. Without `-it` it can't ask, so it makes one up. From a script, pipe the
+password in: `printf '%s\n' "$PASSWORD" | sudo docker exec -i gpu-shepherd gpu-shepherd --reset-password --password-stdin`.
 
 On the first start, the generated password is in the same file and in
 `sudo docker compose logs gpu-shepherd`.

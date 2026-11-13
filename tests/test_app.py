@@ -324,6 +324,67 @@ def test_reset_password(stack, monkeypatch):
     assert r.status_code == 303
 
 
+def test_reset_password_to_a_chosen_one(stack):
+    app, client, _, data = stack
+    from gpushepherd import auth
+    (data / "INITIAL_PASSWORD.txt").write_text("old")
+    with pytest.raises(ValueError):
+        auth.reset_admin(app.state.store, "short")
+    assert auth.reset_admin(app.state.store, "my own password") == ("admin", "my own password")
+    assert not (data / "INITIAL_PASSWORD.txt").exists()          # it no longer holds the password
+    assert client.post("/login", data={"user": "admin", "password": "correct-horse"}).status_code == 401
+    r = client.post("/login", data={"user": "admin", "password": "my own password"}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_reset_password_command(tmp_path, monkeypatch, capsys):
+    """--reset-password asks for the new password at a terminal, reads it with --password-stdin, and
+    otherwise makes one up."""
+    import io
+    import sys
+
+    from gpushepherd import __main__ as main_mod, auth
+    from gpushepherd.config import Store
+
+    def run(*args, stdin="", tty=False, typed=()):
+        fake = io.StringIO(stdin)
+        fake.isatty = lambda: tty
+        monkeypatch.setattr(sys, "stdin", fake)
+        answers = iter(typed)
+        monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
+        monkeypatch.setattr(sys, "argv", ["gpu-shepherd", "--data-dir", str(tmp_path), *args])
+        main_mod.main()
+        return Store(tmp_path).settings().password_hash
+
+    stored = run("--reset-password", tty=True, typed=["short", "long enough 1", "different", "long enough 1",
+                                                       "long enough 1"])
+    assert auth.verify_password("long enough 1", stored)
+    assert "Too short" in capsys.readouterr().out
+    stored = run("--reset-password", "--password-stdin", stdin="piped password\n")
+    assert auth.verify_password("piped password", stored)
+    assert not (tmp_path / "INITIAL_PASSWORD.txt").exists()
+    stored = run("--reset-password")                              # docker exec without -it: made up
+    made_up = (tmp_path / "INITIAL_PASSWORD.txt").read_text().split("password: ", 1)[1].splitlines()[0]
+    assert auth.verify_password(made_up, stored) and made_up in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        run("--reset-password", "--password-stdin", stdin="short\n")
+    assert auth.verify_password(made_up, Store(tmp_path).settings().password_hash)   # unchanged
+
+
+def test_missing_settings_explained(tmp_path, monkeypatch, caplog):
+    """settings.yaml gone from a folder that has apps: the new password is not a silent surprise."""
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
+    monkeypatch.delenv("SHEPHERD_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    (tmp_path / "instances").mkdir()
+    (tmp_path / "instances" / "x.yaml").write_text("id: x\n")
+    create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)
+    assert "settings.yaml was missing" in caplog.text
+    caplog.clear()
+    create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)   # only once
+    assert "settings.yaml was missing" not in caplog.text
+
+
 def test_login_without_cookie_explains(stack):
     app, client, _, data = stack
     r = client.post("/login", data={"user": "admin", "password": "correct-horse"}, follow_redirects=False)
