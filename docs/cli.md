@@ -71,6 +71,7 @@ read from `compose.yaml`.
 | `--clear-token` | Forget that token. |
 | `--enable-dashboard-updates` | Install the systemd service behind the dashboard's Update button. |
 | `--disable-dashboard-updates` | Remove it. |
+| `--gpu-links` | Only make sure NVIDIA GPUs stay in containers through a `systemctl daemon-reload`: makes the `/dev/char` links now, and installs a boot service (`gpu-shepherd-nvidia-links`) and a udev rule that make them again. Every other `update.sh` run, the daily check too, does this as well. Nothing happens on WSL2 or without NVIDIA. |
 | `-q`, `--quiet` | Print less. |
 | `-h`, `--help` | List the options. |
 
