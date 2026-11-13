@@ -35,10 +35,12 @@ FROM_DASHBOARD=0
 POWER=""                # from the dashboard: "reboot" or "poweroff" the server
 FINISH=""               # internal: the commit we updated from, after re-running the new script
 SERVICE=""              # enable / disable
+GPU_LINKS=0             # --gpu-links: only set up the NVIDIA /dev/char links (install.sh uses it)
 TOKEN_ACTION=""         # set / clear: the GitHub login used to download updates
 TOKEN_USER=""
 UNIT=gpu-shepherd-update
-UNIT_DIR=/etc/systemd/system
+T=${UPDATE_TEST_ROOT:-}       # tests only: a pretend machine in this folder (the NVIDIA link helpers)
+UNIT_DIR=$T/etc/systemd/system
 CONTAINER=gpu-shepherd
 MAX_LISTED=30           # commits shown in "what's new"
 
@@ -69,6 +71,8 @@ rebuild GPU Shepherd.
   --enable-dashboard-updates   install a systemd service so the dashboard can check for updates
                                daily and update when you press its button
   --disable-dashboard-updates  remove that service again
+  --gpu-links                  only make sure NVIDIA GPUs stay in containers through a systemd reload
+                               (/dev/char links, now and at every boot); every run does this too
   -q, --quiet                  print less
   -h, --help                   show this help
 EOF
@@ -88,10 +92,12 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # `systemctl daemon-reload` takes the GPUs away from every running container (nvidia-smi then fails
 # with "Failed to initialize NVML: Unknown Error") unless /dev/char has links for the NVIDIA device
-# files: a known NVIDIA Container Toolkit issue. So unit files are only rewritten when they change,
-# and before a reload the links are made, with a udev rule that makes them again after a reboot.
-# (gpu-unlock.sh has the same helpers.)
-UDEV_RULE=/etc/udev/rules.d/71-nvidia-dev-char.rules
+# files: a known NVIDIA Container Toolkit issue. Package updates reload systemd too, so the links
+# must always be there: they are made at every run of this script (the daily check included), at
+# boot by a small service (gpu-shepherd-nvidia-links), and by a udev rule when the driver loads.
+# Unit files are also only rewritten when they change. (gpu-unlock.sh has the same helpers.)
+UDEV_RULE=$T/etc/udev/rules.d/71-nvidia-dev-char.rules
+LINKS_UNIT=gpu-shepherd-nvidia-links.service
 UNITS_CHANGED=0
 put_unit() {   # put_unit FILE < text: write a unit file only if it is new or different
     local new; new=$(cat)
@@ -100,16 +106,48 @@ put_unit() {   # put_unit FILE < text: write a unit file only if it is new or di
         UNITS_CHANGED=1
     fi
 }
+nvidia_host() {   # NVIDIA's driver and Container Toolkit are here (WSL2 has no device files to link)
+    have nvidia-ctk && have nvidia-smi && ! grep -qi microsoft "$T/proc/version" 2>/dev/null
+}
 keep_gpus_through_reload() {
-    have nvidia-ctk || return 0
-    grep -qi microsoft /proc/version 2>/dev/null && return 0   # WSL2: no NVIDIA device files to link
+    nvidia_host || return 0
     nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
-    [ -f "$UDEV_RULE" ] || [ -f /lib/udev/rules.d/71-nvidia-dev-char.rules ] || {
+    [ -f "$UDEV_RULE" ] || [ -f "$T/lib/udev/rules.d/71-nvidia-dev-char.rules" ] || {
         mkdir -p "$(dirname "$UDEV_RULE")" &&
         printf '%s\n' "# Written by GPU Shepherd: keeps containers' GPUs through a systemd reload" \
             "ACTION==\"add\", DEVPATH==\"/bus/pci/drivers/nvidia\", RUN+=\"$(command -v nvidia-ctk) system create-dev-char-symlinks --create-all\"" \
             >"$UDEV_RULE"
     } 2>/dev/null || true
+}
+keep_gpus_after_boot() {   # the links now, and a boot service that makes them again (root, systemd)
+    { { [ "$(id -u)" -eq 0 ] || [ -n "$T" ]; } && nvidia_host && have systemctl && [ -d "$T/run/systemd/system" ]; } || return 0
+    keep_gpus_through_reload
+    local ctk; ctk=$(command -v nvidia-ctk)
+    # The udev rule runs when the driver loads, before the nvidia-uvm and nvidia-caps device files
+    # exist; this runs later in the boot and makes them (and their links) as well.
+    mkdir -p "$UNIT_DIR" 2>/dev/null || true
+    put_unit "$UNIT_DIR/$LINKS_UNIT" <<EOF || return 0
+# Written by GPU Shepherd ($HERE/update.sh). Without /dev/char links for the NVIDIA device files, a
+# systemd reload takes the GPUs away from running containers ("NVML: Unknown Error").
+[Unit]
+Description=GPU Shepherd: /dev/char links for the NVIDIA GPUs, so containers keep them
+After=systemd-modules-load.service systemd-udev-trigger.service nvidia-persistenced.service
+Before=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=60
+ExecStart=/bin/sh -c '"$ctk" system create-dev-char-symlinks --create-all --load-kernel-modules || "$ctk" system create-dev-char-symlinks --create-all'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    if [ "$UNITS_CHANGED" -eq 1 ]; then
+        systemctl daemon-reload || true        # safe: the links were just made
+        UNITS_CHANGED=0
+    fi
+    systemctl is-enabled --quiet "$LINKS_UNIT" 2>/dev/null || systemctl enable --no-reload "$LINKS_UNIT" >/dev/null 2>&1 || true
 }
 reload_units() {   # only after a unit file changed or went away
     keep_gpus_through_reload
@@ -133,6 +171,7 @@ while [ $# -gt 0 ]; do
         --disable-dashboard-updates) SERVICE=disable; shift ;;
         --from-dashboard) FROM_DASHBOARD=1; ASSUME_YES=1; shift ;;
         --finish)       FINISH="${2:?}"; shift 2 ;;
+        --gpu-links)    GPU_LINKS=1; shift ;;
         -q|--quiet)     QUIET=1; shift ;;
         -h|--help)      usage; exit 0 ;;
         *)              usage >&2; err "unknown option: $1"; exit 1 ;;
@@ -162,6 +201,14 @@ PREV_BRANCH_FILE="$STATE_DIR/previous-branch"   # "branch commit" the clone was 
 if [ "$(id -u)" -ne 0 ] && { [ -n "$SERVICE" ] || ! docker info >/dev/null 2>&1; }; then
     have sudo || { err "run this as root"; exit 1; }
     exec sudo -- "$HERE/$(basename "$0")" "${ARGS[@]}"
+fi
+
+# Every run (the daily check too) keeps the NVIDIA /dev/char links in place: see keep_gpus_after_boot.
+keep_gpus_after_boot
+if [ "$GPU_LINKS" -eq 1 ]; then
+    if nvidia_host; then say "NVIDIA GPUs stay in containers through a systemd reload (/dev/char links, $LINKS_UNIT)"
+    else info "No NVIDIA driver and Container Toolkit here (or WSL2): no /dev/char links needed"; fi
+    exit 0
 fi
 
 have git || { err "git is not installed (install it with your package manager: apt, dnf or pacman)"; exit 1; }

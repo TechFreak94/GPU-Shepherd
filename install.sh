@@ -911,18 +911,12 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
         say "Letting containers use the GPUs under SELinux (container_use_devices)"
         setsebool -P container_use_devices on
     fi
-    # Without /dev/char links for the NVIDIA device files, any `systemctl daemon-reload` takes the
-    # GPUs away from running containers ("Failed to initialize NVML: Unknown Error"), a known NVIDIA
-    # Container Toolkit issue. Make the links now and after every boot (a udev rule). WSL2 has no
-    # NVIDIA device files to link (the GPUs come through /dev/dxg), so nothing to do there.
-    if [ "$WSL" -eq 0 ] && have nvidia-ctk && [ -d /run/systemd/system ]; then
-        nvidia-ctk system create-dev-char-symlinks --create-all >/dev/null 2>&1 || true
-        if [ ! -f /etc/udev/rules.d/71-nvidia-dev-char.rules ] && [ ! -f /lib/udev/rules.d/71-nvidia-dev-char.rules ]; then
-            mkdir -p /etc/udev/rules.d
-            printf '%s\n' "# Written by GPU Shepherd: keeps containers' GPUs through a systemd reload" \
-                "ACTION==\"add\", DEVPATH==\"/bus/pci/drivers/nvidia\", RUN+=\"$(command -v nvidia-ctk) system create-dev-char-symlinks --create-all\"" \
-                >/etc/udev/rules.d/71-nvidia-dev-char.rules || true
-        fi
+    # Without /dev/char links for the NVIDIA device files, any `systemctl daemon-reload` (package
+    # updates do them) takes the GPUs away from running containers ("Failed to initialize NVML:
+    # Unknown Error"), a known NVIDIA Container Toolkit issue. update.sh makes the links now and sets
+    # up a boot service and a udev rule that make them again (nothing to do on WSL2 or without NVIDIA).
+    if [ "$WSL" -eq 0 ] && [ "$AMD_ONLY" -eq 0 ] && have nvidia-ctk && [ -d /run/systemd/system ]; then
+        bash "$HERE/update.sh" --gpu-links || warn "could not set up the NVIDIA /dev/char links"
     fi
 
     if [ "$AMD_ONLY" -eq 1 ]; then

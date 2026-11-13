@@ -105,7 +105,8 @@ def explain_failure(output: str, code: int) -> str:
     if "unknown error" in low:
         return ("GPU Shepherd's container lost access to the GPUs (NVML: Unknown Error). That happens "
                 "when the host reloads systemd while containers run. Running apps lost them too: "
-                "restart the containers on the host (docker restart $(docker ps -q)) or reboot.")
+                "restart the containers on the host (docker restart $(docker ps -q)) or reboot. To keep it "
+                "from happening again, run sudo ./update.sh --gpu-links in GPU Shepherd's folder on the host.")
     if "version mismatch" in low:
         return ("The NVIDIA driver on the host was updated but the old one is still loaded "
                 "(Driver/library version mismatch). Reboot the machine.")
