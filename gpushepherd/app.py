@@ -93,6 +93,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     engine = Engine(store, backend, activity=(lambda _inst: drain.Activity(0)) if demo else None)
     jobs = JobRunner()
     notices: list[str] = []                # shown with the dashboard's problems until a restart
+    # settings.yaml gone from a data folder that has apps (a folder mounted late or replaced, a
+    # deleted file): a new admin password is made below, so say why instead of a silent "wrong password"
+    settings_lost = not store.settings_path.exists() and any((store.root / "instances").glob("*.yaml"))
     recovered = store.recover_settings()
     if recovered:
         log.error("%s", recovered)
@@ -103,6 +106,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     except Exception as err:  # noqa: BLE001
         log.warning("could not prepare the Docker network: %s", err)
     generated = auth.ensure_admin(store)
+    if settings_lost:
+        lost = (f"settings.yaml was missing from {store.root}, so GPU Shepherd started with new settings and a new "
+                f"admin password ({'in ' + auth.initial_password_file(store).name if generated else 'SHEPHERD_ADMIN_PASSWORD'}). "
+                "Pick your own with: sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password. "
+                "Settings from before the last update: sudo ./update.sh --restore-settings")
+        log.error("%s", lost)
+        notices.append(lost)
     if generated:
         log.warning("First start: log in as '%s' with password '%s' (also in %s). Change it under Settings.",
                     store.settings().admin_user, generated, auth.initial_password_file(store))

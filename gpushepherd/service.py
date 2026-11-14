@@ -2072,8 +2072,8 @@ class Shepherd:
         s = self.store.settings()
         if not auth.verify_password(current, s.password_hash):
             raise Problem("The current password is wrong.", status=403)
-        if len(new) < 10:
-            raise Problem("Use at least 10 characters.")
+        if len(new) < auth.MIN_LENGTH:
+            raise Problem(f"Use at least {auth.MIN_LENGTH} characters.")
         if again is not None and new != again:
             raise Problem("The new passwords do not match.")
         s.password_hash = auth.hash_password(new)

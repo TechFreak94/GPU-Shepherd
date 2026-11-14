@@ -173,7 +173,7 @@ Both are explained in the [Installation guide](docs/install.md); see [WSL2](docs
 | The installer exits with status 3 | The driver was just installed. Reboot, then run `sudo ./install.sh` again. |
 | `docker: permission denied` | Log out and back in (you were just added to the `docker` group), or use `sudo docker`. |
 | The page doesn't open | In the clone folder run `sudo docker compose logs gpu-shepherd`, check nothing else uses port 8090, and that a firewall allows it. |
-| Forgot the password | `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` |
+| Forgot the password | `sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password` (asks for a new one) |
 | WSL2: the installer stops or warns about Docker or systemd | Turn on Docker Desktop's WSL integration for the distro, or set `systemd=true` in `/etc/wsl.conf` and run `wsl --shutdown`. |
 | WSL2: models run out of memory | WSL2 gets half of Windows' RAM by default. Raise `memory=` in `%UserProfile%\.wslconfig`, then `wsl --shutdown`. |
 | An app says no GPU is free | Another app holds the GPUs. Press Start and read the plan, or stop the other app. |
@@ -263,7 +263,7 @@ Toolkit yourself.
 Open `http://<server>:8090` and log in as `admin` with the password the installer printed (also in
 `INITIAL_PASSWORD.txt` in the data folder). Then open the **App Center**.
 
-Lost the password? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one.
+Lost the password? `sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password` lets you set a new one.
 It works at once, no restart needed.
 
 ### Updating
