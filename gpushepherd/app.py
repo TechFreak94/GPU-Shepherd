@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, tailscale, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, mcp, model_library, moves, tailscale, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      gpu_label, gpu_vendor,
@@ -1613,6 +1613,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     # ------------------------------------------------------------------ JSON API (api.py)
     app.include_router(api.router(svc, build))
+    app.include_router(mcp.router())     # the same API as MCP tools, for AI agents (mcp.py)
 
     # ------------------------------------------------------------------ autostart
     if autostart if autostart is not None else os.environ.get("SHEPHERD_AUTOSTART", "1") == "1":
