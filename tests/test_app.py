@@ -609,7 +609,8 @@ def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
     assert env["HASS_URL"] == "http://ha.lan:8123" and env["HASS_TOKEN"] == "tok"
     config = (data / "appdata" / "hermes" / "data" / "config.yaml")
     assert yaml.safe_load(config.read_text())["model"] == {
-        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat"}
+        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat",
+        "context_length": tpl.agent_context(cat["models"][0]["ctx_size"])}
     assert config.stat().st_mode & 0o777 == 0o600
 
 
@@ -1061,3 +1062,28 @@ def test_one_gpu_llm_falls_back_to_the_cpu_and_cards_say_why(tmp_path, monkeypat
 
     act(client, app, "comfyui", "stop", confirm=True)
     assert gpus_of(backend, "llm") == [0]
+
+
+def test_priority_page_moves_an_instance(tmp_path, monkeypatch):
+    import shutil
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from gpushepherd import auth, gpu as gpu_mod
+    from gpushepherd.app import create_app
+    from gpushepherd.backend import FakeBackend
+    from gpushepherd.config import Store
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    shutil.copytree(Path(__file__).parent / "fixtures" / "stack", tmp_path, dirs_exist_ok=True)
+    app = create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)
+    client = TestClient(app, headers={"Authorization": f"Bearer {auth.api_token(Store(tmp_path))}"})
+    rows = app.state.svc.priority_list()
+    assert len(rows) >= 2
+    first, last = rows[0]["id"], rows[-1]["id"]
+    assert client.get("/priority").status_code == 200
+    app.state.svc.move_priority(last, "top")
+    now = [r["id"] for r in app.state.svc.priority_list()]
+    assert now[0] == last and now[1:] == [r["id"] for r in rows if r["id"] != last]
+    app.state.svc.move_priority(last, "bottom")
+    assert [r["id"] for r in app.state.svc.priority_list()][-1] == last
+    assert first in [r["id"] for r in app.state.svc.priority_list()]

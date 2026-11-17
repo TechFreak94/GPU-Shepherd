@@ -355,7 +355,7 @@ def test_opencode():
     local = config["provider"]["local"]
     assert local["options"] == {"baseURL": "{env:LLM_BASE_URL}", "apiKey": "{env:LLM_API_KEY}"}
     assert local["npm"] == "@ai-sdk/openai-compatible" and set(local["models"]) == {"chat", "coder"}
-    assert local["models"]["coder"]["limit"] == {"context": 65536, "output": 16384}
+    assert local["models"]["coder"]["limit"] == {"context": 65536 - 6553, "output": 16384}   # a tenth kept free
     assert config["model"] == config["small_model"] == "local/coder" and config["autoupdate"] is False
     del m.servers["llm"]["models"]                    # a server without a coding model: its chat model
     assert json.loads(tpl.seed_files(t, f, m)["config/opencode.json"])["model"] == "local/chat"

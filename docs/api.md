@@ -9,6 +9,7 @@ give the same messages.
 - [Conventions](#conventions)
 - [State](#state), [Instances](#instances), [Changes (jobs)](#changes-jobs), [App Center](#app-center),
   [Model servers](#model-servers), [Settings](#settings), [Tensor unlock](#tensor-unlock), [Updates](#updates)
+- [AI agents (MCP)](#ai-agents-mcp)
 - [Examples](#examples)
 
 ## Authentication
@@ -227,6 +228,17 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 | `GET /api/v1/power` | What is running (`running`) and whether the host can restart or shut down (`host`, else `hint` says why). |
 | `POST /api/v1/power/{action}` | `restart` (GPU Shepherd; apps keep running), `reboot` or `shutdown` (the whole server; needs dashboard updates) (`202`). |
 | `GET /api/v1/changelog` | Releases, newest first: `version`, `date`, `items`, `running`, `new`. |
+
+## AI agents (MCP)
+
+`POST /api/v1/mcp` is an [MCP](https://modelcontextprotocol.io) server (Streamable HTTP, plain JSON
+answers) for AI agents such as Claude Code, OpenCode or Cursor. It needs the API token like any change.
+Its tools are fixed calls to the endpoints above: reading state, instances, logs, jobs, apps, models,
+storage and updates; starting, stopping and restarting (a plan that affects other instances answers
+`needs_confirm` until the agent sends `confirm`); installing apps; adding, loading and unloading
+models; and app, image and GPU Shepherd updates. Passwords, the token, power, remote access, tensor
+unlock, deleting and storage moves are left out. Setup, and the Claude Code plugin:
+[agent-plugin](../agent-plugin/README.md).
 
 ## Examples
 

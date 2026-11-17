@@ -227,3 +227,46 @@ def test_pictures_button_sends_the_settings_again(stack):  # noqa: F811
     r = client.post("/api/v1/instances/webui/send-images")
     assert r.status_code == 200 and "picture settings" in r.json()["message"]
     assert sent[0]["COMFYUI_BASE_URL"] == "http://comfyui:8188" and sent[0]["ENABLE_IMAGE_GENERATION"] is True
+
+
+def _coder_machine():
+    m = machine()
+    m.servers["llm"]["models"] = {"chat": 32768, "coder": 131072}
+    return m
+
+
+def test_opencode_learns_the_models_and_their_context_sizes():
+    """Written once at install, OpenCode's list misses models added since: without a limit it never
+    compacts a long session in time and runs into the server's context size."""
+    import json
+    m = _coder_machine()
+    inst = Instance(id="oc", name="OpenCode", image="ghcr.io/anomalyco/opencode:latest", app="opencode",
+                    env={"LLM_BASE_URL": "http://llm:8080/v1", "LLM_API_KEY": "sk-abc"})
+    old = json.loads(tpl._opencode_config({"default_model": "chat", "ctx": 32768, "models": {"chat": 32768}}))
+    old["provider"]["local"]["models"]["chat"]["limit"]["context"] = 32768     # an install before the margin
+    old["theme"] = "mine"
+    [u] = au.for_instance(inst, m, settings_file=json.dumps(old))
+    new = json.loads(u.file_text)
+    models = new["provider"]["local"]["models"]
+    assert models["coder"]["limit"] == {"context": 131072 - 13107, "output": 16384}
+    assert models["chat"]["limit"]["context"] == 32768 - 3276
+    assert new["theme"] == "mine" and new["model"] == old["model"]              # the rest is kept
+    assert any("Adds coder" in x for x in u.lines) and any(x.startswith("chat: context 32,768") for x in u.lines)
+    assert au.for_instance(inst, m, settings_file=u.file_text) == []
+    assert au.for_instance(inst, m, settings_file="{not json") == []
+
+
+def test_hermes_learns_the_context_size():
+    m = _coder_machine()
+    inst = Instance(id="h", name="Hermes", image="nousresearch/hermes-agent:stable", app="hermes",
+                    env={"OPENAI_BASE_URL": "http://llm:8080/v1"})
+    text = ("# by GPU Shepherd\nmodel:\n  provider: custom\n  base_url: http://llm:8080/v1\n"
+            "  default: coder\nterminal:\n  backend: local\n")
+    [u] = [u for u in au.for_instance(inst, m, settings_file=text) if u.kind == "file"]
+    data = yaml.safe_load(u.file_text)
+    assert data["model"]["context_length"] == 131072 - 13107 and data["terminal"] == {"backend": "local"}
+    files = lambda text: [u for u in au.for_instance(inst, m, settings_file=text) if u.kind == "file"]  # noqa: E731
+    assert files(u.file_text) == []
+    seeded = tpl.seed_files(tpl.get("hermes"), {"server": "llm"}, m)["data/config.yaml"]
+    assert yaml.safe_load(seeded)["model"]["context_length"] == 32768 - 3276
+    assert files(seeded) == []

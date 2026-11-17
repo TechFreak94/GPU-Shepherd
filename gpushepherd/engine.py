@@ -51,13 +51,20 @@ class Engine:
     def container_name(self, iid: str) -> str:
         return self.store.settings().container_prefix + iid
 
-    def config_hash(self, inst: Instance) -> str:
+    def config_matches(self, inst: Instance, label: str) -> bool:
+        """Whether a running container's config label is still current. Containers made before the
+        priority left the hash carry the old one: those still count (no restart just for that)."""
+        return label in (self.config_hash(inst), self.config_hash(inst, with_priority=True))
+
+    def config_hash(self, inst: Instance, with_priority: bool = False) -> str:
         # the drain policy, the app it came from, what starts with it, skipped app updates and how
         # its image is updated only matter to GPU Shepherd: no restart for those
         # (nor the CPU fallback, video memory budget and kind of GPU, which only steer the GPU planner)
+        # (nor the priority: reordering the Priority page must not ask for restarts)
+        skip = {"cpu_fallback", "vram_gb", "vendor"} | (set() if with_priority else {"priority"})
         data = inst.model_dump(mode="json", exclude={"drain": True, "app": True, "requires": True,
                                                      "skipped_updates": True, "auto_update": True,
-                                                     "gpu": {"cpu_fallback", "vram_gb", "vendor"}})
+                                                     "gpu": skip})
         if not data["devices"]:                    # added later: no restart for apps that pass none
             del data["devices"]
         if tpl.own_init(inst):                     # added later: recreate those once, without Docker's init

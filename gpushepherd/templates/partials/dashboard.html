@@ -131,7 +131,7 @@
             {%- else %}Does not use a GPU.{% endif %}
             {%- if g.vram_gb %} Shares its GPU with other apps that have a video memory budget: it may use up to {{ "%g"|format(g.vram_gb) }} GB.{% endif %}
             {%- if g.cpu_fallback %} When no GPU is free it runs on the CPU instead of stopping, and moves back onto a GPU when one is.{% endif %}</span>
-          {% if g.mode != "none" %}<span class="tl muted">Priority {{ g.priority }}: when instances want the same GPU, the higher priority keeps it.</span>{% endif %}
+          {% if g.mode != "none" %}<span class="tl muted">Priority {{ g.priority }}: when instances want the same GPU, the higher priority keeps it. <a href="/priority">See the order</a></span>{% endif %}
         {%- endcall %}</dt>
         <dd>{% if c.running and c.gpus %}<strong>{{ gpu_text(c.gpus) }}</strong>
             {%- if c.vram_total %}{% set pct = (100 * c.vram_used / c.vram_total)|round|int %} · {{ "%.1f"|format(c.vram_used / 1024) }} of {{ "%.1f"|format(c.vram_total / 1024) }} GB
