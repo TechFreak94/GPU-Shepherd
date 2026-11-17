@@ -731,6 +731,8 @@ def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
                  f"  api_key: {info['api_key']}"]
         if info.get("default_model"):
             lines.append(f"  default: {info['default_model']}")
+        if info.get("ctx"):         # Hermes can't ask the server, and guesses 256K
+            lines.append(f"  context_length: {agent_context(info['ctx'])}")
         out["data/config.yaml"] = "\n".join(lines) + "\n"
     elif t.connects == "anythingllm":
         out["server.env"] = _anythingllm_env(_server_url(server, m) if info else "", info or {})
@@ -928,19 +930,31 @@ def _sillytavern_images(a: dict, m: Machine) -> dict | None:
 OPENCODE_PROVIDER = "local"
 
 
+def agent_context(ctx: int) -> int:
+    """The context an agent app is told a model has: a tenth less than the server's, so its token
+    count (which differs a little from the server's) and its own summary request still fit when it
+    compacts a long session just in time."""
+    return ctx - ctx // 10
+
+
+def opencode_models(info: dict) -> dict[str, dict]:
+    """OpenCode's entries for a model server's chat models and auto names, with their context limits
+    (without one OpenCode never compacts a session and runs into the server's context size)."""
+    models = dict(info.get("models") or {})
+    models.setdefault(info.get("default_model") or "chat", info.get("ctx") or 0)
+    return {name: {"name": name} | ({"limit": {"context": agent_context(ctx), "output": min(ctx // 4, 16384)}}
+                                    if ctx else {}) for name, ctx in models.items()}
+
+
 def _opencode_config(info: dict) -> str:
     """OpenCode's own settings (its global opencode.json): the model server as an OpenAI-compatible
     provider whose address and key come from the instance's environment (LLM_BASE_URL, LLM_API_KEY),
     so pointing it at another server is an Edit away. It lists the server's chat models (OpenCode
     doesn't ask the server for them) and starts on the coding one, which also writes the session
     titles so the server never swaps models just for those."""
-    models = dict(info.get("models") or {})
+    entries = opencode_models(info)
     default = info.get("default_model") or "chat"
-    models.setdefault(default, info.get("ctx") or 0)
-    pick = "coder" if "coder" in models else default
-    entries = {}
-    for name, ctx in models.items():
-        entries[name] = {"name": name} | ({"limit": {"context": ctx, "output": min(ctx // 4, 16384)}} if ctx else {})
+    pick = "coder" if "coder" in entries else default
     config = {"$schema": "https://opencode.ai/config.json",
               "provider": {OPENCODE_PROVIDER: {"npm": "@ai-sdk/openai-compatible", "name": "Local models",
                                                "options": {"baseURL": "{env:LLM_BASE_URL}", "apiKey": "{env:LLM_API_KEY}"},

@@ -969,6 +969,11 @@ class Shepherd:
                                 "embed_query_prefix": tpl.query_prefix(embed.file) if embed else "",
                                 # the name each chat model answers to (its first alias), and its context
                                 "models": {(x.aliases or [x.id])[0]: x.ctx_size for x in chat}}
+            ctx = {x.id: x.ctx_size for x in chat}
+            for auto in cat.auto_aliases:           # "coder" and the like: the smallest context it can land on
+                sizes = [ctx[x] for x in [auto.default_model, *(r.model for r in auto.rules)] if x in ctx]
+                if sizes:
+                    servers[inst.id]["models"].setdefault(auto.alias, min(sizes))
         for inst in instances.values():           # vLLM and Ollama servers: apps ask them for the model chat
             info = tpl.vllm_server(inst) or tpl.ollama_server(inst)
             if info:
@@ -1127,11 +1132,21 @@ class Shepherd:
 
     # ------------------------------------------------------------------ app updates
     def _settings_file(self, inst: Instance) -> Path | None:
-        """AnythingLLM's own settings file on this machine, when GPU Shepherd can see it."""
-        inside = dict(tpl.get("anythingllm").files).get(app_updates.ANYTHINGLLM_FILE)
-        v = next((v for v in inst.volumes if v.container == inside), None)
-        path = Path(v.host) if v else None
-        return path if path and path.is_relative_to(self.store.root) and path.is_file() else None
+        """An app's own settings file on this machine (AnythingLLM's server.env, OpenCode's
+        opencode.json, Hermes Agent's config.yaml), when GPU Shepherd can see it."""
+        if inst.app == "anythingllm":
+            inside = dict(tpl.get("anythingllm").files).get(app_updates.ANYTHINGLLM_FILE)
+            v = next((v for v in inst.volumes if v.container == inside), None)
+            path = Path(v.host) if v else None
+        elif inst.app in app_updates.SETTINGS_FILES:
+            folder, name = app_updates.SETTINGS_FILES[inst.app]
+            v = next((v for v in inst.volumes if v.container.rstrip("/") == folder), None)
+            path = Path(v.host) / name if v else None
+        else:
+            return None
+        # only inside the data folder, or a folder of it moved to another disk from the Storage page
+        roots = [self.store.root, *(Path(r.dest) for r in self.move_log.all() if r.status == "done")]
+        return path if path and any(path.is_relative_to(r) for r in roots) and path.is_file() else None
 
     def app_updates(self) -> list[app_updates.Update]:
         """What installed apps are missing of what their app sets up today, model servers first
@@ -1140,7 +1155,7 @@ class Shepherd:
         out = []
         for inst in sorted(m.instances.values(), key=lambda i: (i.kind != "llama-swap", i.name.lower())):
             cat = self.store.catalog(inst.id) if inst.kind == "llama-swap" else None
-            path = self._settings_file(inst) if inst.app == "anythingllm" else None
+            path = self._settings_file(inst)
             try:
                 text = path.read_text(encoding="utf-8") if path else None
             except OSError:
@@ -1167,9 +1182,9 @@ class Shepherd:
         elif u.kind == "file":
             path = self._settings_file(inst)
             if not path:
-                raise Problem(f"can't find {inst.name}'s {app_updates.ANYTHINGLLM_FILE} any more", status=409)
+                raise Problem(f"can't find {inst.name}'s settings file any more", status=409)
             path.write_text(u.file_text, encoding="utf-8")
-            msg = f"Updated {inst.name}'s {app_updates.ANYTHINGLLM_FILE}."
+            msg = f"Updated {inst.name}'s {path.name}."
         else:
             inst.env = inst.env | u.env
             self.store.save_instance(inst)

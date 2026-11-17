@@ -609,7 +609,8 @@ def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
     assert env["HASS_URL"] == "http://ha.lan:8123" and env["HASS_TOKEN"] == "tok"
     config = (data / "appdata" / "hermes" / "data" / "config.yaml")
     assert yaml.safe_load(config.read_text())["model"] == {
-        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat"}
+        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat",
+        "context_length": tpl.agent_context(cat["models"][0]["ctx_size"])}
     assert config.stat().st_mode & 0o777 == 0o600
 
 
