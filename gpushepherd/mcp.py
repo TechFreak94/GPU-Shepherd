@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, Response
 
 from . import __version__
 
-TOOLS_VERSION = 1
+TOOLS_VERSION = 2
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")   # newest first
 API = "/api/v1"
 LOG_LINES = 200
@@ -115,6 +115,16 @@ TOOLS: list[Tool] = [
          obj({"id": ID, "lines": {"type": "integer", "minimum": 1, "maximum": 5000, "default": LOG_LINES,
                                   "description": "How many of the last lines to show."}}, ("id",)),
          get(f"{API}/instances/{{id}}/logs"), read_only=True, shape=tail_logs),
+    Tool("get_priority", "Show the GPU priority order",
+         "The apps that use GPUs, first = keeps its GPUs when there are not enough. Each has rank, running state, "
+         "GPUs and the 0-100 priority number behind the order.",
+         obj({}), get(f"{API}/priority"), read_only=True),
+    Tool("set_priority_order", "Set the GPU priority order",
+         "Put apps in priority order, first = keeps its GPUs first. Apps left out go after those named. "
+         "Nothing restarts. Ask the user first.",
+         obj({"order": {"type": "array", "items": ID, "description": "Instance IDs, most important first."}},
+             ("order",)),
+         lambda a: ("PUT", f"{API}/priority", {"order": list(a["order"])})),
     Tool("list_jobs", "List recent changes",
          "Recent changes (jobs), newest first: id, title, status (running, done, failed, cancelled), error, "
          "waiting_for (running work a stop waits for).",

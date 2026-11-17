@@ -65,6 +65,9 @@ best first; `add_suggested_model` adds one and downloads it in the background. F
 user names, `add_model_from_link` takes its `.gguf` link. `list_models` shows what the server has
 and what is loaded; `load_model` and `unload_model` load or free one.
 
+**Who keeps the GPUs?** `get_priority` lists the GPU-using apps in priority order (first keeps
+its GPUs when there are not enough). `set_priority_order` reorders them; nothing restarts. Ask first.
+
 **Updates.** `list_app_updates` and `apply_app_update` bring an installed app up to its current
 template. `list_image_updates`, `check_image_updates` and `update_app_image` handle new releases of
 an app's image (it restarts the app). `get_dashboard_update`, `check_dashboard_update` and

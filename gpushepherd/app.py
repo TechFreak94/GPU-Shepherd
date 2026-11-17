@@ -294,7 +294,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                               for p in inst.ports],
                     "open_url": base_url(request, inst.open_url_port, inst.open_path) if inst.open_url_port else "",
                     "pending": bool(st and st.running and st.config_hash and not cat_error
-                                    and st.config_hash != engine.config_hash(inst)),
+                                    and not engine.config_matches(inst, st.config_hash)),
                     "loaded": [], "models_error": cat_error, "model_count": 0, "aliases": {}, "offload": {},
                     "loading": sorted(app.state.loading.get(inst.id, set())), "gpu_note": gpu_notes.get(inst.id, ""),
                     "waiting": (job.waiting.get(inst.id) if job else None)}
@@ -843,7 +843,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                                             engine.placement(inst, cat, st.gpus if running else
                                                              [g.index for g in engine.snapshot().gpus])),
                 "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
-                "pending": bool(running and st.config_hash != engine.config_hash(inst)),
+                "pending": bool(running and not engine.config_matches(inst, st.config_hash)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst), **hf_ctx()}
 
     @app.get("/instances/{iid}/models", response_class=HTMLResponse)
@@ -1450,6 +1450,21 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def storage_purge(request: Request):
         raw = request.state.form        # no id = empty the whole trash
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
+
+    # Priority: who keeps the GPUs when there are not enough, as a list to reorder
+    @app.get("/priority", response_class=HTMLResponse)
+    def priority_page(request: Request):
+        return page(request, "priority.html", rows=svc.priority_list())
+
+    @app.post("/priority/move")
+    @threaded
+    def priority_move(request: Request):
+        raw = request.state.form
+        try:
+            msg = svc.move_priority(str(raw.get("id", "")), str(raw.get("direction", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/priority", msg)})
 
     # ComfyUI's pictures: what each ComfyUI made and was given, to look through and clear out
     @app.get("/storage/pictures", response_class=HTMLResponse)

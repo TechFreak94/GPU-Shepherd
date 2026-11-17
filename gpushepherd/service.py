@@ -305,6 +305,56 @@ class Shepherd:
         note = " Restart it to apply the changes." if st and st.running else ""
         return f"Saved {inst.name}.{note}"
 
+    # ------------------------------------------------------------------ priority
+    def priority_list(self) -> list[dict]:
+        """The instances that use GPUs, in the order the planner serves them: who keeps the GPUs
+        when there are not enough (rank 1 first). Same order as scheduler._priority_order."""
+        instances, _ = self.store.instances()
+        states = self.backend.states()
+        rank = {"fixed": 0, "elastic": 1}
+        order = sorted((i for i in instances.values() if i.gpu.mode != "none"),
+                       key=lambda i: (-i.gpu.priority, rank[i.gpu.mode], i.id))
+        return [{"rank": n, "id": i.id, "name": i.name, "mode": i.gpu.mode, "priority": i.gpu.priority,
+                 "running": bool(states.get(i.id) and states[i.id].running),
+                 "gpus": states[i.id].gpus if states.get(i.id) and states[i.id].running else []}
+                for n, i in enumerate(order, 1)]
+
+    @checked
+    def set_priority_order(self, ids: list[str]) -> str:
+        """Put the GPU-using instances in this order (first = keeps its GPUs first). Instances left
+        out keep their place after the ones named. Each gets its own number from 100 down, so the
+        order is never a tie; the numbers stay what the planner and the instance form use."""
+        current = [row["id"] for row in self.priority_list()]
+        unknown = [i for i in ids if i not in current]
+        if unknown:
+            raise Problem(f"'{unknown[0]}' is not an instance that uses GPUs.", status=404)
+        if len(set(ids)) != len(ids):
+            raise Problem("an instance is listed twice")
+        order = list(ids) + [i for i in current if i not in ids]
+        step = max(1, min(10, 100 // len(order))) if order else 10
+        instances, _ = self.store.instances()
+        changed = 0
+        for n, iid in enumerate(order):
+            inst = instances[iid]
+            want = max(0, 100 - n * step)
+            if inst.gpu.priority != want:
+                inst.gpu.priority = want
+                self.store.save_instance(inst)
+                changed += 1
+        return "Priority order saved." if changed else "That is already the order."
+
+    def move_priority(self, iid: str, direction: str) -> str:
+        """Move one instance a place up or down the priority list."""
+        if direction not in ("up", "down", "top", "bottom"):
+            raise Problem("direction must be up, down, top or bottom")
+        order = [row["id"] for row in self.priority_list()]
+        if iid not in order:
+            raise Problem(f"'{iid}' is not an instance that uses GPUs.", status=404)
+        at = order.index(iid)
+        to = {"up": max(0, at - 1), "down": min(len(order) - 1, at + 1), "top": 0, "bottom": len(order) - 1}[direction]
+        order.insert(to, order.pop(at))
+        return self.set_priority_order(order)
+
     def delete_instance(self, iid: str) -> str:
         """Stop an instance the normal way and move it, with its app data folder and the helpers
         that only it uses (its database), to the trash. A running instance is deleted in the

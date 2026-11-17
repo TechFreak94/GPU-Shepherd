@@ -166,3 +166,17 @@ def test_plugin_points_at_the_server():
              "apply_", "check_", "update_")
     assert {"get_status", "start_instance"} <= named
     assert {n for n in named if n.startswith(verbs)} <= {t.name for t in mcp.TOOLS}
+
+
+def test_priority_order_can_be_read_and_set(stack):
+    app, client = stack
+    rows, err = call(client, "get_priority")
+    assert not err and rows["order"]
+    ids = [r["id"] for r in rows["order"]]
+    assert [r["rank"] for r in rows["order"]] == list(range(1, len(ids) + 1))
+    flipped = list(reversed(ids))
+    out, err = call(client, "set_priority_order", order=flipped)
+    assert not err, out
+    assert [r["id"] for r in out["order"]] == flipped
+    assert len({r["priority"] for r in out["order"]}) == len(ids)          # never a tie
+    assert call(client, "set_priority_order", order=["nope"])[1]

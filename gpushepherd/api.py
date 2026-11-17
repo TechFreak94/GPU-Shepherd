@@ -89,7 +89,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             "running": running, "status": st.status if st else "not created",
             "status_text": st.status_text if st else "", "gpus": snap.allocations.get(inst.id, []),
             "container": engine.container_name(inst.id),
-            "restart_needed": bool(running and st.config_hash and st.config_hash != engine.config_hash(inst)),
+            "restart_needed": bool(running and st.config_hash and not engine.config_matches(inst, st.config_hash)),
             "gpu_note": notes.get(inst.id, "")}}
 
     # ------------------------------------------------------------------ state
@@ -126,6 +126,19 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         except Exception:  # noqa: BLE001 - only a hint
             notes = {}
         return [instance_json(i, snap, notes) for i in sorted(snap.instances.values(), key=lambda i: i.id)]
+
+    @r.get("/api/v1/priority")
+    @handle
+    def get_priority(request: Request):
+        return {"order": svc.priority_list()}
+
+    @r.put("/api/v1/priority")
+    @handle
+    def put_priority(request: Request):
+        ids = body(request).get("order")
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise Problem('send {"order": ["first-id", "second-id", ...]}')
+        return {"message": svc.set_priority_order(ids), "order": svc.priority_list()}
 
     @r.get("/api/v1/instances/{iid}")
     @handle

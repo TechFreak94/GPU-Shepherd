@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Priority · GPU Shepherd{% endblock %}
+{% block content %}
+<div class="pagehead"><h1>Priority</h1></div>
+<p class="small muted">When there are not enough GPUs for everything that wants one, the top of this list keeps its
+  GPUs and the apps below it wait or get what is left. Apps that need a fixed GPU or only some of the GPUs are served
+  in this order too. An app you start yourself always gets its GPUs. Apps that don't use a GPU aren't listed. Moving
+  an app up or down never restarts anything: it applies the next time GPU Shepherd plans.</p>
+
+{% if not rows %}
+<div class="card"><p class="muted small" style="margin:0">No app uses a GPU yet. Add one from the App Center.</p></div>
+{% else %}
+<div class="card">
+  <table class="table">
+    <tr><th>#</th><th>App</th><th>Uses</th><th>Now</th><th title="The 0-100 number behind the order, also on each app's edit form">Number</th><th>Move</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td><strong>{{ r.rank }}</strong></td>
+      <td>{{ r.name }}</td>
+      <td class="small">{{ "its own GPU choice" if r.mode == "fixed" else "any free GPUs" }}</td>
+      <td class="small">{% if r.running %}running{% if r.gpus %} on GPU {{ r.gpus|join(", ") }}{% endif %}{% else %}<span class="muted">stopped</span>{% endif %}</td>
+      <td class="small muted">{{ r.priority }}</td>
+      <td>
+        {% for d, label, off in [("top", "Top", loop.first), ("up", "Up", loop.first), ("down", "Down", loop.last), ("bottom", "Bottom", loop.last)] %}
+        <button class="link" hx-post="/priority/move" hx-vals='{"id": "{{ r.id }}", "direction": "{{ d }}"}'{% if off %} disabled{% endif %} aria-label="{{ label }}: move {{ r.name }}">{{ label }}</button>
+        {% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

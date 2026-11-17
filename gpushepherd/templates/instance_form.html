@@ -46,7 +46,7 @@
         <div class="hint">The app only ever gets GPUs of this kind. An AMD GPU comes with its /dev/dri render node, which Vulkan needs; ROCm images also need /dev/kfd under Advanced, Devices.</div></div>
       <div data-gpu-mode="fixed elastic"><label for="priority">Importance (0-100)</label>
         <input type="number" id="priority" name="priority" min="0" max="100" value="{{ f.priority }}">
-        <div class="hint">When two apps want the same GPU, the higher number keeps it. If you start an app yourself, it always gets its GPUs.</div></div>
+        <div class="hint">When two apps want the same GPU, the higher number keeps it. If you start an app yourself, it always gets its GPUs. <a href="/priority">Set the order on the Priority page</a> instead of picking numbers.</div></div>
     </div>
     <div data-gpu-mode="fixed elastic" style="margin-top:12px">
       <label><span data-gpu-mode="fixed">Use GPUs</span><span data-gpu-mode="elastic">Preferred GPUs (optional, leave empty to let GPU Shepherd choose)</span></label>
