@@ -96,6 +96,7 @@ class Template:
     shm_size: str | None = None                # shared memory, for apps that split work across GPUs
     engine: str = ""                           # "vllm": a model server with its own install answers (see VLLM_*)
     bundled_slot: str = "chat"                 # the model slot a Llama Swap installed alongside it fills
+    own_init: bool = False                     # the image's entrypoint must be PID 1 (its own init, e.g. s6-overlay)
     cpu_ok: bool = False                       # a model server that keeps answering on the CPU (slower)
                                                # while an image app has the only GPU, instead of stopping
     vendor: str = "nvidia"                     # the kind of GPU it runs on: nvidia or amd (GpuPolicy.vendor)
@@ -210,7 +211,7 @@ TEMPLATES: tuple[Template, ...] = (
                 "Web dashboard with its own login; optional Home Assistant connection"),
         default_id="hermes", default_name="Hermes Agent", description="Hermes Agent",
         image="nousresearch/hermes-agent:latest", command=("gateway", "run"),
-        container_port=9119, host_port=9119, gpu="none",
+        container_port=9119, host_port=9119, gpu="none", own_init=True,   # its dashboard is an s6 service
         env={"HERMES_DASHBOARD": "1"}, login=("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
         appdata=(("data", "/opt/data"),), data_owner=(10000, 10000), connects="hermes",
         needs="A model server whose model can call tools (Qwen3 models can)",
@@ -428,6 +429,12 @@ def matches(t: Template, inst: Instance) -> bool:
     if inst.app:
         return RENAMED.get(inst.app, inst.app) == t.key
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
+
+
+def own_init(inst: Instance) -> bool:
+    """Whether the instance's image brings its own init, so Docker's must not run as PID 1: Hermes
+    Agent starts its dashboard under s6-overlay, which only runs when its entrypoint is PID 1."""
+    return any(t.own_init and matches(t, inst) for t in TEMPLATES)
 
 
 OTHER_TAG = "App"        # an instance that isn't from the App Center
