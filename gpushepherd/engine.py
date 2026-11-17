@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import budget, drain, gpu as gpu_mod, host, placement
+from . import budget, drain, gpu as gpu_mod, host, instance_templates as tpl, placement
 from .backend import Backend, ContainerSpec, ContainerState
 from .config import Catalog, ConfigError, Instance, Store, gpu_vendor
 from .connectors import llamaswap
@@ -60,6 +60,8 @@ class Engine:
                                                      "gpu": {"cpu_fallback", "vram_gb", "vendor"}})
         if not data["devices"]:                    # added later: no restart for apps that pass none
             del data["devices"]
+        if tpl.own_init(inst):                     # added later: recreate those once, without Docker's init
+            data["_own_init"] = True
         if inst._file_name is not None:            # renamed only on screen (see config._named)
             data["name"] = inst._file_name
         if inst.kind == "llama-swap":
@@ -267,7 +269,8 @@ class Engine:
             network=settings.network, alias=inst.id, command=list(inst.command), env=env,
             ports=[(settings.bind_address, p.host, p.container, p.protocol) for p in inst.ports],
             volumes=volumes, gpus=list(gpus), config_hash=self.config_hash(inst),
-            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=devices)
+            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=devices,
+            init=not tpl.own_init(inst))
 
     def _ensure_llama_server(self, inst: Instance, catalog: Catalog, log) -> Catalog:
         if catalog.llama_server:
