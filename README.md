@@ -432,3 +432,7 @@ Center card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with
 what it's used for; the dashboard has the same list under the version number, **Credits**.
 
 ![Open-source credits in the dashboard](docs/screenshots/credits.png)
+
+---
+
+<sub>Made with Claude and locally hosted AI, by or for [TechFreak94](https://github.com/TechFreak94).</sub>
