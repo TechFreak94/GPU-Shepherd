@@ -9,6 +9,8 @@ gets both. Everything is configured from the browser - no compose files to edit.
 > Status: **Alpha** (0.x). It works on one Docker host with NVIDIA GPUs (AMD GPUs are experimental). Expect rough edges and
 > breaking changes to the config format before 1.0.
 
+GPU Shepherd is made with Claude and locally hosted AI, by or for TechFreak94.
+
 ## Why
 
 Homelab GPUs are shared by tools that each assume they own the card: image generators, LLM
