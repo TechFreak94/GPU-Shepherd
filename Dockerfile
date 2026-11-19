@@ -11,10 +11,6 @@ LABEL org.opencontainers.image.title="GPU Shepherd" \
       org.opencontainers.image.description="Runs self-hosted AI containers and shares the GPUs between them automatically" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# Tesseract reads scanned PDFs (Knowledge page, Read with OCR); add tesseract-ocr-<lang> packages
-# and set SHEPHERD_OCR_LANG (e.g. eng+deu) for other languages
-RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
-    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 # The exact versions (and file hashes) of every Python dependency, so each build installs the same
 # code. Made from pyproject.toml; after changing its dependencies run:

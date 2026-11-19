@@ -86,15 +86,6 @@ each instance says what it needs, and starting or stopping anything re-plans who
   ![Dark theme](docs/screenshots/dashboard-dark.png)
 - **Storage and trash**: free space per disk (each named by where it is mounted), folder sizes, unused app images and model files, and a
   trash that deleting an instance or a file goes to first, so you can put it back.
-- **Knowledge**: put your documents (ebooks, manuals, notes: EPUB, PDF, DOCX, TXT, Markdown) in the
-  documents folder and a scan reads each one into text, using the best format of each and skipping
-  duplicates. Ones it can't read (DRM, scanned PDFs) are listed with the reason. Send them to an Open
-  WebUI knowledge base to chat with them (**Keep it in sync** sends new documents and takes out
-  deleted or changed ones after every scan; the page lists each Open WebUI's knowledge bases), or have the model server draft an agent skill from one for
-  Hermes Agent. Load documents from the browser: drop files, a whole folder or zips on the page (no
-  SSH needed). The page shows where it is all kept, and can clear it all out to start over.
-
-  ![Knowledge: sending documents to Open WebUI, kept in sync](docs/screenshots/knowledge.png)
 - **Remote access**: Settings > Remote access sets up [Tailscale](https://tailscale.com) on the server
   (install, log in, HTTPS) and shows the addresses to open the dashboard and apps at from your phone
   or laptop, without opening ports.

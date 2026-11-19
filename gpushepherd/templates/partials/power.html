@@ -1,7 +1,7 @@
 {# The Power dialog: restart GPU Shepherd, restart the server, or shut it down.
    p = Shepherd.power_status(); confirm = the action being confirmed ("" = the list); done = the action just
    requested; boot = this process's id (the waiting dialog reloads the page once it changes). #}
-{% set blocked = p.change or p.knowledge or p.busy %}
+{% set blocked = p.change or p.busy %}
 {% if done %}
 <div{% if done != "shutdown" %} hx-get="/ui/power/back?boot={{ boot }}" hx-trigger="every 2s" hx-swap="none" hx-disinherit="*" data-quiet-offline{% endif %}>
 <div class="dlg-head"><strong id="modal-title">{% if done == "shutdown" %}Shutting down the server…{% elif done == "reboot" %}Restarting the server…{% else %}Restarting GPU Shepherd…{% endif %}</strong>

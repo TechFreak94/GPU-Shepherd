@@ -116,29 +116,6 @@ For instances of kind `llama-swap`.
 | `GET /api/v1/instances/{id}/tuning` | [Suggested adjustments](advanced.md#tuning): each with a `key`, what it changes, why, and its `status` (new, applied or dismissed). |
 | `POST /api/v1/instances/{id}/tuning` | Decide one: `{"key": "...", "action": "apply" \| "dismiss" \| "undo"}`. It stays listed either way. |
 
-## Knowledge (documents) and skills
-
-`/api/v1/books/...` is the same as `/api/v1/knowledge/...`, for older clients.
-
-| Request | What it does |
-|---|---|
-| `GET /api/v1/knowledge` | The documents folder, its documents (status, words, why one couldn't be read), the reasons grouped with counts, where everything is kept (`storage`: path, files, size), the work running now, the Open WebUI apps documents can go to, and the drafted skills. |
-| `PUT /api/v1/knowledge/folder` | `{"path": "..."}` picks the documents folder. |
-| `POST /api/v1/knowledge/upload` | Add documents: a multipart form with one or more `file` fields; a scan follows (`202`). |
-| `GET /api/v1/knowledge/files` | The document files already in the folder, `{path: size}`. |
-| `PUT /api/v1/knowledge/files?path=Folder/Book.epub` | Upload one document (raw body, streamed to disk; folders in `path` are kept; a `.zip` is unpacked into a folder named after it). No scan; call `scan` when done. |
-| `POST /api/v1/knowledge/scan`, `POST /api/v1/knowledge/stop` | Scan the folder for new documents (`202`), or stop the work running. |
-| `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep", "sync": true}` (`202`). `sync` keeps it in sync: every scan then sends new documents and takes out copies of documents deleted or changed. |
-| `DELETE /api/v1/knowledge/sync` | Stop keeping a knowledge base in sync. |
-| `GET /api/v1/knowledge/openwebui/{id}` | A running Open WebUI's knowledge bases: `bases` (`name`, `files`, `ours`, `sent`, `missing`, `sync`), the `sync` setting and `stale` (old copies waiting to be taken out). |
-| `POST /api/v1/knowledge/{key}/skill` | Draft an agent skill from a document with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
-| `POST /api/v1/knowledge/ocr` | Read the scanned PDFs (status `scanned`) with OCR, in the background (`202`). |
-| `POST /api/v1/knowledge/delete` | Delete every duplicate or every document that can't be read, files and all: `{"status": "duplicate" \| "failed"}` (`202`). |
-| `DELETE /api/v1/knowledge/{key}` | Delete one document: its files, its text, and its copies in a running Open WebUI. |
-| `POST /api/v1/knowledge/clear` | Start over: `{"what": ["documents", "converted", "skills", "apps"]}` (all four if left out; `202`). |
-| `GET`, `PUT`, `DELETE /api/v1/skills/{slug}` | Read a draft (`text`), save an edited one (`{"text": "..."}`), delete it. |
-| `POST /api/v1/skills/{slug}/install` | Install it in Hermes Agent: `{"instance": "hermes"}`. |
-
 ## Settings
 
 | Request | What it does |
