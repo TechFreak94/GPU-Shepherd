@@ -42,7 +42,7 @@ The same list is in the dashboard: click the version number at the top, then **C
 | [NVIDIA Container Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit) | Apache-2.0 | Gives containers their GPUs; installed by install.sh |
 | [NVIDIA driver and nvidia-smi](https://www.nvidia.com/drivers) | NVIDIA's own license (not open source) | Reads the GPUs; installed by you or your distribution |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | Runs GGUF models inside the Llama Swap |
-| [Python](https://www.python.org) | PSF License | GPU Shepherd's own image is built on python:3.13-slim (Debian), whose packages keep their own licenses |
+| [Python](https://www.python.org) | PSF License | GPU Shepherd's own image is built on python:3.15-slim (Debian), whose packages keep their own licenses |
 | [curl](https://curl.se) | curl license (MIT-style) | Downloads models, in the curlimages/curl container |
 | [Tailscale](https://tailscale.com) | BSD-3-Clause (client) | Optional remote access, only if you choose it in install.sh or Settings |
 | [gpu-unlock](https://github.com/Zagitta/gpu-unlock) | GPL-2.0-only (NVIDIA firmware under NVIDIA's terms) | Experimental full-speed tensor math on GeForce cards, built on your server by gpu-unlock.sh only if you install it in Settings |

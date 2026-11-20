@@ -4,15 +4,18 @@
 browser ── htmx ──────────> app.py (FastAPI routes, Jinja templates) ──┐
 scripts ── JSON ──────────> api.py (/api/v1, API token) ───────────────┤
 gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
+AI agent ── MCP ─> mcp.py (/api/v1/mcp) ─ in-process ─> api.py         │
                                                                        v
                     service.py  Shepherd: every action and setting, checked; raises Problem
                       │
                       ├─ config.py     Store: pydantic models <-> YAML files in the data folder
                       ├─ engine.py     snapshot() of the world, plan(), execute(plan)
                       │     ├─ scheduler.py   pure GPU planner (no I/O)
-                      │     ├─ gpu.py         nvidia-smi
+                      │     ├─ gpu.py         nvidia-smi; AMD GPUs from /sys (numbered from 100)
                       │     ├─ backend.py     DockerBackend (docker SDK) / FakeBackend
-                      │     └─ connectors/   llamaswap.py (render config, talk to llama-swap), openwebui.py (its image settings through its API), comfyui.py (the workflows and node maps Open WebUI makes and edits pictures with)
+                      │     └─ connectors/   llamaswap.py (render config, talk to llama-swap), openwebui.py (its image
+                      │                      settings through its API), comfyui.py (the workflows and node maps Open
+                      │                      WebUI makes and edits pictures with)
                       ├─ instance_templates.py   the App Center's apps and what they build (pure)
                       ├─ model_library.py   suggested models, whether they fit, their settings (pure)
                       ├─ hf_models.py  models trending on Hugging Face that fit this machine (daily, cached)
@@ -20,13 +23,16 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
                       ├─ storage.py / trash.py   what takes disk space; the trash deletes go to first
+                      ├─ pictures.py   ComfyUI's made and uploaded pictures (Storage > Pictures)
                       ├─ drives.py / moves.py   attached drives and moving a folder to another disk (a helper container)
                       ├─ image_updates.py   new releases of the apps' images, found by asking the registries
                       ├─ placement.py / gguf.py / budget.py   fewest GPUs per model, KV-cache sizes from GGUF headers, memory checks
                       ├─ tuning.py     measured VRAM and speed -> suggested adjustments (offered, never forced)
                       ├─ first_run.py  creates a preset on the first start without install.sh
                       ├─ app_updates.py  settings installed apps are missing from their current template
-                      ├─ tailscale.py  Tailscale on the host (Settings > Remote access): status files written by update.sh's service
+                      ├─ tailscale.py  Tailscale on the host (Settings > Remote access): status files written by
+                      │                update.sh's service
+                      ├─ host.py       host CPU and memory from /proc
                       ├─ logins.py     apps' accounts: read them, scripts that set a new password (pure)
                       ├─ credits.py    open-source projects and licenses for the Credits dialog
                       ├─ auth.py       scrypt password hashing, first-run password, API token
@@ -42,7 +48,8 @@ gpu-shepherd COMMAND ─ cli.py ─ JSON ─> api.py                         │
 - **One implementation, three front ends.** Each action and setting is a method of
   `service.Shepherd`. The dashboard's routes (`app.py`), the JSON API (`api.py`) and the commands
   (`cli.py`, which only talks to the API) call it and differ only in how they show the result, so
-  a button and its command can't drift apart. Commands go through the running app rather than
+  a button and its command can't drift apart. The MCP server for AI agents (`mcp.py`) is a fixed
+  set of calls to the JSON API, so it can't do anything the API doesn't. Commands go through the running app rather than
   editing files, because starts, stops and model loads depend on its job runner and its view of
   what is running.
 - **Plan, show, then act.** `scheduler.plan()` is pure and fully unit-tested. The UI shows the
@@ -139,3 +146,8 @@ mounts/environment, and a client with `models()`, `running()`, `load()`, `unload
   and cancel.
 - `tests/test_instance_templates.py` - the App Center's apps, what they build and automatic offload.
 - `tests/test_host.py` - host CPU and memory from a fake `/proc`.
+- `tests/test_api.py` - the `/api/v1` endpoints and the `gpu-shepherd` commands, run against the
+  test app.
+- `tests/test_mcp.py` - the MCP server, and that each of its tools reaches a real endpoint.
+- `tests/test_security.py` - logins that end when they should, the limit on wrong logins, and files
+  only their owner reads.

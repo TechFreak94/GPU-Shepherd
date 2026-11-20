@@ -49,7 +49,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
   - *Fixed* - always these GPUs (e.g. ComfyUI on GPU 0).
   - *Elastic* - at least N GPUs, grows into every free GPU, shrinks when something else needs one
     (e.g. a llama.cpp server that splits a model across GPUs).
-  - *Priority* - who keeps their GPUs when there are not enough to go around.
+  - *Priority* - who keeps their GPUs when there are not enough to go around. The **Priority**
+    page lists the apps that use GPUs in that order; move one up or down without restarting anything.
 - **Plans you confirm**: if starting something means moving or stopping something else, you see
   exactly what will happen first.
 
@@ -57,10 +58,10 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Nothing cut off half way**: before a container is stopped, GPU Shepherd waits for the chat
   answer or image it is working on, with *Stop now* and *Cancel change* buttons and a timeout.
 - **Model servers** ([llama-swap](https://github.com/mostlygeek/llama-swap)): a model list editor
-  that picks .gguf files from disk, load and unload buttons, and **auto names**: one model name,
+  that picks .gguf files from disk, load and unload buttons, and **auto tags**: one tag,
   like `coder`, that points at the model that fits the GPUs the server has right now.
-- **Suggested models**: a short list of current chat, coding and embeddings models (Qwen3.5,
-  Qwen3.6, Qwen3.8, Gemma 4, Qwen3 Coder, Qwen3 Embedding), each saying whether it fits this
+- **Suggested models**: current chat, coding and embeddings models (Qwen3.5, Qwen3.6, Qwen3.8,
+  Gemma 4, Qwen3 Coder, Devstral, gpt-oss, MiniMax, Nemotron, Qwen3 Embedding...), each saying whether it fits this
   machine's GPUs and RAM. One click downloads it in the background and adds it with its makers'
   settings: sampling, thinking on or off, image input, MTP and the GPU / RAM split. Models trending on
   Hugging Face that fit your machine are suggested too (Settings turns that off). The model table
@@ -81,11 +82,16 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - **Command line and API**: every button and setting also works from the `gpu-shepherd` command
   (`gpu-shepherd start comfyui`, `apps install`, `models set`...) and a documented JSON API with a
   token, for scripts and Home Assistant. All three run the same code.
+- **AI agents**: a built-in MCP server lets Claude Code, OpenCode, Cursor and other agents check
+  the GPUs, start and swap apps, install apps and add models with the API token; a start that would
+  stop or move other apps answers with the plan first. The Claude Code plugin sets it up and tells
+  the agent to show you that plan and ask before each change; see [agent-plugin](agent-plugin/README.md).
 - **Light or dark**: follows your device, or pick Light or Dark with the theme button at the top.
 
   ![Dark theme](docs/screenshots/dashboard-dark.png)
 - **Storage and trash**: free space per disk (each named by where it is mounted), folder sizes, unused app images and model files, and a
-  trash that deleting an instance or a file goes to first, so you can put it back.
+  trash that deleting an instance or a file goes to first, so you can put it back. **Pictures**
+  shows what each ComfyUI made (pictures from Open WebUI and SillyTavern too) and moves old ones to the trash.
 - **Remote access**: Settings > Remote access sets up [Tailscale](https://tailscale.com) on the server
   (install, log in, HTTPS) and shows the addresses to open the dashboard and apps at from your phone
   or laptop, without opening ports.
@@ -110,7 +116,7 @@ each instance says what it needs, and starting or stopping anything re-plans who
   requirements, installer questions, first login, first apps, updating, uninstalling and troubleshooting.
 - [Instance and model options](docs/advanced.md): every field in the editors and what it does
   (GPU policies, folders, before-stopping checks, GPU/RAM offload, model settings, suggested
-  models, auto names).
+  models, auto tags).
 - [CLI and scripts](docs/cli.md): `install.sh`, `update.sh`, the `gpu-shepherd` command and its
   commands for everything the dashboard does, `download-models.sh` and environment variables.
 - [Linux distributions](docs/linux.md): which distros `install.sh` supports and where Docker, the
@@ -119,6 +125,8 @@ each instance says what it needs, and starting or stopping anything re-plans who
 - [TrueNAS SCALE](docs/truenas.md): a VM with GPU passthrough, or running it on the host.
 - [Unraid](docs/unraid.md): the Nvidia Driver plugin and Docker Compose.
 - [JSON API](docs/api.md): `/api/v1`, the API token, and every endpoint with examples.
+- [AI agents](agent-plugin/README.md): the built-in MCP server and the Claude Code plugin, and how
+  to connect other agents.
 - [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
   the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
 - [Contributing](CONTRIBUTING.md): how to propose a change, what a pull request needs and how
@@ -272,7 +280,7 @@ If an update fails to build or start, it rolls back by itself. The installer can
 
 Click the version number at the top of any page to check for updates, follow an update step by
 step, or read the [changelog](CHANGELOG.md): every merged change gets its own version. Installed
-from a private repository? Save a GitHub access token in Settings > Private repository, or with
+from a private repository? Save a GitHub access token in Settings > Updates > Private repository, or with
 `sudo ./update.sh --set-token <your GitHub user>`. Details:
 [Versions, changelog and updates](docs/updates.md).
 
@@ -363,9 +371,11 @@ in the suggested models.
   instances/<id>.yaml    one per instance
   catalogs/<id>.yaml     model list + API key per model server        (mode 600)
   generated/<id>/        files rendered for containers - do not edit
-  update/                update status, log and settings backups
   appdata/<app>/         each app's own data
+  api-token              the token for the API and commands             (mode 600)
+  state/                 what GPU Shepherd measured and decided (model memory, tuning, moves...)
   trash/                 deleted instances and files, until restored or emptied
+  update/                update status, log and settings backups
 ```
 
 You can edit the YAML by hand; GPU Shepherd re-reads it on every page load and shows a warning

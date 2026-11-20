@@ -46,7 +46,7 @@ doesn't accept account passwords for git, so use an access token instead:
 1. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new): under
    *Repository access* pick only the GPU Shepherd repository, under *Permissions* give
    *Contents* read-only access, and pick an expiry date.
-2. Save it in **Settings > Private repository** (your GitHub user name and the token), or on the
+2. Save it in **Settings > Updates > Private repository** (your GitHub user name and the token), or on the
    server with `sudo ./update.sh --set-token <your GitHub user>`, which asks for the token without
    showing it (or reads it from standard input).
 

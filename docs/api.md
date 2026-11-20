@@ -7,8 +7,10 @@ give the same messages.
 
 - [Authentication](#authentication)
 - [Conventions](#conventions)
-- [State](#state), [Instances](#instances), [Changes (jobs)](#changes-jobs), [App Center](#app-center),
-  [Model servers](#model-servers), [Settings](#settings), [Tensor unlock](#tensor-unlock), [Updates](#updates)
+- [State](#state), [Instances](#instances), [Priority](#priority), [Changes (jobs)](#changes-jobs),
+  [App Center](#app-center), [Model servers](#model-servers), [Settings](#settings),
+  [Storage and trash](#storage-and-trash), [App updates](#app-updates), [Tensor unlock](#tensor-unlock),
+  [Updates](#updates)
 - [AI agents (MCP)](#ai-agents-mcp)
 - [Examples](#examples)
 
@@ -21,7 +23,7 @@ Authorization: Bearer gs-...
 ```
 
 The token is made on the first start and kept in the `api-token` file in the data folder (mode
-600). Find it under **Settings › API and command line**, or with
+600). Find it under **Settings › Automation**, or with
 `sudo docker exec gpu-shepherd gpu-shepherd token`. *Make a new token* there (or `token --new`)
 replaces it; the old one stops working at once.
 
@@ -67,6 +69,17 @@ dashboard. The answer is one of:
 - `409` `{"error", "needs_confirm": true, "plan": [...]}`: it would also stop or move other
   instances (`plan` says which). Send it again with `{"confirm": true}` to go ahead.
 
+## Priority
+
+Who keeps their GPUs when there are not enough for everything (the dashboard's Priority page).
+Reordering only changes each instance's `gpu.priority` (from 100 down); nothing restarts.
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/priority` | `order`: the instances that use GPUs, first one first, each with `rank`, `id`, `name`, `mode`, `priority`, `running` and `gpus`. |
+| `PUT /api/v1/priority` | `{"order": ["llm", "comfyui"]}`: put these first, in this order; the others keep their places after them. Answers `message` and the new `order`. |
+| `POST /api/v1/priority/{id}/{direction}` | Move one instance `top`, `up`, `down` or `bottom`. Answers `message` and the new `order`. |
+
 ## Changes (jobs)
 
 GPU Shepherd makes one change at a time. Each start, stop, restart, delete and autostart is a job.
@@ -101,16 +114,16 @@ For instances of kind `llama-swap`.
 | Request | What it does |
 |---|---|
 | `GET /api/v1/instances/{id}/models` | `models`, `auto_aliases`, `settings` (`threads`, `llama_server`, `health_timeout`, `api_key`), `loaded` (model → state), `loading`, and the .gguf `files` it can see. |
-| `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto names follow. |
-| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). `?files=true` also deletes its files from disk (`409` while it is loaded; files another model uses are kept). |
+| `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto tags follow. |
+| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto tag points at it). `?files=true` also deletes its files from disk (`409` while it is loaded; files another model uses are kept). |
 | `GET /api/v1/instances/{id}/suggestions` | The [suggested models](advanced.md#suggested-models), best fit first: `key`, `name`, `uses`, `fits` and `fit` (how it fits this machine), `state` (`ready`, `downloading`, `starting`, `failed`, `missing`), `status`, `pct`, `in_catalog`, and its `files` with their URLs. |
 | `POST /api/v1/instances/{id}/suggestions/{key}/add` | Add it with its makers' settings, downloading it if needed (`201`; `409` if the server has it). |
 | `POST /api/v1/instances/{id}/suggestions/{key}/download` | Download or resume its files in the background (`202`). |
-| `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. |
+| `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. `/discard` stops it and deletes what it fetched. |
 | `POST /api/v1/instances/{id}/suggestions/{key}/delete` | Delete the files of a downloaded suggestion the server doesn't have. |
 | `POST /api/v1/instances/{id}/models/{model}/load` | Load it now, in the background (`202`). |
 | `POST /api/v1/instances/{id}/models/{model}/unload` | Unload it; `_all` as the model unloads every model. `409` while the server is answering. |
-| `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto name: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
+| `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto tag: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
 | `PATCH /api/v1/instances/{id}/server-settings` | Change any of `threads`, `health_timeout`, `llama_server`, `fit_gpus` (use only the GPUs each model needs) and `auto_tune` (apply suggested adjustments by itself); `"new_api_key": true` gives the server a new key. |
 | `POST /api/v1/instances/{id}/models/from-link` | Add a model by the link of its `.gguf` file: `{"url": "https://.../Model-Q4_K_M.gguf", "name": "optional", "mmproj_url": "optional vision projector"}`. It is downloaded in the background like a suggested model and listed with them (`201`). `/suggestions/{key}/forget` removes a link from the list. |
 | `GET /api/v1/instances/{id}/tuning` | [Suggested adjustments](advanced.md#tuning): each with a `key`, what it changes, why, and its `status` (new, applied or dismissed). |
@@ -212,8 +225,8 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 answers) for AI agents such as Claude Code, OpenCode or Cursor. It needs the API token like any change.
 Its tools are fixed calls to the endpoints above: reading state, instances, logs, jobs, apps, models,
 storage and updates; starting, stopping and restarting (a plan that affects other instances answers
-`needs_confirm` until the agent sends `confirm`); installing apps; adding, loading and unloading
-models; and app, image and GPU Shepherd updates. Passwords, the token, power, remote access, tensor
+`needs_confirm` until the agent sends `confirm`); the priority order; installing apps; adding,
+loading and unloading models; and app, image and GPU Shepherd updates. Passwords, the token, power, remote access, tensor
 unlock, deleting and storage moves are left out. Setup, and the Claude Code plugin:
 [agent-plugin](../agent-plugin/README.md).
 
