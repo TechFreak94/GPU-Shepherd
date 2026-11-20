@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-from ..config import Catalog, Instance, load_yaml
+from ..config import Catalog, Instance
 from . import instance_url
 
 CONTAINER_PORT = 8080
@@ -329,11 +329,3 @@ def busy_slots(slots) -> int:
 
 def client_for(inst: Instance, catalog: Catalog) -> LlamaSwapClient:
     return LlamaSwapClient(instance_url(inst, CONTAINER_PORT), catalog.api_key)
-
-
-def pretty(catalog_text: str) -> str:
-    """Re-indent a rendered config for display."""
-    try:
-        return json.dumps(load_yaml(catalog_text), indent=2)
-    except yaml.YAMLError:
-        return catalog_text

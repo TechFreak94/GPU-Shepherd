@@ -8,7 +8,6 @@ any route here runs. Errors are {"error": "..."} with a 4xx status. Reference: d
 from __future__ import annotations
 
 import functools
-import inspect
 import json
 import time
 from dataclasses import asdict
@@ -43,25 +42,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             raise Problem(f"the JSON body must be {'an object' if kind is dict else 'a list'}")
         return data
 
-    def _piece(offset, total) -> tuple[int | None, int | None]:
-        if offset in (None, ""):
-            return None, None
-        if not (str(offset).isdigit() and str(total or "").isdigit()):
-            raise Problem("offset and total are byte counts")
-        return int(offset), int(total)
-
     def handle(fn):
         """Run a route, answering a Problem or a validation error as {"error": ...}. Routes are plain
         functions run in a worker thread, with the body read first (request.state.raw), so one that
-        waits for Docker, a model server or a job never holds up the dashboard. The two that take a
-        file as it arrives are `async` and read the request themselves."""
-        streams = inspect.iscoroutinefunction(fn)
-
+        waits for Docker, a model server or a job never holds up the dashboard."""
         @functools.wraps(fn)
         async def wrapper(request: Request, **kw):
             try:
-                if streams:
-                    return await fn(request, **kw)
                 request.state.raw = await request.body()
                 return await run_in_threadpool(fn, request, **kw)
             except (Problem, ConfigError, ValueError) as err:
@@ -139,6 +126,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             raise Problem('send {"order": ["first-id", "second-id", ...]}')
         return {"message": svc.set_priority_order(ids), "order": svc.priority_list()}
+
+    @r.post("/api/v1/priority/{iid}/{direction}")
+    @handle
+    def move_priority(request: Request, iid: str, direction: str):
+        return {"message": svc.move_priority(iid, direction), "order": svc.priority_list()}
 
     @r.get("/api/v1/instances/{iid}")
     @handle

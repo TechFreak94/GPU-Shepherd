@@ -129,7 +129,7 @@ def test_models_and_server_settings(stack):
     assert r.status_code == 201
     assert client.put(f"{base}/auto-aliases", json=before["auto_aliases"] + [
         {"alias": "quick", "default_model": "tiny", "rules": [{"min_gpus": 2, "model": first}]}]).status_code == 200
-    # renaming follows into the auto names
+    # renaming follows into the auto tags
     assert client.put(f"{base}/models/tiny", json={"id": "tiny2", "file": "/models/tiny.gguf"}).status_code == 200
     autos = {a["alias"]: a for a in client.get(f"{base}/models").json()["auto_aliases"]}
     assert autos["quick"]["default_model"] == "tiny2"
@@ -237,6 +237,22 @@ def test_cli_status_start_and_set(run, stack):
     assert run("set", "comfyui", "gpu.nope=1")[1].strip() == "gpu-shepherd: unknown setting 'gpu.nope'"
 
 
+def test_priority_api_and_command(run, stack):
+    _, client, _, _ = stack
+    order = [r["id"] for r in client.get("/api/v1/priority").json()["order"]]
+    assert order == ["comfyui", "llm"]                          # 80 before 50; apps without a GPU aren't listed
+    r = client.post("/api/v1/priority/llm/top")
+    assert r.status_code == 200 and [x["id"] for x in r.json()["order"]] == ["llm", "comfyui"]
+    assert client.post("/api/v1/priority/llm/sideways").status_code == 400
+    assert client.post("/api/v1/priority/webui/up").status_code == 404
+    code, text = run("priority")
+    assert code == 0 and text.splitlines()[1].split()[:2] == ["1", "llm"]
+    assert run("priority", "down", "llm") == (0, "Priority order saved.\n")
+    assert run("priority", "set", "llm", "comfyui")[0] == 0
+    assert [x["id"] for x in client.get("/api/v1/priority").json()["order"]] == ["llm", "comfyui"]
+    assert run("priority", "up")[0] == 1
+
+
 def test_cli_show_apply_delete(run, stack, tmp_path):
     _, _, _, data = stack
     code, text = run("show", "webui")
@@ -261,7 +277,7 @@ def test_cli_apps_models_settings(run, stack):
     assert tiny["aliases"] == ["small", "mini"] and tiny["offload"] == [{"min_gpus": 2, "gpu_layers": None, "cpu_moe": 999}]
     assert run("models", "auto-set", "llm", "quick", "tiny", "2=tiny")[0] == 0
     code, text = run("models", "list", "llm")
-    assert "Auto name quick: tiny; 2+ GPUs: tiny" in text
+    assert "Auto tag quick: tiny; 2+ GPUs: tiny" in text
     assert run("models", "auto-delete", "llm", "quick")[0] == 0
     assert run("models", "delete", "llm", "tiny")[0] == 0
     assert run("models", "settings", "llm", "threads=4")[0] == 0

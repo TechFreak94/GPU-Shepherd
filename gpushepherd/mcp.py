@@ -140,7 +140,7 @@ TOOLS: list[Tool] = [
          obj({"key": {"type": "string", "description": "App key from list_apps."}}, ("key",)),
          get(f"{API}/apps/{{key}}"), read_only=True),
     Tool("list_models", "List a model server's models",
-         "For a model server (kind llama-swap): its models, auto names, which are loaded, and the .gguf files it sees.",
+         "For a model server (kind llama-swap): its models, auto tags, which are loaded, and the .gguf files it sees.",
          obj({"id": ID}, ("id",)), get(f"{API}/instances/{{id}}/models"), read_only=True),
     Tool("list_suggested_models", "List suggested models",
          "Suggested models for a model server, best fit for this machine first, with their download state.",

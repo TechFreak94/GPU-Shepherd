@@ -945,7 +945,7 @@ def agent_context(ctx: int) -> int:
 
 
 def opencode_models(info: dict) -> dict[str, dict]:
-    """OpenCode's entries for a model server's chat models and auto names, with their context limits
+    """OpenCode's entries for a model server's chat models and auto tags, with their context limits
     (without one OpenCode never compacts a session and runs into the server's context size)."""
     models = dict(info.get("models") or {})
     models.setdefault(info.get("default_model") or "chat", info.get("ctx") or 0)

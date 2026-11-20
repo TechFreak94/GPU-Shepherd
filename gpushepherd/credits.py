@@ -43,7 +43,7 @@ WORKS_WITH: tuple[Credit, ...] = (
            "Reads the GPUs; installed by you or your distribution"),
     Credit("llama.cpp", "https://github.com/ggml-org/llama.cpp", "MIT",
            "Runs GGUF models inside the Llama Swap"),
-    Credit("Python", "https://www.python.org", "PSF License", "GPU Shepherd's own image is built on python:3.13-slim "
+    Credit("Python", "https://www.python.org", "PSF License", "GPU Shepherd's own image is built on python:3.15-slim "
            "(Debian), whose packages keep their own licenses"),
     Credit("curl", "https://curl.se", "curl license (MIT-style)",
            "Downloads models, in the curlimages/curl container"),

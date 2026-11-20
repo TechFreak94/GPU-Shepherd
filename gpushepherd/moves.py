@@ -8,7 +8,7 @@ A move, run as a background change by service.py:
   3. copies everything, then compares the two copies (every name, and every file's size);
   4. only then points the apps at the new place (instances/<id>.yaml, and the trash's records);
   5. starts again what was running.
-The old copy stays where it was until it is deleted from Settings > Storage, and "Move back"
+The old copy stays where it was until it is deleted from the Storage page, and "Move back"
 points the apps at it again. Anything that fails before step 4 leaves the apps as they were and
 removes the unfinished copy.
 
@@ -64,7 +64,7 @@ class Check:
                        "Linux's own disk, and files there keep no Linux owners or permissions.")
         if self.hidden:
             out.append("GPU Shepherd itself can't see the new place (it sees its data folder and disks under /mnt), "
-                       "so the apps will work but Settings > Storage won't count or clean up what is there. "
+                       "so the apps will work but the Storage page won't count or clean up what is there. "
                        "A place under /mnt avoids that.")
         if self.same_disk:
             out.append("The new place is on the same disk as the folder now, so no space is freed. If it should "

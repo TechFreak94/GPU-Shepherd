@@ -1,4 +1,4 @@
-"""What takes disk space, for Settings > Storage: free space per disk, the big folders, app images
+"""What takes disk space, for the Storage page: free space per disk, the big folders, app images
 nothing uses any more, and model files worth a look (not in any model list, unfinished
 downloads, the same file twice), plus what deletes made before the trash existed left behind.
 
@@ -57,10 +57,6 @@ class Scan:
     files: list[ModelFile] = field(default_factory=list)
     leftover_folders: list[Folder] = field(default_factory=list)    # appdata/<x> no instance uses
     hidden: list[str] = field(default_factory=list)                  # folders GPU Shepherd can't see
-
-    def by_why(self, why: str) -> list[ModelFile]:
-        return [f for f in self.files if f.why == why]
-
 
 def _unescape(field: str) -> str:
     """mountinfo writes spaces, tabs, newlines and backslashes in paths as \\ooo octal."""

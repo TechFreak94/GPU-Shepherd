@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, mcp, model_library, moves, tailscale, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu as gpu_mod, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, mcp, model_library, moves, tailscale, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      gpu_label, gpu_vendor,
@@ -827,22 +827,24 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ model catalogue
     def models_ctx(iid: str) -> dict:
         inst, cat = svc.server(iid)
-        st = backend.states().get(iid)
+        states = backend.states()           # read once: the page polls every few seconds while a model loads
+        st = states.get(iid)
         running = bool(st and st.running)
         gpu_count = len(st.gpus) if running else 0
-        loaded, err = svc.loaded(iid, cat)
+        loaded, err = svc.loaded(iid, cat, states)
         files, notes = llamaswap.local_model_files(inst)
-        preview_gpus = gpu_count or max(len([g for g in engine.snapshot().gpus if g.vendor == inst.gpu.vendor]), 1)
+        machine_gpus = [] if running else gpu_mod.query()[0]
+        preview_gpus = gpu_count or max(len([g for g in machine_gpus if g.vendor == inst.gpu.vendor]), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
-                "failures": svc.start_failures(iid),
+                "failures": svc.start_failures(iid, states),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
-                                                             [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
+                                                             [g.index for g in machine_gpus])),
+                "placement": svc.placement(iid, cat, states), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
                 "pending": bool(running and not engine.config_matches(inst, st.config_hash)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst), **hf_ctx()}
 

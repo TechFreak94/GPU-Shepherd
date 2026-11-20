@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, host as host_mod, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
+from . import (app_updates, auth, host as host_mod, budget, downloads, drives, gpu as gpu_mod, image_updates,
                instance_templates as tpl, logins, model_library, moves, pictures as pics, storage, tuning, updates)
 from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
@@ -237,7 +237,7 @@ class Shepherd:
                     starting.append(inst.name)
                 if cat and gpus:
                     out += budget.too_big(inst, cat, len(gpus), vram)
-            total, available = host.mem_available()
+            total, available = host_mod.mem_available()
             if need and total:
                 leaving = [self.engine.container_name(i) for i in p.to_stop + p.to_restart
                            if snap.states.get(i) and snap.states[i].running]
@@ -1026,7 +1026,7 @@ class Shepherd:
             if info:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        gpus, ram = gpu_mod.query()[0], host.ram_gb()
+        gpus, ram = gpu_mod.query()[0], host_mod.ram_gb()
         nvidia = [g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"]
         m = tpl.Machine(gpu_mem_gb=nvidia, instances=instances, servers=servers, model_sizes={}, ram_gb=ram,
                         amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"],
@@ -1588,9 +1588,10 @@ class Shepherd:
             raise ConfigError(f"{inst.name} is not a model server")
         return inst, self.store.catalog(iid)
 
-    def loaded(self, iid: str, cat: Catalog) -> tuple[dict[str, str], str]:
-        """The models a running model server has loaded (id -> state), or why that's unknown."""
-        st = self.backend.states().get(iid)
+    def loaded(self, iid: str, cat: Catalog, states: dict | None = None) -> tuple[dict[str, str], str]:
+        """The models a running model server has loaded (id -> state), or why that's unknown.
+        `states` is backend.states() when the caller has just read it (one Docker call per page)."""
+        st = (self.backend.states() if states is None else states).get(iid)
         if not (st and st.running):
             return {}, ""
         try:
@@ -1690,10 +1691,10 @@ class Shepherd:
         return (f"Undone: {s.title}. It stays listed, so you can apply it again." if action == "undo"
                 else f"Applied: {s.title}.") + later
 
-    def placement(self, iid: str, cat: Catalog) -> dict[str, list[int]]:
+    def placement(self, iid: str, cat: Catalog, states: dict | None = None) -> dict[str, list[int]]:
         """For a running model server: model id -> the GPUs (machine numbering) it runs on, for the
         models that use fewer than all of the server's GPUs."""
-        st = self.backend.states().get(iid)
+        st = (self.backend.states() if states is None else states).get(iid)
         if not (st and st.running and st.gpus):
             return {}
         try:
@@ -1705,7 +1706,7 @@ class Shepherd:
 
     @checked
     def save_model(self, iid: str, model: CatalogModel, original: str = "", check: bool = True) -> str:
-        """Add a model, or replace `original` (renaming it when the ID changed; auto names follow).
+        """Add a model, or replace `original` (renaming it when the ID changed; auto tags follow).
         A model set up by hand is checked against this machine first (see check_model)."""
         inst, cat = self.server(iid)
         model = CatalogModel.model_validate(model.model_dump())
@@ -1868,7 +1869,7 @@ class Shepherd:
 
     def _extra(self) -> tuple[model_library.Suggestion, ...]:
         """Every suggestion besides the built-in ones: added from a link, and from Hugging Face."""
-        return self._linked() + self.hf_picks([g.mem_total / 1024 for g in gpu_mod.query()[0]], host.ram_gb())
+        return self._linked() + self.hf_picks([g.mem_total / 1024 for g in gpu_mod.query()[0]], host_mod.ram_gb())
 
     def hf_checked(self) -> float:
         return self.hf.checked
@@ -2018,11 +2019,11 @@ class Shepherd:
         note = " Restart the server to use it." if st and st.running else ""
         return f"Added {model.id}" + (f"; downloading it ({s.download_gb:.1f} GB)." if fetching else ".") + note
 
-    def start_failures(self, iid: str) -> dict[str, str]:
+    def start_failures(self, iid: str, states: dict | None = None) -> dict[str, str]:
         """Model id -> why it last failed to start on this running server (from its log), for
         loads asked for from the Models page and from chat apps alike."""
         inst, cat = self.server(iid)
-        st = self.backend.states().get(iid)
+        st = (self.backend.states() if states is None else states).get(iid)
         if not (st and st.running):
             return {}
         text = self.backend.logs(self.engine.container_name(iid), tail=3000)
@@ -2109,11 +2110,11 @@ class Shepherd:
 
     @checked
     def set_auto_aliases(self, iid: str, autos: list[AutoAlias]) -> str:
-        """Replace all of a model server's auto names."""
+        """Replace all of a model server's auto tags."""
         _, cat = self.server(iid)
         cat = Catalog.model_validate({**cat.model_dump(), "auto_aliases": [a.model_dump() for a in autos]})
         self.store.save_catalog(cat)
-        return "Auto names saved."
+        return "Auto tags saved."
 
     # ------------------------------------------------------------------ settings
     def set_containers(self, bind_address: str | None = None, network: str | None = None) -> str:

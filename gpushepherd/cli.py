@@ -437,7 +437,7 @@ def model_table(m: dict) -> None:
           ["MODEL", "FILE", "CONTEXT", "ALIASES", "LOADED"])
     for a in m["auto_aliases"]:
         rules = ", ".join(f"{r['min_gpus']}+ GPUs: {r['model']}" for r in a["rules"])
-        print(f"Auto name {a['alias']}: {a['default_model']}" + (f"; {rules}" if rules else ""))
+        print(f"Auto tag {a['alias']}: {a['default_model']}" + (f"; {rules}" if rules else ""))
     if m["error"]:
         print(m["error"])
 
@@ -693,6 +693,27 @@ def cmd_password(args, c: Client) -> int:
     return 0
 
 
+def cmd_priority(args, c: Client) -> int:
+    a = args.action or "list"
+    if a == "list":
+        out(args, c.get("/api/v1/priority"), lambda r: table(
+            [[row["rank"], row["id"], row["name"], "its own GPU choice" if row["mode"] == "fixed" else "any free GPUs",
+              ("running on GPU " + gpus_text(row["gpus"])) if row["running"] and row["gpus"]
+              else "running" if row["running"] else "stopped", row["priority"]] for row in r["order"]],
+            ["#", "ID", "NAME", "USES", "NOW", "NUMBER"]))
+        return 0
+    if not args.ids:
+        raise Failed(f"which instance? e.g. gpu-shepherd priority {a} comfyui (see gpu-shepherd priority)")
+    if a == "set":
+        out(args, c.call("PUT", "/api/v1/priority", {"order": args.ids}))
+        return 0
+    if len(args.ids) > 1:
+        raise Failed(f"move one instance at a time, or put them all in order with: gpu-shepherd priority set "
+                     f"{' '.join(args.ids)}")
+    out(args, c.post(f"/api/v1/priority/{quote(args.ids[0], safe='')}/{a}"))
+    return 0
+
+
 def cmd_power(args, c: Client) -> int:
     a = args.action or "status"
     if a == "status":
@@ -829,7 +850,7 @@ COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": c
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
             "settings": cmd_settings, "storage": cmd_storage, "trash": cmd_trash, "pictures": cmd_pictures,
-            "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
+            "priority": cmd_priority, "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
 
 
 def add_commands(sub) -> None:
@@ -882,9 +903,9 @@ def add_commands(sub) -> None:
     p.add_argument("on", nargs="?")
     p.add_argument("--all", action="store_true", help="update every app with a new version in one go")
 
-    p = sub.add_parser("models", help="a model server's models, auto names and settings")
+    p = sub.add_parser("models", help="a model server's models, auto tags and settings")
     msub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
-    for name, what in (("list", "models, aliases, auto names and what is loaded"),
+    for name, what in (("list", "models, aliases, auto tags and what is loaded"),
                        ("files", "the .gguf files the server can see")):
         msub.add_parser(name, help=what).add_argument("server")
     for name, what in (("show", "one model's settings"), ("delete", "remove a model (--files: and its files on disk)"),
@@ -928,12 +949,12 @@ def add_commands(sub) -> None:
     q.add_argument("server")
     q.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     q.add_argument("--new-api-key", action="store_true", help="give the server a new API key")
-    q = msub.add_parser("auto-set", help="add or replace an auto name: ALIAS DEFAULT [N=MODEL...]")
+    q = msub.add_parser("auto-set", help="add or replace an auto tag: ALIAS DEFAULT [N=MODEL...]")
     q.add_argument("server")
     q.add_argument("alias")
     q.add_argument("default", nargs="?")
     q.add_argument("rules", nargs="*", metavar="N=MODEL")
-    q = msub.add_parser("auto-delete", help="remove an auto name")
+    q = msub.add_parser("auto-delete", help="remove an auto tag")
     q.add_argument("server")
     q.add_argument("alias")
 
@@ -963,6 +984,10 @@ def add_commands(sub) -> None:
     p.add_argument("--folder", choices=("output", "input"), default="output", help="output = made, input = uploaded")
     p.add_argument("--older-than", type=int, help="days (0 = every picture)")
     p.add_argument("-y", "--yes", action="store_true", help="move them without asking")
+    p = sub.add_parser("priority", help="who keeps the GPUs when there are not enough: list, top|up|down|bottom ID, "
+                                        "set ID... (that order first)")
+    p.add_argument("action", nargs="?", choices=("list", "top", "up", "down", "bottom", "set"))
+    p.add_argument("ids", nargs="*", metavar="ID")
     sub.add_parser("password", help="change the admin password (asks for it)")
     p = sub.add_parser("update", help="status, check, install, log, branch [NAME], set-token USER, clear-token")
     p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "branch", "set-token", "clear-token"))

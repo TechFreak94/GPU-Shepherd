@@ -8,6 +8,13 @@ Layout of the data directory (SHEPHERD_DATA_DIR):
     linked-models.yaml         models added from a link on a Models page (listed with the suggested ones)
     hf-models.json             models trending on Hugging Face, refreshed daily (suggested when they fit)
     generated/<id>/...         files the app renders for containers (do not edit)
+    appdata/<app>/...          each app's own data, mounted into its container
+    api-token                  the JSON API's token (auth.py); INITIAL_PASSWORD.txt until it is changed
+    state/*.yaml               what the app learned: measured memory and speed, tuning decisions, image
+                               checks, drives it mounted, folder moves (budget, tuning, image_updates,
+                               drives, moves)
+    trash/                     deleted instances and app data, until restored or emptied (trash.py)
+    update/, gpu-unlock/, tailscale/   files shared with update.sh and gpu-unlock.sh on the host
 
 Everything the UI saves lands in these files, so they can be backed up, diffed and kept in
 git. They can also be edited by hand; the app re-reads them on every request.
