@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, mcp, model_library, moves, tailscale, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu as gpu_mod, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, mcp, model_library, moves, tailscale, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      gpu_label, gpu_vendor,
@@ -827,22 +827,24 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ model catalogue
     def models_ctx(iid: str) -> dict:
         inst, cat = svc.server(iid)
-        st = backend.states().get(iid)
+        states = backend.states()           # read once: the page polls every few seconds while a model loads
+        st = states.get(iid)
         running = bool(st and st.running)
         gpu_count = len(st.gpus) if running else 0
-        loaded, err = svc.loaded(iid, cat)
+        loaded, err = svc.loaded(iid, cat, states)
         files, notes = llamaswap.local_model_files(inst)
-        preview_gpus = gpu_count or max(len([g for g in engine.snapshot().gpus if g.vendor == inst.gpu.vendor]), 1)
+        machine_gpus = [] if running else gpu_mod.query()[0]
+        preview_gpus = gpu_count or max(len([g for g in machine_gpus if g.vendor == inst.gpu.vendor]), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
-                "failures": svc.start_failures(iid),
+                "failures": svc.start_failures(iid, states),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
-                                                             [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
+                                                             [g.index for g in machine_gpus])),
+                "placement": svc.placement(iid, cat, states), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
                 "pending": bool(running and not engine.config_matches(inst, st.config_hash)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst), **hf_ctx()}
 
@@ -1261,150 +1263,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         auth.new_api_token(store)
         log.info("API token replaced from the dashboard")
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", "New API token made. The old one no longer works.")})
-
-    # ------------------------------------------------------------------ knowledge (documents and skills)
-    @app.get("/knowledge", response_class=HTMLResponse)
-    def knowledge_page(request: Request, show: str = ""):
-        b = svc.knowledge()
-        if show in ("ready", "failed", "scanned", "skipped", "duplicate"):
-            b["shown"] = [x for x in b["documents"] if x["status"] == show]
-        else:
-            show, b["shown"] = "", b["documents"]
-        return page(request, "knowledge.html", b=b, show=show)
-
-    @app.get("/books")
-    def books_moved():                                  # the page's old name
-        return RedirectResponse("/knowledge", status_code=301)
-
-    @app.get("/knowledge/task", response_class=HTMLResponse)
-    def knowledge_task(request: Request, was: int = 0):
-        t = svc.knowledge_task.as_dict() if svc.knowledge_task else None
-        if was and not (t and t["running"]):              # it just finished: show the page with the result
-            return Response(status_code=204, headers={"HX-Refresh": "true"})
-        return templates.TemplateResponse(request, "partials/knowledge_task.html", {"t": t})
-
-    def knowledge_done(action):
-        try:
-            msg = action()
-        except Problem as err:
-            return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": with_msg("/knowledge", msg)})
-
-    @app.post("/knowledge/folder")
-    @threaded
-    def knowledge_folder(request: Request):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.set_documents_folder(str(raw.get("path", ""))))
-
-    @app.post("/knowledge/upload")
-    @threaded
-    def knowledge_upload(request: Request):
-        raw = request.state.form
-        files = [(f.filename, f.file) for f in raw.getlist("file") if getattr(f, "filename", "")]
-        return knowledge_done(lambda: svc.add_documents(files))
-
-    @app.get("/knowledge/files")
-    def knowledge_files():
-        return svc.document_files()
-
-    @app.put("/knowledge/files")
-    async def knowledge_put_file(request: Request, path: str = "", offset: int | None = None, total: int | None = None):
-        """One document or zip of them as the raw body, or a piece of one (the Knowledge page's upload
-        sends them one by one, in pieces read into memory)."""
-        size = request.headers.get("content-length")
-        try:
-            r = await svc.receive_document(path, request.stream(), int(size) if size and size.isdigit() else None,
-                                           offset, total)
-        except Problem as err:
-            return JSONResponse({"error": err.msg} | err.data, status_code=err.status)
-        return r
-
-    @app.post("/knowledge/scan")
-    def knowledge_scan():
-        return knowledge_done(svc.scan_documents)
-
-    @app.post("/knowledge/stop")
-    def knowledge_stop():
-        return knowledge_done(svc.stop_knowledge)
-
-    @app.post("/knowledge/send")
-    @threaded
-    def knowledge_send(request: Request):
-        raw = request.state.form
-        emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
-        return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
-                                                 bool(raw.get("split")), emb, True if raw.get("sync") else None))
-
-    @app.post("/knowledge/sync/stop")
-    def knowledge_sync_stop():
-        return knowledge_done(svc.stop_sync)
-
-    @app.get("/knowledge/openwebui/{iid}", response_class=HTMLResponse)
-    def knowledge_openwebui(request: Request, iid: str):
-        """What is in an Open WebUI's knowledge (loaded into the Knowledge page after it shows: signing in takes a moment)."""
-        try:
-            k, err = svc.openwebui_knowledge(iid), ""
-        except Problem as e:
-            k, err = None, e.msg
-        inst = svc.store.instances()[0].get(iid)
-        base = base_url(request, inst.open_url_port, "/").rstrip("/") if inst and inst.open_url_port else ""
-        return templates.TemplateResponse(request, "partials/knowledge_openwebui.html", {"k": k, "err": err, "base": base})
-
-    @app.post("/knowledge/ocr")
-    def knowledge_ocr():
-        return knowledge_done(svc.ocr_documents)
-
-    @app.post("/knowledge/delete-all")
-    @threaded
-    def knowledge_delete_all(request: Request):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.delete_documents(str(raw.get("status", ""))))
-
-    @app.post("/knowledge/{key}/delete")
-    def knowledge_delete(key: str):
-        return knowledge_done(lambda: svc.delete_document(key))
-
-    @app.post("/knowledge/clear")
-    @threaded
-    def knowledge_clear(request: Request):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.clear_knowledge(tuple(raw.getlist("what"))))
-
-    @app.post("/knowledge/{key}/skill")
-    @threaded
-    def knowledge_skill(request: Request, key: str):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.make_skill(key, str(raw.get("server", ""))))
-
-    def skill_dialog(request: Request, slug: str, **ctx):
-        try:
-            text = ctx.pop("text", None) or svc.skill_text(slug)
-        except Problem as err:
-            return problem(err)
-        return templates.TemplateResponse(request, "partials/skill_edit.html", {"slug": slug, "text": text} | ctx)
-
-    @app.get("/knowledge/skills/{slug}", response_class=HTMLResponse)
-    def knowledge_skill_show(request: Request, slug: str):
-        return skill_dialog(request, slug)
-
-    @app.post("/knowledge/skills/{slug}", response_class=HTMLResponse)
-    @threaded
-    def knowledge_skill_save(request: Request, slug: str):
-        text = str(request.state.form.get("text", ""))
-        try:
-            return skill_dialog(request, slug, saved=svc.save_skill(slug, text))
-        except Problem as err:
-            return skill_dialog(request, slug, text=text, error=err.msg)
-
-    @app.post("/knowledge/skills/{slug}/install")
-    @threaded
-    def knowledge_skill_install(request: Request, slug: str):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.install_skill(slug, str(raw.get("instance", ""))))
-
-    @app.post("/knowledge/skills/{slug}/delete")
-    def knowledge_skill_delete(slug: str):
-        return knowledge_done(lambda: svc.delete_skill(slug))
 
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)

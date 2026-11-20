@@ -156,7 +156,7 @@ With the **starter** preset, the dashboard shows three cards: the Llama Swap, Co
 1. If the models are still downloading, wait for them. Progress shows in the dashboard.
 2. Press **Start** on each card. The first start of an app downloads its Docker image, so it takes
    a while; later starts are quick.
-3. Turn on **Autostart** for the apps you want running after a reboot.
+3. To have an app start by itself after a reboot, tick *Start automatically* on its **Edit** page.
 4. Press **Open** on a card to open the app. Starting something that needs a GPU another app is
    using shows you a plan first; confirm it and GPU Shepherd moves things around.
 

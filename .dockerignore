@@ -1,0 +1,9 @@
+# Left out of the build context: nothing in the image needs them, so a build sends less to Docker.
+# .git stays in: the buildinfo stage reads it to record the commit (gpushepherd/buildinfo.py).
+**/__pycache__
+**/*.pyc
+*.egg-info
+.pytest_cache
+.venv
+docs/screenshots
+tests

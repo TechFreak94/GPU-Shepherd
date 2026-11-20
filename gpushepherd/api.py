@@ -8,7 +8,6 @@ any route here runs. Errors are {"error": "..."} with a 4xx status. Reference: d
 from __future__ import annotations
 
 import functools
-import inspect
 import json
 import time
 from dataclasses import asdict
@@ -43,25 +42,13 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
             raise Problem(f"the JSON body must be {'an object' if kind is dict else 'a list'}")
         return data
 
-    def _piece(offset, total) -> tuple[int | None, int | None]:
-        if offset in (None, ""):
-            return None, None
-        if not (str(offset).isdigit() and str(total or "").isdigit()):
-            raise Problem("offset and total are byte counts")
-        return int(offset), int(total)
-
     def handle(fn):
         """Run a route, answering a Problem or a validation error as {"error": ...}. Routes are plain
         functions run in a worker thread, with the body read first (request.state.raw), so one that
-        waits for Docker, a model server or a job never holds up the dashboard. The two that take a
-        file as it arrives are `async` and read the request themselves."""
-        streams = inspect.iscoroutinefunction(fn)
-
+        waits for Docker, a model server or a job never holds up the dashboard."""
         @functools.wraps(fn)
         async def wrapper(request: Request, **kw):
             try:
-                if streams:
-                    return await fn(request, **kw)
                 request.state.raw = await request.body()
                 return await run_in_threadpool(fn, request, **kw)
             except (Problem, ConfigError, ValueError) as err:
@@ -139,6 +126,11 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             raise Problem('send {"order": ["first-id", "second-id", ...]}')
         return {"message": svc.set_priority_order(ids), "order": svc.priority_list()}
+
+    @r.post("/api/v1/priority/{iid}/{direction}")
+    @handle
+    def move_priority(request: Request, iid: str, direction: str):
+        return {"message": svc.move_priority(iid, direction), "order": svc.priority_list()}
 
     @r.get("/api/v1/instances/{iid}")
     @handle
@@ -691,149 +683,4 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
                  "running": x.version == __version__,
                  "new": changelog.key(x.version) > changelog.key(__version__)} for x in shown]
 
-    # ------------------------------------------------------------------ knowledge (documents) and skills
-    # (/api/v1/books/... is the same, for older clients)
-    def embeddings_choice(v) -> bool | None:
-        if v in (None, "", "ask"):
-            return None
-        if v in ("server", True):
-            return True
-        if v in ("keep", False):
-            return False
-        raise Problem("embeddings: server (use the model server's embeddings model), keep, or leave it out")
-
-    @r.get("/api/v1/knowledge")
-    @handle
-    def get_knowledge(request: Request):
-        """The documents folder, its documents, the work running now, the apps documents can go to,
-        and where it is all kept."""
-        return svc.knowledge()
-
-    @r.put("/api/v1/knowledge/folder")
-    @handle
-    def knowledge_folder(request: Request):
-        return {"message": svc.set_documents_folder(str(body(request).get("path", "")))}
-
-    @r.post("/api/v1/knowledge/upload")
-    @handle
-    async def knowledge_upload(request: Request):
-        """Add documents: a multipart form with one or more `file` fields. A scan starts afterwards."""
-        form = await request.form()
-        files = [(f.filename, f.file) for f in form.getlist("file") if hasattr(f, "filename")]
-        return JSONResponse({"message": await run_in_threadpool(svc.add_documents, files)}, status_code=202)
-
-    @r.get("/api/v1/knowledge/files")
-    @handle
-    def knowledge_files(request: Request):
-        """The document files already in the documents folder: {"folder", "files": {path: size}}."""
-        return svc.document_files()
-
-    @r.put("/api/v1/knowledge/files")
-    @handle
-    async def knowledge_put_file(request: Request):
-        """Add one document, or a zip of them (unpacked into a folder named after it), sent as the raw body:
-        PUT /api/v1/knowledge/files?path=Folder/Book.epub. Folders in the path are kept. Doesn't scan:
-        POST /api/v1/knowledge/scan when all are in. Returns {"added": [paths], "left_out": n}.
-        A big file can go in pieces: &offset=BYTE&total=SIZE on each (see Service.receive_document)."""
-        size, q = request.headers.get("content-length"), request.query_params
-        return await svc.receive_document(q.get("path", ""), request.stream(), int(size) if size and size.isdigit() else None,
-                                          *_piece(q.get("offset"), q.get("total")))
-
-    @r.post("/api/v1/knowledge/scan")
-    @handle
-    def knowledge_scan(request: Request):
-        return JSONResponse({"message": svc.scan_documents()}, status_code=202)
-
-    @r.post("/api/v1/knowledge/stop")
-    @handle
-    def knowledge_stop(request: Request):
-        return {"message": svc.stop_knowledge()}
-
-    @r.post("/api/v1/knowledge/send")
-    @handle
-    def knowledge_send(request: Request):
-        """Put the ready documents into an Open WebUI knowledge base: {"instance", "name", "split",
-        "embeddings": "server" | "keep", "sync": true | false}. sync true keeps it in sync from now on:
-        every scan sends new documents and takes out the ones gone from the documents folder."""
-        d = body(request)
-        sync = d.get("sync")
-        return JSONResponse({"message": svc.send_documents(str(d.get("instance", "")), str(d.get("name", "") or "Documents"),
-                                                        bool(d.get("split")), embeddings_choice(d.get("embeddings")),
-                                                        None if sync is None else bool(sync))},
-                            status_code=202)
-
-    @r.delete("/api/v1/knowledge/sync")
-    @handle
-    def knowledge_sync_stop(request: Request):
-        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
-        return {"message": svc.stop_sync()}
-
-    @r.get("/api/v1/knowledge/openwebui/{iid}")
-    @handle
-    def knowledge_openwebui(request: Request, iid: str):
-        """What is in an Open WebUI's knowledge: {"bases": [{"id", "name", "files", "ours", "sent", "missing",
-        "sync", "path"}], "sync", "stale"}. "path" is the knowledge base's page in Open WebUI."""
-        return svc.openwebui_knowledge(iid)
-
-    @r.post("/api/v1/knowledge/{key}/skill")
-    @handle
-    def knowledge_skill(request: Request, key: str):
-        """Draft an agent skill from a document with a model server's chat model: {"server"} (optional)."""
-        d = body(request) if request.state.raw else {}
-        return JSONResponse({"message": svc.make_skill(key, str(d.get("server", "")))}, status_code=202)
-
-    @r.post("/api/v1/knowledge/ocr")
-    @handle
-    def knowledge_ocr(request: Request):
-        """Read the scanned PDFs (status "scanned") with OCR, in the background."""
-        return JSONResponse({"message": svc.ocr_documents()}, status_code=202)
-
-    @r.post("/api/v1/knowledge/delete")
-    @handle
-    def knowledge_delete_all(request: Request):
-        """Delete every document with a status, in the background: {"status": "duplicate" | "failed"}."""
-        return JSONResponse({"message": svc.delete_documents(str(body(request).get("status", "")))},
-                            status_code=202)
-
-    @r.delete("/api/v1/knowledge/{key}")
-    @handle
-    def knowledge_delete(request: Request, key: str):
-        """Delete one document: its files, its text, and the copies sent to a running Open WebUI."""
-        return {"message": svc.delete_document(key)}
-
-    @r.post("/api/v1/knowledge/clear")
-    @handle
-    def knowledge_clear(request: Request):
-        """Start over: {"what": ["documents", "converted", "skills", "apps"]} (all of them if left out).
-        See Service.clear_knowledge for what each one removes."""
-        d = body(request) if request.state.raw else {}
-        what = d.get("what") or list(svc.CLEAR)
-        if isinstance(what, str):
-            what = [w.strip() for w in what.split(",")]
-        return JSONResponse({"message": svc.clear_knowledge(tuple(what))}, status_code=202)
-
-    @r.get("/api/v1/skills/{slug}")
-    @handle
-    def get_skill(request: Request, slug: str):
-        return {"slug": slug, "text": svc.skill_text(slug)}
-
-    @r.put("/api/v1/skills/{slug}")
-    @handle
-    def put_skill(request: Request, slug: str):
-        return {"message": svc.save_skill(slug, str(body(request).get("text", "")))}
-
-    @r.post("/api/v1/skills/{slug}/install")
-    @handle
-    def install_skill(request: Request, slug: str):
-        return {"message": svc.install_skill(slug, str(body(request).get("instance", "")))}
-
-    @r.delete("/api/v1/skills/{slug}")
-    @handle
-    def delete_skill(request: Request, slug: str):
-        return {"message": svc.delete_skill(slug)}
-
-    for route in list(r.routes):                     # the old names still work
-        if getattr(route, "path", "").startswith("/api/v1/knowledge"):
-            r.add_api_route("/api/v1/books" + route.path[len("/api/v1/knowledge"):], route.endpoint,
-                            methods=list(route.methods), include_in_schema=False)
     return r

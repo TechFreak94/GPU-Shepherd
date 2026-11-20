@@ -14,7 +14,7 @@ It has two parts:
   and the safety rules. Other agents can be given the same file as instructions.
 
 You need the dashboard's address (as you open it in a browser) and its API token, from
-**Settings › API and command line**. Whoever has the token can do what the admin can, so keep it
+**Settings › Automation**. Whoever has the token can do what the admin can, so keep it
 like a password. Across the internet, use an HTTPS address (for example Tailscale's, under
 **Settings › Remote access**) so the token isn't sent in the clear.
 
@@ -63,7 +63,7 @@ client that only runs local (stdio) servers can reach it through a bridge such a
 |---|---|
 | GPUs, instances, logs, jobs, App Center, models, disk space, updates (read) | Passwords and the API token |
 | Start, stop, restart (plans that affect other apps need your OK) | Reboot and shutdown |
-| Call off a change, or stop without waiting for running work | Remote access, tensor unlock |
+| Call off a change, or stop without waiting for running work; reorder the GPU priority | Remote access, tensor unlock |
 | Install an app, add or download a model, load or unload one | Deleting instances, models, files; the trash |
 | Apply app updates and image updates; update GPU Shepherd | Moving storage, mounting drives, settings |
 

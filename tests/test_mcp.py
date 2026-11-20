@@ -106,7 +106,7 @@ def test_every_tool_reaches_a_real_endpoint(stack):
         assert tool.read_only == (method == "GET"), tool.name
         assert method != "DELETE", tool.name
         for kept_out in ("password", "token", "power", "tailscale", "gpu-unlock", "trash", "storage/", "moves",
-                         "credentials", "branch", "settings", "knowledge"):
+                         "credentials", "branch", "settings"):
             assert kept_out not in path, (tool.name, path)
 
 

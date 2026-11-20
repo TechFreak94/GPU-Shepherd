@@ -945,7 +945,7 @@ def agent_context(ctx: int) -> int:
 
 
 def opencode_models(info: dict) -> dict[str, dict]:
-    """OpenCode's entries for a model server's chat models and auto names, with their context limits
+    """OpenCode's entries for a model server's chat models and auto tags, with their context limits
     (without one OpenCode never compacts a session and runs into the server's context size)."""
     models = dict(info.get("models") or {})
     models.setdefault(info.get("default_model") or "chat", info.get("ctx") or 0)
@@ -1058,7 +1058,7 @@ def _langflow_server(server: str, m: Machine) -> dict[str, str]:
 # How Open WebUI splits and searches documents when it uses a model server's embeddings model:
 # bigger pieces than its default suit books, and more of them go to the chat model with a question.
 # Open WebUI only reads these at its first start (then they are in its Admin Panel, Documents), so
-# they aren't offered as app updates; the Books page sets the embeddings ones through its API.
+# they aren't offered as app updates.
 OPENWEBUI_DOCS = {"CHUNK_SIZE": "1500", "CHUNK_OVERLAP": "200", "RAG_TOP_K": "8", "RAG_EMBEDDING_BATCH_SIZE": "16",
                   "RAG_EMBEDDING_QUERY_PREFIX": ""}
 # What a question starts with for embeddings models that are trained with an instruction

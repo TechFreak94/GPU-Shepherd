@@ -6,8 +6,8 @@
 Deleting an instance moves its YAML, its model list, its generated files and its app data folder
 (appdata/<folder>, unless another instance still uses it) into one entry. Everything lives in the
 data folder, so moving is a rename: instant, and the space is only freed when the entry is
-emptied. Model files are never put here by deleting an instance; ones removed from Settings >
-Storage stay on their own disk, in <models folder>/.shepherd-trash/<entry>/, moved by FileOps
+emptied. Model files are never put here by deleting an instance; ones removed from the Storage
+page stay on their own disk, in <models folder>/.shepherd-trash/<entry>/, moved by FileOps
 (a helper container where GPU Shepherd can't write the folder), and the entry here records them.
 Entries older than the Trash setting's number of days are emptied by themselves (0 keeps them
 until emptied by hand).

@@ -83,4 +83,4 @@ done in the dashboard's Storage page.
   409 not possible right now (another change is running, a model is still answering, or a plan
   needs confirming).
 - If every call answers 401, the token is wrong or was replaced: ask the user for the current one
-  from Settings > API and command line.
+  from Settings > Automation.

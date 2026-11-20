@@ -1,5 +1,5 @@
 """The machine's disks: which drives are there, mounting the ones that have no mount point yet,
-and listing folders for the "where to?" picker (Settings > Storage).
+and listing folders for the "where to?" picker (the Storage page).
 
 GPU Shepherd runs in a container and only sees its own data folder, so the host is looked at (and
 a newly attached drive mounted) from a short-lived helper container (HelperHost): the host's own
@@ -202,10 +202,6 @@ def clean_path(path: str) -> str:
     """`path` as a plain absolute path, or "/" when it is empty or odd."""
     p = posixpath.normpath("/" + (path or "").strip().lstrip("/"))
     return "/" if p.startswith("//") else p
-
-
-def parent_of(path: str) -> str:
-    return posixpath.dirname(path.rstrip("/")) or "/"
 
 
 # --------------------------------------------------------------------------- state kept

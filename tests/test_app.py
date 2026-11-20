@@ -182,7 +182,7 @@ def test_model_catalogue_editing(stack):
                                                                      "file": "gemma.gguf", "ctx_size": "100"})
     assert "error-box" in bad.text
 
-    # auto names: "auto" -> gemma with 3+ GPUs
+    # auto tags: "auto" -> gemma with 3+ GPUs
     r = client.post("/instances/llm/catalog/auto", headers=HX, data={
         "alias": "auto", "default_model": "qwen3.6-35b-a3b", "rules": "2=qwen3-coder-next, 3=gemma4-26b"})
     assert r.status_code == 204
@@ -192,11 +192,11 @@ def test_model_catalogue_editing(stack):
                                                                     "rules": "two gpus please"})
     assert "rule 'two gpus please'" in r.headers["HX-Trigger"]
 
-    # a model used by an auto name cannot be removed
+    # a model used by an auto tag cannot be removed
     r = client.post("/instances/llm/models/gemma4-26b/delete", headers=HX)
     assert "Cannot delete" in r.headers["HX-Trigger"]
 
-    # renaming follows into auto names
+    # renaming follows into auto tags
     r = client.post("/instances/llm/models/save", headers=HX, data={
         "original_id": "gemma4-26b", "id": "gemma4", "name": "Gemma 4 26B", "file": "/models/gemma.gguf",
         "ctx_size": "65536", "parallel": "1", "kv_cache": "q8_0"})
@@ -741,7 +741,7 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     page = client.get("/apps").text
     assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
     assert "librechat-mongodb" not in page                     # companions are not in the App Center
-    assert page.count(">Experimental</span>") == 3 and "Experimental." in client.get("/apps/langflow").text  # Langflow, the Vulkan Llama Swap + the Knowledge nav tag
+    assert page.count(">Experimental</span>") == 2 and "Experimental." in client.get("/apps/langflow").text  # Langflow and the Vulkan Llama Swap
     assert "License: MIT" in client.get("/apps/langflow").text and "License: Apache-2.0" in page
     assert ">Credits</button>" in client.get("/ui/update").text
     cr = client.get("/ui/credits").text
