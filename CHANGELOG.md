@@ -4,6 +4,23 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.37 - 2026-11-21
+
+- `gpu-shepherd --reset-password` lets you choose the new password (run it with `docker exec -it`; `--password-stdin` for scripts). If the settings file goes missing, the dashboard now says a new admin password was made and how to fix it. (#90)
+- NVIDIA GPUs stay available to containers after a reboot and a systemd reload: a small boot service now makes the device links, and `update.sh --gpu-links` sets it up on its own. (#90)
+- Hermes Agent's web dashboard opens again: newer Hermes images need to start without Docker's init, and installed Hermes apps are recreated once to pick this up. (#91)
+- OpenCode and Hermes now know each model's context size, with room to compact, so long chats no longer fail. An app update fixes already-installed ones. (#92)
+- AI agents can manage GPU Shepherd: a built-in MCP server and a Claude Code plugin. (#92)
+- New Priority page: put the apps that use GPUs in order and move them up or down instead of editing numbers. (#92)
+- The dashboard now shows a small "Made with Claude and locally hosted AI" footer at the bottom of every page. (#93)
+- Bump pypdf from 7.0.1 to 7.1.0 (#94)
+- Bump fastapi from 0.162.4 to 0.163.1 (#95)
+- Removed GPU Shepherd's Knowledge page, command and API (Open WebUI's own knowledge bases are unaffected). (#96)
+- New `gpu-shepherd priority` command to see and change which apps keep their GPUs first, as on the Priority page. (#96)
+- The Models page asks Docker for less while a model loads. (#96)
+- Docs and screenshots brought up to date, including the Priority page, Pictures, the AI agent plugin and every suggested model. (#96)
+- Model servers' auto names are now called auto tags everywhere, as on the Models page. (#96)
+
 ## 0.13.36 - 2026-11-12
 
 - Bump python from 3.13-slim to 3.15-slim (#81)
