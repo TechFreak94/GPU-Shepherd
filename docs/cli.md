@@ -71,6 +71,7 @@ read from `compose.yaml`.
 | `--clear-token` | Forget that token. |
 | `--enable-dashboard-updates` | Install the systemd service behind the dashboard's Update button. |
 | `--disable-dashboard-updates` | Remove it. |
+| `--gpu-links` | Only make sure NVIDIA GPUs stay in containers through a `systemctl daemon-reload`: makes the `/dev/char` links now, and installs a boot service (`gpu-shepherd-nvidia-links`) and a udev rule that make them again. Every other `update.sh` run, the daily check too, does this as well. Nothing happens on WSL2 or without NVIDIA. |
 | `-q`, `--quiet` | Print less. |
 | `-h`, `--help` | List the options. |
 
@@ -146,7 +147,7 @@ through `docker exec`:
 ```bash
 sudo docker exec gpu-shepherd gpu-shepherd status
 sudo docker exec gpu-shepherd gpu-shepherd start comfyui
-sudo docker exec gpu-shepherd gpu-shepherd --reset-password
+sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password
 ```
 
 A shorter way to type it: `alias gs='sudo docker exec -it gpu-shepherd gpu-shepherd'` (`-it` lets
@@ -161,7 +162,8 @@ it ask questions and follow a change as it runs). Options go before the command,
 | `--demo` | Fake GPUs and containers, no Docker needed; data goes to a temporary folder. Log in as `admin` / `demo-password`. The log prints the API token for commands. |
 | `--demo-preset NAME` | The preset the demo starts with. Default `starter`. |
 | `--demo-gpus N` | How many 8 GB GPUs the demo fakes, to try a bigger machine. Default 2. |
-| `--reset-password` | Give the admin a new password, print it and exit. |
+| `--reset-password` | Set a new admin password and exit: asks for one (run with `docker exec -it`), or makes one up and prints it. |
+| `--password-stdin` | With `--reset-password`: read the new password from standard input, for scripts. |
 | `--url URL` | Commands: the GPU Shepherd to manage, e.g. `http://server:8090`. Default `http://127.0.0.1:<port>`, or `$SHEPHERD_URL`. |
 | `--token TOKEN` | Commands: its API token. Default `$SHEPHERD_TOKEN`, or the `api-token` file in the data folder. |
 | `--json` | Commands: print the API's JSON answer instead of text, for scripts. |
@@ -182,28 +184,28 @@ theme is the one exception: it is a choice saved in each browser.
 | `show ID` | The instance's settings as YAML, the same as `instances/<id>.yaml`. | Edit |
 | `set ID KEY=VALUE...` | Change settings, by the YAML keys in [Instance options](advanced.md#instances): `name=`, `image=`, `autostart=true`, `gpu.mode=elastic`, `gpu.gpus=0,1`, `gpu.priority=70`, `drain.timeout=300`, `open_port=`, ... `ports`, `volumes` and `env` take the editor's lines, separated by `;`: `ports=8188:8188;9000:9000/udp`, `volumes=/srv/x:/data:ro`, `env=A=1;B=2`. `command` takes a command line. An empty value clears an optional field. | Edit, Save |
 | `apply FILE` | Create or replace an instance from a YAML or JSON file, such as `show`'s output (`-` reads standard input). `--id` gives the ID if the file has none. | Edit, *Any Docker image* |
+| `priority` | The apps that use GPUs, in the order they keep them when there are not enough. `priority top\|up\|down\|bottom ID` moves one; `priority set ID...` puts those first, in that order. Nothing restarts. | Priority |
 | `delete ID` | Delete the instance: its settings, model list and app data folder go to the [trash](advanced.md#storage-and-trash) (model files stay). A running one is stopped first and waits for running work. Asks first; `-y` doesn't. | Delete |
 | `apps` | The App Center's apps and what is installed from each. | App Center |
 | `apps show KEY` | An app, whether it is Experimental, its license, what it also installs and what is left to do afterwards, the answers its install form starts with, and the choices for each. | Install |
 | `apps install KEY [KEY=VALUE...]` | Install an app. Only give what differs from `apps show`: `apps install comfyui gpu=pin:1 port=8189`, `apps install llm-server chat_file=qwen3.5-9b/Qwen3.5-9B-UD-Q4_K_XL.gguf` (a suggested model, downloaded for you), `apps install open-webui server=new chat_file=...` (installs a Llama Swap server with it), `apps install librechat` (and its database). | Install |
 | `apps manual KEY [KEY=VALUE...]` | Print the instance an install would make, as YAML, without saving it: edit it and `apply` it. | Manual |
-| `models list SERVER` | A model server's models, which are loaded, and its auto names. | Models |
+| `models list SERVER` | A model server's models, which are loaded, and its auto tags. | Models |
 | `models files SERVER` | The .gguf files the server can see. | Models › file list |
 | `models show SERVER MODEL` | One model's settings. | Models › Edit |
-| `models set SERVER MODEL KEY=VALUE...` | Add a model or change one, by the keys in [Models](advanced.md#models): `file=/models/x.gguf ctx_size=32768 kv_cache=q8_0 aliases=chat,coder sampling="--temp 0.6" thinking=off mtp=2 keep_loaded=true`. `id=new-id` renames it (auto names follow). GPU and RAM: `offload.2.cpu_moe=999`, `offload.1.gpu_layers=30`, `offload.2=` removes the row for 2 GPUs. | Models › Add / Edit |
+| `models set SERVER MODEL KEY=VALUE...` | Add a model or change one, by the keys in [Models](advanced.md#models): `file=/models/x.gguf ctx_size=32768 kv_cache=q8_0 aliases=chat,coder sampling="--temp 0.6" thinking=off mtp=2 keep_loaded=true`. `id=new-id` renames it (auto tags follow). GPU and RAM: `offload.2.cpu_moe=999`, `offload.1.gpu_layers=30`, `offload.2=` removes the row for 2 GPUs. | Models › Add / Edit |
 | `models suggested SERVER` | The [suggested models](advanced.md#suggested-models): how each fits this machine, whether it is downloaded (or how far along), and whether the server has it. | Models › Suggested models |
 | `models add-link SERVER LINK [--name NAME] [--mmproj LINK]` | Add a model by the link of its `.gguf` file (and its vision projector), downloading it like a suggested one. | Models › Add a model from a link |
 | `models tuning SERVER` | [Suggested adjustments](advanced.md#tuning) and what was decided about each. `models tuning-apply`, `tuning-dismiss` and `tuning-undo SERVER KEY` decide one. | Models › Suggested adjustments |
 | `models add-suggested SERVER KEY` | Add a suggested model with its makers' settings, downloading it if needed: `models add-suggested llm qwen3-coder-30b-a3b`. | Suggested models › Add |
-| `models download SERVER KEY`, `models stop-download SERVER KEY` | Download (or resume) a suggested model's files; stop a download (starting it again resumes). | Download / Stop |
+| `models download SERVER KEY`, `models stop-download SERVER KEY`, `models discard-download SERVER KEY` | Download (or resume) a suggested model's files; stop a download (starting it again resumes); stop it and delete what it fetched. | Download / Stop / Discard |
 | `models delete SERVER MODEL [--files] [-y]` | Remove a model; `--files` also deletes its files from disk (asks first, `-y` doesn't). | Models › Delete |
 | `models load SERVER MODEL`, `models unload SERVER [MODEL]` | Load a model now; unload one, or all of them. Unloading refuses while the server is answering. | Load / Unload |
-| `models auto-set SERVER ALIAS DEFAULT [N=MODEL...]` | Add or replace an auto name: `models auto-set llm coder small-coder 2=big-coder`. | Models › Auto names |
-| `models auto-delete SERVER ALIAS` | Remove an auto name. | Models › Auto names |
+| `models auto-set SERVER ALIAS DEFAULT [N=MODEL...]` | Add or replace an auto tag: `models auto-set llm coder small-coder 2=big-coder`. | Models › Auto tags |
+| `models auto-delete SERVER ALIAS` | Remove an auto tag. | Models › Auto tags |
 | `models settings SERVER [KEY=VALUE...]` | Show or change `threads`, `health_timeout`, `llama_server`, `fit_gpus` and `auto_tune`. `--new-api-key` gives the server a new API key. | Models › Server settings |
 | `app-updates` | Settings added to installed apps since you installed them. `app-updates apply INSTANCE KEY` (or `--all`) applies one, `app-updates skip INSTANCE KEY` stops it being offered. `app-updates send-images INSTANCE` sends a running Open WebUI the ComfyUI picture settings again (as its card's *Pictures* button). | App updates banner |
 | `app-versions` | New releases of the apps' images. `app-versions check` looks now, `app-versions update INSTANCE` installs one, `app-versions auto INSTANCE on\|off` sets automatic installs. | App cards › Update, Settings › App updates |
-| `knowledge` (or `books`) | Documents: `knowledge` lists where they are kept and the documents (with why some couldn't be read), `knowledge status` the work running, `knowledge folder PATH` picks the folder, `knowledge scan` reads new documents, `knowledge upload FOLDER` copies a folder of documents to the server (also from another PC with `--url` and `--token`; skips files already there), `knowledge send OPEN-WEBUI` puts them in a knowledge base (`--name`, `--split`, `--embeddings server\|keep`, `--sync` to keep it in sync after every scan), `knowledge sync-off` stops syncing, `knowledge in OPEN-WEBUI` lists that Open WebUI's knowledge bases, `knowledge stop` stops the work, `knowledge ocr` reads scanned PDFs with OCR, `knowledge delete KEY` deletes one document (`delete duplicates` or `delete unreadable` all of them), `knowledge clear [documents converted skills apps]` starts over (`-y` without asking). `knowledge skill KEY` drafts an agent skill from a document (`--server`), `skill-show SKILL`, `skill-install SKILL HERMES` and `skill-delete SKILL` follow it. | Knowledge |
 | `storage` | Free space per disk, folder sizes, app images and what looks unused. `storage remove-images` and `remove-orphans` clean up; `storage trash-files PATH...` and `trash-folder NAME` move unused model files or an app data folder to the trash. | Storage |
 | `storage drives`, `storage mount DEVICE`, `storage browse [PATH]` | The machine's drives, mount one that holds data, list the folders in a place. | Storage › Other disks |
 | `storage move PATH NEW-PLACE`, `storage moves`, `storage move-home PATH`, `storage move-back ID`, `storage delete-old ID` | [Move a folder to another disk](advanced.md#other-disks) (asks first; `-y` doesn't, `--no-wait` returns at once), list moves, move a moved folder back to where it first was (`move-home`, works after the old copy is gone), point the apps back at the old copy, delete the old copy. | Storage › Move to another disk |
@@ -214,12 +216,12 @@ theme is the one exception: it is a choice saved in each browser.
 | `jobs skip N`, `jobs cancel N` | While a change waits for running work: stop without waiting longer, or call it off. | Stop now / Cancel change |
 | `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address`, `network`, `trash_days` and `image_check_hours`. | Settings › Containers, Storage › Trash |
 | `password` | Change the admin password (asks for the current and the new one). | Settings › Password |
-| `token` | Print the API token. `--new` makes a new one; the old one stops working. Reads the data folder, so it works without the app running. | Settings › API and command line |
+| `token` | Print the API token. `--new` makes a new one; the old one stops working. Reads the data folder, so it works without the app running. | Settings › Automation |
 | `update` | Running version, and whether an update is waiting. | Version number |
 | `update check`, `update install` | Ask the update service to check, or to update (asks first; `-y` doesn't). Needs [dashboard updates](#updating-from-the-dashboard); otherwise run `update.sh` on the host. | Check for updates / Update |
 | `update log` | The log of the last check or update. | Update log |
 | `update branch [NAME]` | Without a name: the branch being followed and the others on the remote. With one: switch to it and rebuild (asks first; `-y` doesn't). Needs dashboard updates. | Settings › Updates › Follow branch |
-| `update set-token USER`, `update clear-token` | Save or forget a GitHub token for a private repository (asks for it, or reads it from standard input). | Settings › Private repository |
+| `update set-token USER`, `update clear-token` | Save or forget a GitHub token for a private repository (asks for it, or reads it from standard input). | Settings › Updates › Private repository |
 | `tailscale [ACTION]` | Without an action: this machine's Tailscale state and the addresses to open the dashboard at. `install`, `up` (prints the login link), `down`, `https-on`, `https-off`, `logout`, `refresh`. Needs dashboard updates. | Settings › Remote access |
 | `power`, `power restart\|reboot\|shutdown` | Without an action: what is running and whether the server can be restarted from here. Restart GPU Shepherd (apps keep running), restart the whole server or shut it down (asks first; `-y` doesn't; the last two need dashboard updates). | Power icon |
 | `changelog` | What changed in each version (`--limit N`, default 5). | Changelog |
@@ -237,11 +239,14 @@ gpu-shepherd status
 ### Reset the password
 
 ```bash
-sudo docker exec gpu-shepherd gpu-shepherd --reset-password
+sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password
 ```
 
-It prints a new password and also saves it in `INITIAL_PASSWORD.txt` in the data folder. It works
-at once, without a restart. Change it under Settings afterwards (that deletes the file).
+It asks for the new password (10 or more characters) twice. Press Enter without typing one to have
+a password made up instead: that one is printed and also saved in `INITIAL_PASSWORD.txt` in the
+data folder (change it under Settings afterwards, which deletes the file). Either way it works at
+once, without a restart. Without `-it` it can't ask, so it makes one up. From a script, pipe the
+password in: `printf '%s\n' "$PASSWORD" | sudo docker exec -i gpu-shepherd gpu-shepherd --reset-password --password-stdin`.
 
 On the first start, the generated password is in the same file and in
 `sudo docker compose logs gpu-shepherd`.
@@ -282,4 +287,14 @@ Set these in `compose.yaml` under `environment:`.
 | `SHEPHERD_AUTOSTART` | `1` | `0` = don't start autostart instances when GPU Shepherd starts. |
 | `SHEPHERD_CONNECT` | `auto` | How GPU Shepherd reaches its instances: `network` (by ID on the Docker network, used inside a container), `host` (published ports on 127.0.0.1, used when run directly on the host). |
 | `SHEPHERD_URL` / `SHEPHERD_TOKEN` | - | For commands: the GPU Shepherd to manage and its API token (same as `--url`, `--token`). |
-| `SHEPHERD_FAKE_GPUS` | - | Fake GPUs for testing, e.g. `2x8192:NVIDIA GeForce RTX 3070` (count x MiB:name). |
+| `SHEPHERD_FAKE_GPUS` | - | Fake GPUs for testing, e.g. `2x8192:NVIDIA GeForce RTX 3070` (count x MiB:name). `SHEPHERD_FAKE_AMD_GPUS` does the same for AMD GPUs. |
+
+[compose.standalone.yaml](../compose.standalone.yaml) (the published image, no clone) also reads these, from a
+`.env` file next to it:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `SHEPHERD_PRESET` | `starter` | The [preset](../gpushepherd/presets) set up on the first start, while the data folder has no instances; `none` starts empty. |
+| `SHEPHERD_MODELS_DIR` | `<data folder>/models` | The models folder, mounted at the same path. |
+| `SHEPHERD_DOWNLOAD_MODELS` | `1` | `0` = set up the preset without downloading its models. |
+| `SHEPHERD_VERSION` | `latest` | The release to run, e.g. `0.13.36`; `latest` follows releases. |

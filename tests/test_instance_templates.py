@@ -355,7 +355,7 @@ def test_opencode():
     local = config["provider"]["local"]
     assert local["options"] == {"baseURL": "{env:LLM_BASE_URL}", "apiKey": "{env:LLM_API_KEY}"}
     assert local["npm"] == "@ai-sdk/openai-compatible" and set(local["models"]) == {"chat", "coder"}
-    assert local["models"]["coder"]["limit"] == {"context": 65536, "output": 16384}
+    assert local["models"]["coder"]["limit"] == {"context": 65536 - 6553, "output": 16384}   # a tenth kept free
     assert config["model"] == config["small_model"] == "local/coder" and config["autoupdate"] is False
     del m.servers["llm"]["models"]                    # a server without a coding model: its chat model
     assert json.loads(tpl.seed_files(t, f, m)["config/opencode.json"])["model"] == "local/chat"
@@ -470,3 +470,21 @@ def test_comfyui_checkpoints_on_disk(tmp_path):
     (tmp_path / "checkpoints" / "notes.txt").write_text("")
     assert comfyui.checkpoints(tmp_path) == ["sub/a.safetensors"] and comfyui.checkpoints(tmp_path / "no") == []
     assert comfyui.pick_checkpoint([]) == "" and comfyui.pick_checkpoint(["a", "b-XL"]) == "b-XL"
+
+
+def test_hermes_runs_without_dockers_init(tmp_path):
+    """Hermes Agent's dashboard is an s6-overlay service, which only starts when the image's own
+    entrypoint is PID 1: with Docker's init in front, port 9119 is published but nothing answers."""
+    from gpushepherd.backend import FakeBackend
+    from gpushepherd.config import Instance, Store
+    from gpushepherd.engine import Engine
+    store = Store(str(tmp_path / "data"))
+    engine = Engine(store, FakeBackend())
+    hermes = Instance(id="hermes", name="Hermes Agent", image="nousresearch/hermes-agent:latest", app="hermes")
+    by_image = Instance(id="h2", name="Mine", image="nousresearch/hermes-agent:stable")
+    other = Instance(id="webui", name="Open WebUI", image="ghcr.io/open-webui/open-webui:main", app="open-webui")
+    assert not engine.build_spec(hermes, []).init and not engine.build_spec(by_image, []).init
+    assert engine.build_spec(other, []).init
+    # Hermes installed before this changes its config hash once, so it is recreated without the init
+    before = engine.config_hash(hermes.model_copy(update={"image": "other/image"}))
+    assert engine.config_hash(hermes) != before

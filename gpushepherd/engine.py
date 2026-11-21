@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import budget, drain, gpu as gpu_mod, host, placement
+from . import budget, drain, gpu as gpu_mod, host, instance_templates as tpl, placement
 from .backend import Backend, ContainerSpec, ContainerState
 from .config import Catalog, ConfigError, Instance, Store, gpu_vendor
 from .connectors import llamaswap
@@ -51,15 +51,24 @@ class Engine:
     def container_name(self, iid: str) -> str:
         return self.store.settings().container_prefix + iid
 
-    def config_hash(self, inst: Instance) -> str:
+    def config_matches(self, inst: Instance, label: str) -> bool:
+        """Whether a running container's config label is still current. Containers made before the
+        priority left the hash carry the old one: those still count (no restart just for that)."""
+        return label in (self.config_hash(inst), self.config_hash(inst, with_priority=True))
+
+    def config_hash(self, inst: Instance, with_priority: bool = False) -> str:
         # the drain policy, the app it came from, what starts with it, skipped app updates and how
         # its image is updated only matter to GPU Shepherd: no restart for those
         # (nor the CPU fallback, video memory budget and kind of GPU, which only steer the GPU planner)
+        # (nor the priority: reordering the Priority page must not ask for restarts)
+        skip = {"cpu_fallback", "vram_gb", "vendor"} | (set() if with_priority else {"priority"})
         data = inst.model_dump(mode="json", exclude={"drain": True, "app": True, "requires": True,
                                                      "skipped_updates": True, "auto_update": True,
-                                                     "gpu": {"cpu_fallback", "vram_gb", "vendor"}})
+                                                     "gpu": skip})
         if not data["devices"]:                    # added later: no restart for apps that pass none
             del data["devices"]
+        if tpl.own_init(inst):                     # added later: recreate those once, without Docker's init
+            data["_own_init"] = True
         if inst._file_name is not None:            # renamed only on screen (see config._named)
             data["name"] = inst._file_name
         if inst.kind == "llama-swap":
@@ -267,7 +276,8 @@ class Engine:
             network=settings.network, alias=inst.id, command=list(inst.command), env=env,
             ports=[(settings.bind_address, p.host, p.container, p.protocol) for p in inst.ports],
             volumes=volumes, gpus=list(gpus), config_hash=self.config_hash(inst),
-            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=devices)
+            shm_size=inst.shm_size, user=inst.user, mem_limit=inst.memory_limit, devices=devices,
+            init=not tpl.own_init(inst))
 
     def _ensure_llama_server(self, inst: Instance, catalog: Catalog, log) -> Catalog:
         if catalog.llama_server:

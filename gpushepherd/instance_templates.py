@@ -96,6 +96,7 @@ class Template:
     shm_size: str | None = None                # shared memory, for apps that split work across GPUs
     engine: str = ""                           # "vllm": a model server with its own install answers (see VLLM_*)
     bundled_slot: str = "chat"                 # the model slot a Llama Swap installed alongside it fills
+    own_init: bool = False                     # the image's entrypoint must be PID 1 (its own init, e.g. s6-overlay)
     cpu_ok: bool = False                       # a model server that keeps answering on the CPU (slower)
                                                # while an image app has the only GPU, instead of stopping
     vendor: str = "nvidia"                     # the kind of GPU it runs on: nvidia or amd (GpuPolicy.vendor)
@@ -210,7 +211,7 @@ TEMPLATES: tuple[Template, ...] = (
                 "Web dashboard with its own login; optional Home Assistant connection"),
         default_id="hermes", default_name="Hermes Agent", description="Hermes Agent",
         image="nousresearch/hermes-agent:latest", command=("gateway", "run"),
-        container_port=9119, host_port=9119, gpu="none",
+        container_port=9119, host_port=9119, gpu="none", own_init=True,   # its dashboard is an s6 service
         env={"HERMES_DASHBOARD": "1"}, login=("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
         appdata=(("data", "/opt/data"),), data_owner=(10000, 10000), connects="hermes",
         needs="A model server whose model can call tools (Qwen3 models can)",
@@ -428,6 +429,12 @@ def matches(t: Template, inst: Instance) -> bool:
     if inst.app:
         return RENAMED.get(inst.app, inst.app) == t.key
     return inst.image.rsplit(":", 1)[0] == t.image.rsplit(":", 1)[0]
+
+
+def own_init(inst: Instance) -> bool:
+    """Whether the instance's image brings its own init, so Docker's must not run as PID 1: Hermes
+    Agent starts its dashboard under s6-overlay, which only runs when its entrypoint is PID 1."""
+    return any(t.own_init and matches(t, inst) for t in TEMPLATES)
 
 
 OTHER_TAG = "App"        # an instance that isn't from the App Center
@@ -731,6 +738,8 @@ def seed_files(t: Template, a: dict, m: Machine) -> dict[str, str]:
                  f"  api_key: {info['api_key']}"]
         if info.get("default_model"):
             lines.append(f"  default: {info['default_model']}")
+        if info.get("ctx"):         # Hermes can't ask the server, and guesses 256K
+            lines.append(f"  context_length: {agent_context(info['ctx'])}")
         out["data/config.yaml"] = "\n".join(lines) + "\n"
     elif t.connects == "anythingllm":
         out["server.env"] = _anythingllm_env(_server_url(server, m) if info else "", info or {})
@@ -928,19 +937,31 @@ def _sillytavern_images(a: dict, m: Machine) -> dict | None:
 OPENCODE_PROVIDER = "local"
 
 
+def agent_context(ctx: int) -> int:
+    """The context an agent app is told a model has: a tenth less than the server's, so its token
+    count (which differs a little from the server's) and its own summary request still fit when it
+    compacts a long session just in time."""
+    return ctx - ctx // 10
+
+
+def opencode_models(info: dict) -> dict[str, dict]:
+    """OpenCode's entries for a model server's chat models and auto tags, with their context limits
+    (without one OpenCode never compacts a session and runs into the server's context size)."""
+    models = dict(info.get("models") or {})
+    models.setdefault(info.get("default_model") or "chat", info.get("ctx") or 0)
+    return {name: {"name": name} | ({"limit": {"context": agent_context(ctx), "output": min(ctx // 4, 16384)}}
+                                    if ctx else {}) for name, ctx in models.items()}
+
+
 def _opencode_config(info: dict) -> str:
     """OpenCode's own settings (its global opencode.json): the model server as an OpenAI-compatible
     provider whose address and key come from the instance's environment (LLM_BASE_URL, LLM_API_KEY),
     so pointing it at another server is an Edit away. It lists the server's chat models (OpenCode
     doesn't ask the server for them) and starts on the coding one, which also writes the session
     titles so the server never swaps models just for those."""
-    models = dict(info.get("models") or {})
+    entries = opencode_models(info)
     default = info.get("default_model") or "chat"
-    models.setdefault(default, info.get("ctx") or 0)
-    pick = "coder" if "coder" in models else default
-    entries = {}
-    for name, ctx in models.items():
-        entries[name] = {"name": name} | ({"limit": {"context": ctx, "output": min(ctx // 4, 16384)}} if ctx else {})
+    pick = "coder" if "coder" in entries else default
     config = {"$schema": "https://opencode.ai/config.json",
               "provider": {OPENCODE_PROVIDER: {"npm": "@ai-sdk/openai-compatible", "name": "Local models",
                                                "options": {"baseURL": "{env:LLM_BASE_URL}", "apiKey": "{env:LLM_API_KEY}"},
@@ -1037,7 +1058,7 @@ def _langflow_server(server: str, m: Machine) -> dict[str, str]:
 # How Open WebUI splits and searches documents when it uses a model server's embeddings model:
 # bigger pieces than its default suit books, and more of them go to the chat model with a question.
 # Open WebUI only reads these at its first start (then they are in its Admin Panel, Documents), so
-# they aren't offered as app updates; the Books page sets the embeddings ones through its API.
+# they aren't offered as app updates.
 OPENWEBUI_DOCS = {"CHUNK_SIZE": "1500", "CHUNK_OVERLAP": "200", "RAG_TOP_K": "8", "RAG_EMBEDDING_BATCH_SIZE": "16",
                   "RAG_EMBEDDING_QUERY_PREFIX": ""}
 # What a question starts with for embeddings models that are trained with an instruction

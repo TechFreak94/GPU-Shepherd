@@ -144,7 +144,7 @@ When it finishes, the installer prints the address and the first login:
 Open that address in a browser on any device on the same network and log in as `admin`. Change the
 password under **Settings**; the `INITIAL_PASSWORD.txt` file is deleted when you do.
 
-Lost it? `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` prints a new one at once.
+Lost it? `sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password` lets you set a new one (Enter alone makes one up).
 
 GPU Shepherd controls Docker, which is root-equivalent. Keep it on a trusted network and don't
 forward its port to the internet; see [step 7](#7-reach-it-from-other-devices) for a safe way in from outside.
@@ -156,7 +156,7 @@ With the **starter** preset, the dashboard shows three cards: the Llama Swap, Co
 1. If the models are still downloading, wait for them. Progress shows in the dashboard.
 2. Press **Start** on each card. The first start of an app downloads its Docker image, so it takes
    a while; later starts are quick.
-3. Turn on **Autostart** for the apps you want running after a reboot.
+3. To have an app start by itself after a reboot, tick *Start automatically* on its **Edit** page.
 4. Press **Open** on a card to open the app. Starting something that needs a GPU another app is
    using shows you a plan first; confirm it and GPU Shepherd moves things around.
 
@@ -251,9 +251,9 @@ for the image).
 | Arch: packages can't be downloaded | Your system is out of date: `sudo pacman -Syu`, reboot if the kernel changed, run it again. |
 | `docker: permission denied` | You are not in the `docker` group yet: log out and back in, or use `sudo docker`. |
 | The page doesn't open | `sudo docker compose ps` and `sudo docker compose logs gpu-shepherd` in the clone folder. Check the port isn't taken by another program (`sudo ss -ltnp \| grep 8090`) and that a firewall allows it. `curl http://127.0.0.1:8090/healthz` from the machine itself tells you whether it is running. |
-| Forgot the password | `sudo docker exec gpu-shepherd gpu-shepherd --reset-password` |
+| Forgot the password | `sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password` (asks for a new one) |
 | An app says no GPU is free | Another app holds them. Press Start and read the plan, or stop the other app. Cards show each app's GPU rule and priority (hover the ⓘ). |
-| `nvidia-smi` fails inside containers after a while | After a `systemctl daemon-reload` containers can lose their GPUs. The installer adds the udev rule and device links that prevent it; re-run `sudo ./install.sh` on a machine installed earlier, then restart the apps. |
+| `nvidia-smi` fails inside containers after a while | After a `systemctl daemon-reload` containers can lose their GPUs. The installer and every `update.sh` run (the daily check too) add the `/dev/char` device links that prevent it, a boot service that makes them again (`gpu-shepherd-nvidia-links`) and a udev rule. Run `sudo ./update.sh --gpu-links` to set that up now, then restart the apps. |
 | An update failed | It rolls back by itself. By hand: `sudo ./update.sh --rollback`, or `--restore-settings`; see [When an update fails](cli.md#when-an-update-fails). |
 | A model won't load or runs out of memory | Pick a smaller model or quantization, or keep part of it in system RAM; see [GPU and system RAM](advanced.md#gpu-and-system-ram). The dashboard's suggested models say whether each fits. |
 | SELinux denials (Fedora, RHEL-family) | See [SELinux](linux.md#selinux-fedora-and-rhel-family). |

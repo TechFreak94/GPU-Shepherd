@@ -10,6 +10,7 @@ modules a task touches: each one starts with a docstring that says what it owns.
 | Module | Owns |
 | :- | :- |
 | `service.py` | Every action and setting. The dashboard (`app.py`), the JSON API (`api.py`, `/api/v1`) and the CLI (`cli.py`) all call it, so new features go here first |
+| `mcp.py`, `agent-plugin/` | MCP server at `/api/v1/mcp` (fixed tools over the JSON API) and the Claude Code plugin that uses it; `tests/test_mcp.py` checks each tool reaches a real endpoint |
 | `app.py`, `templates/`, `static/` | Web UI routes, pages and htmx partials (`templates/partials/`) |
 | `scheduler.py` | Pure GPU planner (no I/O): which instance gets which GPUs |
 | `engine.py` | Turns plans into container changes; the only caller of the backend |

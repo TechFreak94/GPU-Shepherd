@@ -13,7 +13,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 
 - [Instances](#instances): basics, GPUs, network and storage, command, behaviour, before stopping
 - [Model servers](#model-servers): models, model behaviour, GPU and system RAM, suggested models,
-  auto names, server settings
+  auto tags, server settings
 - [Settings](#settings), including [Tensor unlock](#tensor-unlock) (experimental)
 - [Storage and trash](#storage-and-trash)
 - [What App Center apps fill in](#what-app-center-apps-fill-in)
@@ -40,9 +40,11 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 | Use GPUs / Preferred GPUs | `gpu.gpus` | Fixed: the GPUs it always uses (by `nvidia-smi` index; AMD GPUs are numbered from 100, shown as *AMD GPU 0*, *AMD GPU 1*...). Elastic: optional, the GPUs it takes first when it has a choice. |
 | Minimum GPUs | `gpu.min_gpus` | Elastic only. Fewer than this and it can't start. |
 | Maximum GPUs | `gpu.max_gpus` | Elastic only. `0` = no limit. `1` makes "one GPU, whichever is free". |
-| Priority (0-100) | `gpu.priority` | When there aren't enough GPUs, higher priority keeps theirs and lower ones are moved or stopped (after you confirm). The instance you are starting always wins. |
+| Priority (0-100) | `gpu.priority` | When there aren't enough GPUs, higher priority keeps theirs and lower ones are moved or stopped (after you confirm). The instance you are starting always wins. The **Priority** page shows every app that uses a GPU in this order and moves them up or down (it renumbers them from 100 down); changing it never restarts anything. Command: `priority`; API: `/api/v1/priority`. |
 | Run on the CPU when no GPU is free | `gpu.cpu_fallback` | Elastic only. Instead of being stopped when it loses its GPUs, it keeps running without one (a Llama Swap server runs its models on the CPU, slower) and moves back onto a GPU when one is free. On by default for Llama Swap servers. |
 | Video memory budget (GB) | `gpu.vram_gb` | Elastic with a maximum of 1 only. Apps with a budget share a GPU, as many as fit in its memory (a Llama Swap server also fits its models into the budget). `0` = a GPU of its own. |
+
+![The Priority page: who keeps their GPUs when there are not enough](screenshots/priority.png)
 
 Rule of thumb: apps that use one GPU (ComfyUI, speech models) are fixed or elastic with a maximum
 of 1; Llama Swap servers that split a model across GPUs are elastic with no maximum. The
@@ -150,7 +152,7 @@ llama-swap config from that list, for the number of GPUs the server has each tim
 | Path inside the container | `file` | The .gguf file, e.g. `/models/model-Q4_K_M.gguf`. For split models, the first part (`…-00001-of-0000N.gguf`). The editor lists the files it can see. |
 | Model ID | `id` | The name clients ask for. Letters, digits, `.`, `_`, `:` and `-`. |
 | Display name, Description | `name`, `description` | Shown in the UI. |
-| Other names | `aliases` | More names for the same model. Each name can be used once per server. |
+| Tags | `aliases` | More names clients can ask for this model by, such as `chat` or `coder`. Each tag can belong to one model per server. |
 | Context | `ctx_size` | Tokens, shared by all slots (`--ctx-size`). |
 | Parallel slots | `parallel` | Requests served at once; each gets context ÷ slots (`--parallel`). |
 | KV cache | `kv_cache` | Memory for the context (`--cache-type-k/-v`): `f16` (default), `bf16` (same size; try it if a model's answers turn to gibberish), `q8_0` (half the memory, a good choice from 32K tokens up), `q5_1` (a third) or `q4_0` (smallest). |
@@ -212,7 +214,7 @@ With two or more GPUs:
 
 ### Suggested models
 
-The Models page lists a few current models that work well with the Llama Swap, best fit for this
+The Models page lists current models that work well with the Llama Swap, best fit for this
 machine first. For each it says whether it fits: on how many GPUs, or for a mixture-of-experts
 model, with how much of it in system RAM (with every GPU, and with one). **Add** puts it in the
 model list with its makers' settings and downloads it if it isn't in the models folder yet.
@@ -221,14 +223,24 @@ model list with its makers' settings and downloads it if it isn't in the models 
 
 | Model | For | Download | Fits |
 |---|---|---|---|
-| [Qwen3.5 9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | chat, coding, images | 6.9 GB | one 8 GB GPU |
+| [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | embeddings for RAG | 0.6 GB | the CPU, kept loaded |
+| [DeepSeek R1 0528 Qwen3 8B](https://huggingface.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF) | coding, chat (thinks first) | 5.1 GB | one 8 GB GPU |
 | [Gemma 4 E4B](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) | chat, images, audio; MTP | 6.2 GB | one 8 GB GPU |
+| [Qwen3.5 9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | chat, coding, images | 6.9 GB | one 8 GB GPU |
 | [Gemma 4 12B](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF) | chat, images, audio; MTP | 8.0 GB | a 12 GB GPU or two 8 GB GPUs |
+| [Devstral Small 2 24B](https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF) | coding agents, images | 13.7 GB | two 8 GB GPUs or one 16 GB GPU |
 | [Qwen3.8 27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) | chat, coding, images | 14.1 GB | two 8 GB GPUs or one 16 GB GPU |
+| [Muse Glimmer 30B](https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF) | coding agents, chat, images (3-bit) | 15.2 GB | two 8 GB GPUs or one 16 GB GPU |
 | [Qwen3 Coder 30B-A3B](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) | coding (MoE) | 17.7 GB | one 8 GB GPU + about 13 GB of RAM |
 | [Qwen3.6 35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) | chat, coding, images (MoE) | 17.8 GB | two 8 GB GPUs + about 6 GB of RAM |
+| [Qwen3.5 122B-A10B](https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF) | chat, coding, images (MoE) | 45.7 GB | two 8 GB GPUs + about 35 GB of RAM (64 GB machines) |
+| [Devstral 2 123B (3-bit)](https://huggingface.co/unsloth/Devstral-2-123B-Instruct-2512-GGUF) | coding agents (dense, slow) | 49.0 GB | two 8 GB GPUs + about 38 GB of RAM (64 GB machines) |
 | [Qwen3 Coder Next 80B-A3B](https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF) | coding (MoE) | 49.6 GB | two 8 GB GPUs + about 40 GB of RAM (64 GB machines) |
-| [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | embeddings for RAG | 0.6 GB | the CPU, kept loaded |
+| [Ornith 1.5 122B](https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF) | coding agents, images (MoE, 3-bit) | 50.4 GB | two 8 GB GPUs + about 40 GB of RAM (64 GB machines) |
+| [gpt-oss 120B](https://huggingface.co/unsloth/gpt-oss-120b-GGUF) | coding, chat (MoE) | 65.4 GB | two 8 GB GPUs + about 55 GB of RAM (96 GB+ machines) |
+| [Devstral 2 123B (4-bit)](https://huggingface.co/unsloth/Devstral-2-123B-Instruct-2512-GGUF) | coding agents (dense, slow) | 67.1 GB | two 8 GB GPUs + about 55 GB of RAM (96 GB+ machines) |
+| [MiniMax M2.7 229B-A10B](https://huggingface.co/unsloth/MiniMax-M2.7-GGUF) | coding agents (MoE, 3-bit) | 80.1 GB | about 70 GB of free RAM beside the GPUs (128 GB machines) |
+| [Nemotron 3.5 Super VL 120B-A12B](https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF) | chat, coding, images and video (MoE) | 88.6 GB | about 75 GB of free RAM beside the GPUs (128 GB machines) |
 
 Each model goes into its own subfolder of the models folder (`<models>/qwen3.5-9b/…`), with its
 vision projector and MTP draft file next to it. A download runs in a small helper container
@@ -280,9 +292,9 @@ applying only takes effect when the server restarts. With *Apply suggested adjus
 measurements are in `state/models.yaml` and the decisions in `state/tuning.yaml` in the data
 folder. Commands: `models tuning`, `tuning-apply`, `tuning-dismiss`, `tuning-undo`.
 
-### Auto names
+### Auto tags
 
-An auto name (`auto_aliases`) is a model name that points at different models depending on how
+An auto tag (`auto_aliases`) is a tag that points at different models depending on how
 many GPUs the server has right now. Point a client at it and it always gets the model that fits.
 
 | Field | YAML | What it does |
@@ -382,6 +394,8 @@ folder, where pictures from Open WebUI and SillyTavern land too) and what it was
 `input` folder), newest first. Open or download one, or move the picked ones, or all older than a
 number of days, to the trash. Deleting a chat in Open WebUI doesn't remove its pictures from ComfyUI.
 
+![Storage > Pictures: what ComfyUI made](screenshots/pictures.png)
+
 ### App image updates
 
 Apps are installed from image tags that move with each release (`open-webui:main`, `mongo:8.0`).
@@ -395,7 +409,7 @@ the *App updates* banner, which is about settings an app's template gained.
 
 ### Other disks
 
-**Settings > Storage** lists the machine's drives. With *Mount new drives automatically*, a drive
+The **Storage** page lists the machine's drives. With *Mount new drives automatically*, a drive
 attached while GPU Shepherd is running that already holds a filesystem it can use is mounted under a
 new folder in `/mnt` named after its label (and an `/etc/fstab` line by UUID with `nofail` keeps it
 across restarts). It is **never formatted, partitioned or written to**: empty, encrypted, RAID/LVM
@@ -430,15 +444,15 @@ servers, the models you picked), so every field above can be changed afterwards.
 | Llama Swap (Vulkan) | every free AMD GPU (elastic, no maximum) | llama-swap's `:vulkan` image (llama.cpp's Vulkan build, no ROCm), tuned for several 8 GB cards such as the RX 580: models split layer by layer, 16K context for chat, f16 KV cache. Experimental, untried on real AMD GPUs; an `amdgpu` driver is needed. Otherwise as the Llama Swap below. |
 | Llama Swap | every free GPU (elastic, no maximum) | llama-swap image, models folder at `/models` (read-only), and the models you pick: a chat model named `chat` (32K context), a coding model named `coder` (64K context, lower temperature) and an embeddings model named `embed` (8K context, on the CPU, kept loaded beside the others). Each is optional, and one chat file can be both `chat` and `coder`. A [suggested model](#suggested-models) gets its makers' settings and is downloaded if it isn't there yet. |
 | ComfyUI | one free GPU (elastic, maximum 1), priority 60 so it outranks model servers | models from the models folder's `comfyui/` subfolder; `custom_nodes`, `input`, `output`, `user` and cache in its app data folder |
-| Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one (*Make images with*): a text-to-image and an image-to-image workflow with their node maps, so chats make pictures and edit the one you attach or the last one it made, the size and steps, prompts sent as written (`ENABLE_IMAGE_PROMPT_GENERATION=false`, so the chat model doesn't rewrite them), and a checkpoint taken from the ComfyUI models folder's `comfyui/checkpoints/` (an SDXL one first; add a Stable Diffusion 1.5 or XL checkpoint file there first). A model that isn't one checkpoint file (a diffusion model with its own text encoder and VAE) needs a workflow of your own: export it from ComfyUI in API format as `generate.json` (and `edit.json` for editing, else editing is off) in ComfyUI's app data folder, `user/open-webui/`, each with Open WebUI's node map beside it (`generate-nodes.json`, `edit-nodes.json`: a list of `{"type": "prompt", "key": "text", "node_ids": ["6"]}` entries for prompt, model, width, height, steps, seed...). The model, size and steps come from the nodes the map names, and an app update switches Open WebUI to them. Open WebUI reads the image settings only until they are first saved, so an Open WebUI installed earlier is offered this as an app update (the *App updates* banner), which also sets the running Open WebUI through its API; its card's *Pictures* button sends a running Open WebUI these settings again (for one that was stopped when the update was applied). When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model, split for books (`CHUNK_SIZE` 1500, `CHUNK_OVERLAP` 200, `RAG_TOP_K` 8) and with Qwen3 Embedding's query instruction (`RAG_EMBEDDING_QUERY_PREFIX`). Open WebUI only reads these at its first start; later they are in its Admin Panel › Documents. *Voice with* picks a Speaches instance for speech to text and text to speech (`AUDIO_STT_*`, `AUDIO_TTS_*` with engine `openai`). |
+| Open WebUI | none | connection to a model server you pick (address and API key), and image generation through a ComfyUI instance if you pick one (*Make images with*): a text-to-image and an image-to-image workflow with their node maps, so chats make pictures and edit the one you attach or the last one it made, the size and steps, prompts sent as written (`ENABLE_IMAGE_PROMPT_GENERATION=false`, so the chat model doesn't rewrite them), and a checkpoint taken from the ComfyUI models folder's `comfyui/checkpoints/` (an SDXL one first; add a Stable Diffusion 1.5 or XL checkpoint file there first). A model that isn't one checkpoint file (a diffusion model with its own text encoder and VAE) needs a workflow of your own: export it from ComfyUI in API format as `generate.json` (and `edit.json` for editing, else editing is off) in ComfyUI's app data folder, `user/open-webui/`, each with Open WebUI's node map beside it (`generate-nodes.json`, `edit-nodes.json`: a list of `{"type": "prompt", "key": "text", "node_ids": ["6"]}` entries for prompt, model, width, height, steps, seed...). The model, size and steps come from the nodes the map names, and an app update switches Open WebUI to them. Open WebUI reads the image settings only until they are first saved, so an Open WebUI installed earlier is offered this as an app update (the *App updates* banner), which also sets the running Open WebUI through its API; its card's *Pictures* button sends a running Open WebUI these settings again (for one that was stopped when the update was applied). When that server has an embeddings model, documents are embedded by it (`RAG_EMBEDDING_ENGINE=openai`, `RAG_OPENAI_API_BASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_EMBEDDING_MODEL`) instead of on Open WebUI's own CPU model, split for long documents (`CHUNK_SIZE` 1500, `CHUNK_OVERLAP` 200, `RAG_TOP_K` 8) and with Qwen3 Embedding's query instruction (`RAG_EMBEDDING_QUERY_PREFIX`). Open WebUI only reads these at its first start; later they are in its Admin Panel › Documents. *Voice with* picks a Speaches instance for speech to text and text to speech (`AUDIO_STT_*`, `AUDIO_TTS_*` with engine `openai`). |
 | LibreChat | none | `librechat/librechat`, plus its database: a second instance `<id>-mongodb` (`mongo:8.0`, no port on the host, data in the app data folder's `mongodb/`) that it *starts with*. Fresh secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`), `MONGO_URI`, sign-ups on, cookies that work over plain http (`SESSION_COOKIE_SECURE=false`), and a `librechat.yaml` in its app data folder with one endpoint, *Local models*, whose address and key are `LLM_BASE_URL` and `LLM_API_KEY` in its environment. Images, uploads and logs go to its app data folder. |
 | AnythingLLM | none | `mintplexlabs/anythingllm` with its storage in the app data folder, and a `server.env` there mounted as its settings file (`/app/server/.env`) that points it at the model server (`generic-openai`, the `chat` model and its context size), with built-in vector store and the server's embeddings model when it has one (`EMBEDDING_ENGINE='generic-openai'`), else AnythingLLM's own. Its web scraper runs without `SYS_ADMIN` (`ANYTHINGLLM_CHROMIUM_ARGS`) and telemetry is off. |
 | Ollama | every free GPU (elastic) | `ollama/ollama` with its models in the models folder's `ollama/` subfolder. No models are pulled for you, and it has no login or API key. |
 | Langflow | none | `langflowai/langflow` with its database and settings in the app data folder (`LANGFLOW_DATABASE_URL`, `LANGFLOW_CONFIG_DIR`), an admin user name and password you choose (`LANGFLOW_SUPERUSER`, `LANGFLOW_SUPERUSER_PASSWORD`), a fresh `LANGFLOW_SECRET_KEY`, and the model server's key and address (`OPENAI_API_KEY`, `LLM_BASE_URL`) with that address allowed through its SSRF guard. Marked *Experimental*: you type the address into each flow's OpenAI block yourself. |
 | InvokeAI | one free GPU (elastic, maximum 1), priority 60 | `invoke-ai/invokeai` with its root in the app data folder and its models in the models folder's `invokeai/` subfolder. |
 | Speaches | one free GPU (elastic, maximum 1) | `speaches-ai/speaches` (CUDA) with a fresh `API_KEY`, its Hugging Face cache in the app data folder, and two models downloaded on first start: `Systran/faster-distil-whisper-large-v3` (speech to text) and `speaches-ai/Kokoro-82M-v1.0-ONNX` (text to speech). |
-| OpenCode | none | `ghcr.io/anomalyco/opencode` (`web` on port 4096) behind a user name and password you choose, with `config`, `data` and a `workspace/` folder (its projects) in the app data folder, and the model server set up as its provider *Local models* in `config/opencode.json`, preferring the server's coding model. Its agent runs commands inside its container, so keep its port off the internet. |
-| Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). Its data folder is made for the user Hermes runs as (10000). |
+| OpenCode | none | `ghcr.io/anomalyco/opencode` (`web` on port 4096) behind a user name and password you choose, with `config`, `data` and a `workspace/` folder (its projects) in the app data folder, and the model server set up as its provider *Local models* in `config/opencode.json`, preferring the server's coding model. Each model and auto tag is listed with a context limit a tenth below the server's, so OpenCode compacts a long session before the server runs out of room; an app update refreshes the list when the server's models change. Its agent runs commands inside its container, so keep its port off the internet. |
+| Hermes Agent | none | `gateway run` with its dashboard on port 9119 behind a user name and password you choose; the model server it thinks with (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `HERMES_MODEL`, plus a first `config.yaml` in its data folder); optionally Home Assistant (`HASS_URL`, `HASS_TOKEN`). The model's context size goes in `config.yaml` too (`model.context_length`, a tenth below the server's). Its data folder is made for the user Hermes runs as (10000), and it runs without Docker's init, because its dashboard needs the image's own init. |
 
 ![Installing the Llama Swap: suggested models for each name, best fit first](screenshots/llm-install-models.png)
 
@@ -506,15 +520,3 @@ memory) and moves all MoE expert layers to RAM where it doesn't. Fine-tune it af
 model's edit page.
 
 *Any Docker image* skips the questions and opens an empty form, for apps the App Center doesn't list.
-
-## Knowledge
-
-The **Knowledge** page (and `gpu-shepherd knowledge`, `/api/v1/knowledge`; the old `books` names still work) turns documents (ebooks, manuals, notes) into reference material. It all lives in `<data>/knowledge`: `documents/`, the converted text in `text/`, skill drafts in `skills/` and the list in `index.yaml`. The page shows where each is and how big it is. Older installs' `<data>/books`, `book-text`, `book-skills` and `state/books.yaml` are moved there on first use.
-
-- **Documents folder**: `<data>/knowledge/documents` unless you pick another folder GPU Shepherd can see; any folder layout. A scan reads EPUB, PDF, DOCX, TXT and Markdown into text. Copies of one document in the same folder with the same name count as one: the best format is read. Short readme and licence files are left out. DRM-protected documents are listed with the reason, grouped above the list (filter it to *Can't read*); MOBI/AZW3 aren't supported. PDF text pypdf misses is read with PDFium. Scanned (image-only) PDFs show as *Needs OCR*: **Read with OCR** reads them with Tesseract in the background (slow, seconds a page; English unless you add `tesseract-ocr-<lang>` to the image and set `SHEPHERD_OCR_LANG`, e.g. `eng+deu`). Each document has a **Delete** button (its files, text and copies in Open WebUI); **Delete N duplicates** and **Delete N that can't be read** remove those all at once. When an update reads documents better, the ones it couldn't read are tried again at the next scan.
-- **Load documents from the browser**: drop files, a whole folder (its folders are kept) or zips on the Knowledge page. A zip is unpacked into a folder named after it (other files are left out; 64 GB unpacked at most), and a single file can be up to 4 GB. One file is sent at a time with progress and **Stop**; files already on the server (same path and size) are skipped, so adding a folder again resumes. One scan follows at the end. From another PC: `gpu-shepherd knowledge upload FOLDER --url http://HOST:PORT --token TOKEN`.
-- **Send to Open WebUI**: puts the ready documents in a knowledge base, in the background and resumable. **Keep it in sync** (on by default for a first send) makes every later scan send new documents and take out the copies of documents deleted or changed in the documents folder; a knowledge base deleted in Open WebUI is made again. *Stop syncing* turns it off; what is in Open WebUI stays. Under *In Open WebUI* the page lists each running Open WebUI's knowledge bases: files in each, how many documents GPU Shepherd sent, which are not sent yet, and a link into Open WebUI. GPU Shepherd signs in to Open WebUI itself, and can point its document embeddings at the model server's embeddings model. *One knowledge base per folder* splits by the first folder in the documents folder.
-![Sending documents to Open WebUI with sync on](screenshots/knowledge.png)
-
-- **Skills**: the model server's chat model drafts an Agent Skills `SKILL.md` from a document. Read and edit the draft, then install it in a Hermes Agent instance (it lands in the app's `skills/knowledge/` folder).
-- **Start over**: deletes what you tick: the documents (in a folder of your own, only document files and zips), the converted text and list, the skills (drafts and installed copies), and the copies sent to Open WebUI (a knowledge base GPU Shepherd filled is deleted once empty).

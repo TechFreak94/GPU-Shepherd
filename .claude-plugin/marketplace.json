@@ -1,0 +1,18 @@
+{
+  "name": "gpu-shepherd",
+  "owner": {
+    "name": "GPU Shepherd contributors",
+    "url": "https://github.com/TechFreak94/GPU-Shepherd"
+  },
+  "metadata": {
+    "description": "Plugins for managing a GPU Shepherd from an AI agent."
+  },
+  "plugins": [
+    {
+      "name": "gpu-shepherd",
+      "source": "./agent-plugin",
+      "description": "Look after your own GPU Shepherd from Claude Code: GPUs, apps, models and updates, with your OK before every change.",
+      "category": "devops"
+    }
+  ]
+}

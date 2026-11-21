@@ -48,9 +48,9 @@ The installer runs `pacman -S --needed` and never does a full system upgrade. If
 downloaded (usually because your system is out of date), it tells you to run `sudo pacman -Syu`,
 reboot if the kernel changed, and run `install.sh` again.
 
-`--install-driver` installs `nvidia-open-dkms` and the headers for each installed kernel. GPUs older
-than Turing (GTX 16 series and RTX 20 series) need the legacy driver from the AUR instead, which you
-install by hand.
+`--install-driver` installs `nvidia-open-dkms` and the headers for each installed kernel. The open
+driver needs a Turing GPU (GTX 16 or RTX 20 series) or newer; older GPUs, such as the GTX 10 series,
+need the legacy driver from the AUR instead, which you install by hand.
 
 ## Secure Boot
 

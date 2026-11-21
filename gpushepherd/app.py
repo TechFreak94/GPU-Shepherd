@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, model_library, moves, tailscale, updates
+from . import __version__, api, auth, buildinfo, changelog, credits, drain, drives, first_run, gpu as gpu_mod, gpu_unlock, host as host_mod, image_updates, instance_templates as tpl, logins, mcp, model_library, moves, tailscale, updates
 from .backend import Backend, BackendError, DockerBackend, FakeBackend
 from .config import (AutoAlias, Catalog, CatalogModel, ConfigError, DrainPolicy, GpuPolicy, Instance, OffloadRule, Store,
                      gpu_label, gpu_vendor,
@@ -93,6 +93,9 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     engine = Engine(store, backend, activity=(lambda _inst: drain.Activity(0)) if demo else None)
     jobs = JobRunner()
     notices: list[str] = []                # shown with the dashboard's problems until a restart
+    # settings.yaml gone from a data folder that has apps (a folder mounted late or replaced, a
+    # deleted file): a new admin password is made below, so say why instead of a silent "wrong password"
+    settings_lost = not store.settings_path.exists() and any((store.root / "instances").glob("*.yaml"))
     recovered = store.recover_settings()
     if recovered:
         log.error("%s", recovered)
@@ -103,6 +106,13 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     except Exception as err:  # noqa: BLE001
         log.warning("could not prepare the Docker network: %s", err)
     generated = auth.ensure_admin(store)
+    if settings_lost:
+        lost = (f"settings.yaml was missing from {store.root}, so GPU Shepherd started with new settings and a new "
+                f"admin password ({'in ' + auth.initial_password_file(store).name if generated else 'SHEPHERD_ADMIN_PASSWORD'}). "
+                "Pick your own with: sudo docker exec -it gpu-shepherd gpu-shepherd --reset-password. "
+                "Settings from before the last update: sudo ./update.sh --restore-settings")
+        log.error("%s", lost)
+        notices.append(lost)
     if generated:
         log.warning("First start: log in as '%s' with password '%s' (also in %s). Change it under Settings.",
                     store.settings().admin_user, generated, auth.initial_password_file(store))
@@ -284,7 +294,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
                               for p in inst.ports],
                     "open_url": base_url(request, inst.open_url_port, inst.open_path) if inst.open_url_port else "",
                     "pending": bool(st and st.running and st.config_hash and not cat_error
-                                    and st.config_hash != engine.config_hash(inst)),
+                                    and not engine.config_matches(inst, st.config_hash)),
                     "loaded": [], "models_error": cat_error, "model_count": 0, "aliases": {}, "offload": {},
                     "loading": sorted(app.state.loading.get(inst.id, set())), "gpu_note": gpu_notes.get(inst.id, ""),
                     "waiting": (job.waiting.get(inst.id) if job else None)}
@@ -817,23 +827,25 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     # ------------------------------------------------------------------ model catalogue
     def models_ctx(iid: str) -> dict:
         inst, cat = svc.server(iid)
-        st = backend.states().get(iid)
+        states = backend.states()           # read once: the page polls every few seconds while a model loads
+        st = states.get(iid)
         running = bool(st and st.running)
         gpu_count = len(st.gpus) if running else 0
-        loaded, err = svc.loaded(iid, cat)
+        loaded, err = svc.loaded(iid, cat, states)
         files, notes = llamaswap.local_model_files(inst)
-        preview_gpus = gpu_count or max(len([g for g in engine.snapshot().gpus if g.vendor == inst.gpu.vendor]), 1)
+        machine_gpus = [] if running else gpu_mod.query()[0]
+        preview_gpus = gpu_count or max(len([g for g in machine_gpus if g.vendor == inst.gpu.vendor]), 1)
         threads = cat.threads or 8
         return {"inst": inst, "cat": cat, "running": running, "gpu_count": gpu_count, "loaded": loaded,
                 "models_error": err, "files": files, "file_notes": notes, "missing": svc.missing_files(iid),
-                "failures": svc.start_failures(iid),
+                "failures": svc.start_failures(iid, states),
                 "loading": sorted(app.state.loading.get(iid, set())),
                 "resolved": llamaswap.resolved_aliases(cat, preview_gpus), "preview_gpus": preview_gpus,
                 "preview": llamaswap.render(cat, preview_gpus, threads,
                                             engine.placement(inst, cat, st.gpus if running else
-                                                             [g.index for g in engine.snapshot().gpus])),
-                "placement": svc.placement(iid, cat), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
-                "pending": bool(running and st.config_hash != engine.config_hash(inst)),
+                                                             [g.index for g in machine_gpus])),
+                "placement": svc.placement(iid, cat, states), "resources": svc.model_resources(iid), "tuning": svc.tuning(iid),
+                "pending": bool(running and not engine.config_matches(inst, st.config_hash)),
                 "suggestions": svc.suggestions(iid), "download_dir": svc.models_dir(inst), **hf_ctx()}
 
     @app.get("/instances/{iid}/models", response_class=HTMLResponse)
@@ -1252,150 +1264,6 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
         log.info("API token replaced from the dashboard")
         return Response(status_code=204, headers={"HX-Redirect": with_msg("/settings", "New API token made. The old one no longer works.")})
 
-    # ------------------------------------------------------------------ knowledge (documents and skills)
-    @app.get("/knowledge", response_class=HTMLResponse)
-    def knowledge_page(request: Request, show: str = ""):
-        b = svc.knowledge()
-        if show in ("ready", "failed", "scanned", "skipped", "duplicate"):
-            b["shown"] = [x for x in b["documents"] if x["status"] == show]
-        else:
-            show, b["shown"] = "", b["documents"]
-        return page(request, "knowledge.html", b=b, show=show)
-
-    @app.get("/books")
-    def books_moved():                                  # the page's old name
-        return RedirectResponse("/knowledge", status_code=301)
-
-    @app.get("/knowledge/task", response_class=HTMLResponse)
-    def knowledge_task(request: Request, was: int = 0):
-        t = svc.knowledge_task.as_dict() if svc.knowledge_task else None
-        if was and not (t and t["running"]):              # it just finished: show the page with the result
-            return Response(status_code=204, headers={"HX-Refresh": "true"})
-        return templates.TemplateResponse(request, "partials/knowledge_task.html", {"t": t})
-
-    def knowledge_done(action):
-        try:
-            msg = action()
-        except Problem as err:
-            return problem(err)
-        return Response(status_code=204, headers={"HX-Redirect": with_msg("/knowledge", msg)})
-
-    @app.post("/knowledge/folder")
-    @threaded
-    def knowledge_folder(request: Request):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.set_documents_folder(str(raw.get("path", ""))))
-
-    @app.post("/knowledge/upload")
-    @threaded
-    def knowledge_upload(request: Request):
-        raw = request.state.form
-        files = [(f.filename, f.file) for f in raw.getlist("file") if getattr(f, "filename", "")]
-        return knowledge_done(lambda: svc.add_documents(files))
-
-    @app.get("/knowledge/files")
-    def knowledge_files():
-        return svc.document_files()
-
-    @app.put("/knowledge/files")
-    async def knowledge_put_file(request: Request, path: str = "", offset: int | None = None, total: int | None = None):
-        """One document or zip of them as the raw body, or a piece of one (the Knowledge page's upload
-        sends them one by one, in pieces read into memory)."""
-        size = request.headers.get("content-length")
-        try:
-            r = await svc.receive_document(path, request.stream(), int(size) if size and size.isdigit() else None,
-                                           offset, total)
-        except Problem as err:
-            return JSONResponse({"error": err.msg} | err.data, status_code=err.status)
-        return r
-
-    @app.post("/knowledge/scan")
-    def knowledge_scan():
-        return knowledge_done(svc.scan_documents)
-
-    @app.post("/knowledge/stop")
-    def knowledge_stop():
-        return knowledge_done(svc.stop_knowledge)
-
-    @app.post("/knowledge/send")
-    @threaded
-    def knowledge_send(request: Request):
-        raw = request.state.form
-        emb = {"server": True, "keep": False}.get(str(raw.get("embeddings", "")))
-        return knowledge_done(lambda: svc.send_documents(str(raw.get("instance", "")), str(raw.get("name", "")),
-                                                 bool(raw.get("split")), emb, True if raw.get("sync") else None))
-
-    @app.post("/knowledge/sync/stop")
-    def knowledge_sync_stop():
-        return knowledge_done(svc.stop_sync)
-
-    @app.get("/knowledge/openwebui/{iid}", response_class=HTMLResponse)
-    def knowledge_openwebui(request: Request, iid: str):
-        """What is in an Open WebUI's knowledge (loaded into the Knowledge page after it shows: signing in takes a moment)."""
-        try:
-            k, err = svc.openwebui_knowledge(iid), ""
-        except Problem as e:
-            k, err = None, e.msg
-        inst = svc.store.instances()[0].get(iid)
-        base = base_url(request, inst.open_url_port, "/").rstrip("/") if inst and inst.open_url_port else ""
-        return templates.TemplateResponse(request, "partials/knowledge_openwebui.html", {"k": k, "err": err, "base": base})
-
-    @app.post("/knowledge/ocr")
-    def knowledge_ocr():
-        return knowledge_done(svc.ocr_documents)
-
-    @app.post("/knowledge/delete-all")
-    @threaded
-    def knowledge_delete_all(request: Request):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.delete_documents(str(raw.get("status", ""))))
-
-    @app.post("/knowledge/{key}/delete")
-    def knowledge_delete(key: str):
-        return knowledge_done(lambda: svc.delete_document(key))
-
-    @app.post("/knowledge/clear")
-    @threaded
-    def knowledge_clear(request: Request):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.clear_knowledge(tuple(raw.getlist("what"))))
-
-    @app.post("/knowledge/{key}/skill")
-    @threaded
-    def knowledge_skill(request: Request, key: str):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.make_skill(key, str(raw.get("server", ""))))
-
-    def skill_dialog(request: Request, slug: str, **ctx):
-        try:
-            text = ctx.pop("text", None) or svc.skill_text(slug)
-        except Problem as err:
-            return problem(err)
-        return templates.TemplateResponse(request, "partials/skill_edit.html", {"slug": slug, "text": text} | ctx)
-
-    @app.get("/knowledge/skills/{slug}", response_class=HTMLResponse)
-    def knowledge_skill_show(request: Request, slug: str):
-        return skill_dialog(request, slug)
-
-    @app.post("/knowledge/skills/{slug}", response_class=HTMLResponse)
-    @threaded
-    def knowledge_skill_save(request: Request, slug: str):
-        text = str(request.state.form.get("text", ""))
-        try:
-            return skill_dialog(request, slug, saved=svc.save_skill(slug, text))
-        except Problem as err:
-            return skill_dialog(request, slug, text=text, error=err.msg)
-
-    @app.post("/knowledge/skills/{slug}/install")
-    @threaded
-    def knowledge_skill_install(request: Request, slug: str):
-        raw = request.state.form
-        return knowledge_done(lambda: svc.install_skill(slug, str(raw.get("instance", ""))))
-
-    @app.post("/knowledge/skills/{slug}/delete")
-    def knowledge_skill_delete(slug: str):
-        return knowledge_done(lambda: svc.delete_skill(slug))
-
     # ------------------------------------------------------------------ storage
     @app.get("/storage", response_class=HTMLResponse)
     def storage_page(request: Request):
@@ -1440,6 +1308,21 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
     def storage_purge(request: Request):
         raw = request.state.form        # no id = empty the whole trash
         return storage_done(lambda: svc.purge_trash(str(raw.get("id", ""))))
+
+    # Priority: who keeps the GPUs when there are not enough, as a list to reorder
+    @app.get("/priority", response_class=HTMLResponse)
+    def priority_page(request: Request):
+        return page(request, "priority.html", rows=svc.priority_list())
+
+    @app.post("/priority/move")
+    @threaded
+    def priority_move(request: Request):
+        raw = request.state.form
+        try:
+            msg = svc.move_priority(str(raw.get("id", "")), str(raw.get("direction", "")))
+        except Problem as err:
+            return problem(err)
+        return Response(status_code=204, headers={"HX-Redirect": with_msg("/priority", msg)})
 
     # ComfyUI's pictures: what each ComfyUI made and was given, to look through and clear out
     @app.get("/storage/pictures", response_class=HTMLResponse)
@@ -1603,6 +1486,7 @@ def create_app(data_dir: str | None = None, backend: Backend | None = None, demo
 
     # ------------------------------------------------------------------ JSON API (api.py)
     app.include_router(api.router(svc, build))
+    app.include_router(mcp.router())     # the same API as MCP tools, for AI agents (mcp.py)
 
     # ------------------------------------------------------------------ autostart
     if autostart if autostart is not None else os.environ.get("SHEPHERD_AUTOSTART", "1") == "1":

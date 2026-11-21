@@ -7,8 +7,11 @@ give the same messages.
 
 - [Authentication](#authentication)
 - [Conventions](#conventions)
-- [State](#state), [Instances](#instances), [Changes (jobs)](#changes-jobs), [App Center](#app-center),
-  [Model servers](#model-servers), [Settings](#settings), [Tensor unlock](#tensor-unlock), [Updates](#updates)
+- [State](#state), [Instances](#instances), [Priority](#priority), [Changes (jobs)](#changes-jobs),
+  [App Center](#app-center), [Model servers](#model-servers), [Settings](#settings),
+  [Storage and trash](#storage-and-trash), [App updates](#app-updates), [Tensor unlock](#tensor-unlock),
+  [Updates](#updates)
+- [AI agents (MCP)](#ai-agents-mcp)
 - [Examples](#examples)
 
 ## Authentication
@@ -20,7 +23,7 @@ Authorization: Bearer gs-...
 ```
 
 The token is made on the first start and kept in the `api-token` file in the data folder (mode
-600). Find it under **Settings › API and command line**, or with
+600). Find it under **Settings › Automation**, or with
 `sudo docker exec gpu-shepherd gpu-shepherd token`. *Make a new token* there (or `token --new`)
 replaces it; the old one stops working at once.
 
@@ -66,6 +69,17 @@ dashboard. The answer is one of:
 - `409` `{"error", "needs_confirm": true, "plan": [...]}`: it would also stop or move other
   instances (`plan` says which). Send it again with `{"confirm": true}` to go ahead.
 
+## Priority
+
+Who keeps their GPUs when there are not enough for everything (the dashboard's Priority page).
+Reordering only changes each instance's `gpu.priority` (from 100 down); nothing restarts.
+
+| Request | What it does |
+|---|---|
+| `GET /api/v1/priority` | `order`: the instances that use GPUs, first one first, each with `rank`, `id`, `name`, `mode`, `priority`, `running` and `gpus`. |
+| `PUT /api/v1/priority` | `{"order": ["llm", "comfyui"]}`: put these first, in this order; the others keep their places after them. Answers `message` and the new `order`. |
+| `POST /api/v1/priority/{id}/{direction}` | Move one instance `top`, `up`, `down` or `bottom`. Answers `message` and the new `order`. |
+
 ## Changes (jobs)
 
 GPU Shepherd makes one change at a time. Each start, stop, restart, delete and autostart is a job.
@@ -100,43 +114,20 @@ For instances of kind `llama-swap`.
 | Request | What it does |
 |---|---|
 | `GET /api/v1/instances/{id}/models` | `models`, `auto_aliases`, `settings` (`threads`, `llama_server`, `health_timeout`, `api_key`), `loaded` (model → state), `loading`, and the .gguf `files` it can see. |
-| `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto names follow. |
-| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto name points at it). `?files=true` also deletes its files from disk (`409` while it is loaded; files another model uses are kept). |
+| `PUT /api/v1/instances/{id}/models/{model}` | Add (`201`) or replace (`200`) a model. The body is the model as in the catalogue (`file` is required); a different `id` in the body renames it, and auto tags follow. |
+| `DELETE /api/v1/instances/{id}/models/{model}` | Remove it (`409` while an auto tag points at it). `?files=true` also deletes its files from disk (`409` while it is loaded; files another model uses are kept). |
 | `GET /api/v1/instances/{id}/suggestions` | The [suggested models](advanced.md#suggested-models), best fit first: `key`, `name`, `uses`, `fits` and `fit` (how it fits this machine), `state` (`ready`, `downloading`, `starting`, `failed`, `missing`), `status`, `pct`, `in_catalog`, and its `files` with their URLs. |
 | `POST /api/v1/instances/{id}/suggestions/{key}/add` | Add it with its makers' settings, downloading it if needed (`201`; `409` if the server has it). |
 | `POST /api/v1/instances/{id}/suggestions/{key}/download` | Download or resume its files in the background (`202`). |
-| `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. |
+| `POST /api/v1/instances/{id}/suggestions/{key}/cancel` | Stop its download; what it fetched is kept. `/discard` stops it and deletes what it fetched. |
 | `POST /api/v1/instances/{id}/suggestions/{key}/delete` | Delete the files of a downloaded suggestion the server doesn't have. |
 | `POST /api/v1/instances/{id}/models/{model}/load` | Load it now, in the background (`202`). |
 | `POST /api/v1/instances/{id}/models/{model}/unload` | Unload it; `_all` as the model unloads every model. `409` while the server is answering. |
-| `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto name: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
+| `PUT /api/v1/instances/{id}/auto-aliases` | Replace every auto tag: `[{"alias": "coder", "default_model": "small", "rules": [{"min_gpus": 2, "model": "big"}]}]`. |
 | `PATCH /api/v1/instances/{id}/server-settings` | Change any of `threads`, `health_timeout`, `llama_server`, `fit_gpus` (use only the GPUs each model needs) and `auto_tune` (apply suggested adjustments by itself); `"new_api_key": true` gives the server a new key. |
 | `POST /api/v1/instances/{id}/models/from-link` | Add a model by the link of its `.gguf` file: `{"url": "https://.../Model-Q4_K_M.gguf", "name": "optional", "mmproj_url": "optional vision projector"}`. It is downloaded in the background like a suggested model and listed with them (`201`). `/suggestions/{key}/forget` removes a link from the list. |
 | `GET /api/v1/instances/{id}/tuning` | [Suggested adjustments](advanced.md#tuning): each with a `key`, what it changes, why, and its `status` (new, applied or dismissed). |
 | `POST /api/v1/instances/{id}/tuning` | Decide one: `{"key": "...", "action": "apply" \| "dismiss" \| "undo"}`. It stays listed either way. |
-
-## Knowledge (documents) and skills
-
-`/api/v1/books/...` is the same as `/api/v1/knowledge/...`, for older clients.
-
-| Request | What it does |
-|---|---|
-| `GET /api/v1/knowledge` | The documents folder, its documents (status, words, why one couldn't be read), the reasons grouped with counts, where everything is kept (`storage`: path, files, size), the work running now, the Open WebUI apps documents can go to, and the drafted skills. |
-| `PUT /api/v1/knowledge/folder` | `{"path": "..."}` picks the documents folder. |
-| `POST /api/v1/knowledge/upload` | Add documents: a multipart form with one or more `file` fields; a scan follows (`202`). |
-| `GET /api/v1/knowledge/files` | The document files already in the folder, `{path: size}`. |
-| `PUT /api/v1/knowledge/files?path=Folder/Book.epub` | Upload one document (raw body, streamed to disk; folders in `path` are kept; a `.zip` is unpacked into a folder named after it). No scan; call `scan` when done. |
-| `POST /api/v1/knowledge/scan`, `POST /api/v1/knowledge/stop` | Scan the folder for new documents (`202`), or stop the work running. |
-| `POST /api/v1/knowledge/send` | Put the ready documents in an Open WebUI knowledge base: `{"instance": "webui", "name": "Documents", "split": false, "embeddings": "server" \| "keep", "sync": true}` (`202`). `sync` keeps it in sync: every scan then sends new documents and takes out copies of documents deleted or changed. |
-| `DELETE /api/v1/knowledge/sync` | Stop keeping a knowledge base in sync. |
-| `GET /api/v1/knowledge/openwebui/{id}` | A running Open WebUI's knowledge bases: `bases` (`name`, `files`, `ours`, `sent`, `missing`, `sync`), the `sync` setting and `stale` (old copies waiting to be taken out). |
-| `POST /api/v1/knowledge/{key}/skill` | Draft an agent skill from a document with a model server's chat model: `{"server": "llm"}` (optional; `202`). |
-| `POST /api/v1/knowledge/ocr` | Read the scanned PDFs (status `scanned`) with OCR, in the background (`202`). |
-| `POST /api/v1/knowledge/delete` | Delete every duplicate or every document that can't be read, files and all: `{"status": "duplicate" \| "failed"}` (`202`). |
-| `DELETE /api/v1/knowledge/{key}` | Delete one document: its files, its text, and its copies in a running Open WebUI. |
-| `POST /api/v1/knowledge/clear` | Start over: `{"what": ["documents", "converted", "skills", "apps"]}` (all four if left out; `202`). |
-| `GET`, `PUT`, `DELETE /api/v1/skills/{slug}` | Read a draft (`text`), save an edited one (`{"text": "..."}`), delete it. |
-| `POST /api/v1/skills/{slug}/install` | Install it in Hermes Agent: `{"instance": "hermes"}`. |
 
 ## Settings
 
@@ -227,6 +218,17 @@ buttons (see [Updating from the dashboard](cli.md#updating-from-the-dashboard)).
 | `GET /api/v1/power` | What is running (`running`) and whether the host can restart or shut down (`host`, else `hint` says why). |
 | `POST /api/v1/power/{action}` | `restart` (GPU Shepherd; apps keep running), `reboot` or `shutdown` (the whole server; needs dashboard updates) (`202`). |
 | `GET /api/v1/changelog` | Releases, newest first: `version`, `date`, `items`, `running`, `new`. |
+
+## AI agents (MCP)
+
+`POST /api/v1/mcp` is an [MCP](https://modelcontextprotocol.io) server (Streamable HTTP, plain JSON
+answers) for AI agents such as Claude Code, OpenCode or Cursor. It needs the API token like any change.
+Its tools are fixed calls to the endpoints above: reading state, instances, logs, jobs, apps, models,
+storage and updates; starting, stopping and restarting (a plan that affects other instances answers
+`needs_confirm` until the agent sends `confirm`); the priority order; installing apps; adding,
+loading and unloading models; and app, image and GPU Shepherd updates. Passwords, the token, power, remote access, tensor
+unlock, deleting and storage moves are left out. Setup, and the Claude Code plugin:
+[agent-plugin](../agent-plugin/README.md).
 
 ## Examples
 

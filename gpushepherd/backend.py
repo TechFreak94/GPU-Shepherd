@@ -50,6 +50,7 @@ class ContainerSpec:
     user: str | None = None
     mem_limit: str | None = None
     devices: list[str] = field(default_factory=list)   # host device paths passed in (an AMD GPU's render node)
+    init: bool = True           # Docker's small init as PID 1; off for images that bring their own
 
 
 @dataclass
@@ -269,7 +270,7 @@ class DockerBackend:
             binds=binds, port_bindings=port_bindings, device_requests=device_requests,
             devices=[f"{d}:{d}:rwm" for d in spec.devices] or None,
             restart_policy={"Name": "unless-stopped"}, shm_size=spec.shm_size, mem_limit=spec.mem_limit,
-            init=True, log_config=self.log_config)
+            init=spec.init, log_config=self.log_config)
         networking = self.api.create_networking_config(
             {spec.network: self.api.create_endpoint_config(aliases=[spec.alias])})
         labels = {LABEL_INSTANCE: spec.instance_id, LABEL_GPUS: ",".join(map(str, spec.gpus)),

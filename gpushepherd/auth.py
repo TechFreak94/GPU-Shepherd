@@ -14,6 +14,7 @@ from pathlib import Path
 from .config import Settings, Store
 
 N, R, P = 2 ** 14, 8, 1
+MIN_LENGTH = 10           # for a password the admin picks (Settings, or --reset-password)
 # No look-alikes (0/O, 1/l/I) and no punctuation: the first password is often read off a terminal
 # and typed in by hand on another machine.
 ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -120,13 +121,22 @@ def ensure_admin(store: Store) -> str | None:
     return password
 
 
-def reset_admin(store: Store) -> tuple[str, str]:
-    """Give the admin a new generated password (for a lost one). Returns (user, password)."""
+def reset_admin(store: Store, password: str = "") -> tuple[str, str]:
+    """Give the admin a new password (for a lost one): the one given, or a generated one when none
+    is. A generated one is also kept in INITIAL_PASSWORD.txt; a chosen one is not written anywhere,
+    and an old INITIAL_PASSWORD.txt is deleted, as it no longer holds the password. Returns
+    (user, password)."""
+    if password and len(password) < MIN_LENGTH:
+        raise ValueError(f"Use at least {MIN_LENGTH} characters.")
     settings = store.settings()
-    password = generate_password()
+    chosen = bool(password)
+    password = password or generate_password()
     settings.password_hash = hash_password(password)
     store.save_settings(settings)
-    _write_initial(store, settings.admin_user, password)
+    if chosen:
+        initial_password_file(store).unlink(missing_ok=True)
+    else:
+        _write_initial(store, settings.admin_user, password)
     return settings.admin_user, password
 
 

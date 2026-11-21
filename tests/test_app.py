@@ -182,7 +182,7 @@ def test_model_catalogue_editing(stack):
                                                                      "file": "gemma.gguf", "ctx_size": "100"})
     assert "error-box" in bad.text
 
-    # auto names: "auto" -> gemma with 3+ GPUs
+    # auto tags: "auto" -> gemma with 3+ GPUs
     r = client.post("/instances/llm/catalog/auto", headers=HX, data={
         "alias": "auto", "default_model": "qwen3.6-35b-a3b", "rules": "2=qwen3-coder-next, 3=gemma4-26b"})
     assert r.status_code == 204
@@ -192,11 +192,11 @@ def test_model_catalogue_editing(stack):
                                                                     "rules": "two gpus please"})
     assert "rule 'two gpus please'" in r.headers["HX-Trigger"]
 
-    # a model used by an auto name cannot be removed
+    # a model used by an auto tag cannot be removed
     r = client.post("/instances/llm/models/gemma4-26b/delete", headers=HX)
     assert "Cannot delete" in r.headers["HX-Trigger"]
 
-    # renaming follows into auto names
+    # renaming follows into auto tags
     r = client.post("/instances/llm/models/save", headers=HX, data={
         "original_id": "gemma4-26b", "id": "gemma4", "name": "Gemma 4 26B", "file": "/models/gemma.gguf",
         "ctx_size": "65536", "parallel": "1", "kv_cache": "q8_0"})
@@ -322,6 +322,67 @@ def test_reset_password(stack, monkeypatch):
     assert client.post("/login", data={"user": "admin", "password": "correct-horse"}).status_code == 401
     r = client.post("/login", data={"user": user, "password": password}, follow_redirects=False)
     assert r.status_code == 303
+
+
+def test_reset_password_to_a_chosen_one(stack):
+    app, client, _, data = stack
+    from gpushepherd import auth
+    (data / "INITIAL_PASSWORD.txt").write_text("old")
+    with pytest.raises(ValueError):
+        auth.reset_admin(app.state.store, "short")
+    assert auth.reset_admin(app.state.store, "my own password") == ("admin", "my own password")
+    assert not (data / "INITIAL_PASSWORD.txt").exists()          # it no longer holds the password
+    assert client.post("/login", data={"user": "admin", "password": "correct-horse"}).status_code == 401
+    r = client.post("/login", data={"user": "admin", "password": "my own password"}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_reset_password_command(tmp_path, monkeypatch, capsys):
+    """--reset-password asks for the new password at a terminal, reads it with --password-stdin, and
+    otherwise makes one up."""
+    import io
+    import sys
+
+    from gpushepherd import __main__ as main_mod, auth
+    from gpushepherd.config import Store
+
+    def run(*args, stdin="", tty=False, typed=()):
+        fake = io.StringIO(stdin)
+        fake.isatty = lambda: tty
+        monkeypatch.setattr(sys, "stdin", fake)
+        answers = iter(typed)
+        monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
+        monkeypatch.setattr(sys, "argv", ["gpu-shepherd", "--data-dir", str(tmp_path), *args])
+        main_mod.main()
+        return Store(tmp_path).settings().password_hash
+
+    stored = run("--reset-password", tty=True, typed=["short", "long enough 1", "different", "long enough 1",
+                                                       "long enough 1"])
+    assert auth.verify_password("long enough 1", stored)
+    assert "Too short" in capsys.readouterr().out
+    stored = run("--reset-password", "--password-stdin", stdin="piped password\n")
+    assert auth.verify_password("piped password", stored)
+    assert not (tmp_path / "INITIAL_PASSWORD.txt").exists()
+    stored = run("--reset-password")                              # docker exec without -it: made up
+    made_up = (tmp_path / "INITIAL_PASSWORD.txt").read_text().split("password: ", 1)[1].splitlines()[0]
+    assert auth.verify_password(made_up, stored) and made_up in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        run("--reset-password", "--password-stdin", stdin="short\n")
+    assert auth.verify_password(made_up, Store(tmp_path).settings().password_hash)   # unchanged
+
+
+def test_missing_settings_explained(tmp_path, monkeypatch, caplog):
+    """settings.yaml gone from a folder that has apps: the new password is not a silent surprise."""
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
+    monkeypatch.delenv("SHEPHERD_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    (tmp_path / "instances").mkdir()
+    (tmp_path / "instances" / "x.yaml").write_text("id: x\n")
+    create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)
+    assert "settings.yaml was missing" in caplog.text
+    caplog.clear()
+    create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)   # only once
+    assert "settings.yaml was missing" not in caplog.text
 
 
 def test_login_without_cookie_explains(stack):
@@ -548,7 +609,8 @@ def test_app_store_installs_a_model_server_too(stack, tmp_path_factory):
     assert env["HASS_URL"] == "http://ha.lan:8123" and env["HASS_TOKEN"] == "tok"
     config = (data / "appdata" / "hermes" / "data" / "config.yaml")
     assert yaml.safe_load(config.read_text())["model"] == {
-        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat"}
+        "provider": "custom", "base_url": "http://llm:8080/v1", "api_key": cat["api_key"], "default": "chat",
+        "context_length": tpl.agent_context(cat["models"][0]["ctx_size"])}
     assert config.stat().st_mode & 0o777 == 0o600
 
 
@@ -679,7 +741,7 @@ def test_librechat_installs_its_database_and_starts_with_it(stack):
     page = client.get("/apps").text
     assert 'id="app-librechat"' in page and 'id="app-anythingllm"' in page
     assert "librechat-mongodb" not in page                     # companions are not in the App Center
-    assert page.count(">Experimental</span>") == 3 and "Experimental." in client.get("/apps/langflow").text  # Langflow, the Vulkan Llama Swap + the Knowledge nav tag
+    assert page.count(">Experimental</span>") == 2 and "Experimental." in client.get("/apps/langflow").text  # Langflow and the Vulkan Llama Swap
     assert "License: MIT" in client.get("/apps/langflow").text and "License: Apache-2.0" in page
     assert ">Credits</button>" in client.get("/ui/update").text
     cr = client.get("/ui/credits").text
@@ -1000,3 +1062,28 @@ def test_one_gpu_llm_falls_back_to_the_cpu_and_cards_say_why(tmp_path, monkeypat
 
     act(client, app, "comfyui", "stop", confirm=True)
     assert gpus_of(backend, "llm") == [0]
+
+
+def test_priority_page_moves_an_instance(tmp_path, monkeypatch):
+    import shutil
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from gpushepherd import auth, gpu as gpu_mod
+    from gpushepherd.app import create_app
+    from gpushepherd.backend import FakeBackend
+    from gpushepherd.config import Store
+    monkeypatch.setenv("SHEPHERD_FAKE_GPUS", "2x8192:Test GPU")
+    monkeypatch.setattr(gpu_mod, "_cache", (0.0, [], ""))
+    shutil.copytree(Path(__file__).parent / "fixtures" / "stack", tmp_path, dirs_exist_ok=True)
+    app = create_app(data_dir=str(tmp_path), backend=FakeBackend(), demo=True, autostart=False)
+    client = TestClient(app, headers={"Authorization": f"Bearer {auth.api_token(Store(tmp_path))}"})
+    rows = app.state.svc.priority_list()
+    assert len(rows) >= 2
+    first, last = rows[0]["id"], rows[-1]["id"]
+    assert client.get("/priority").status_code == 200
+    app.state.svc.move_priority(last, "top")
+    now = [r["id"] for r in app.state.svc.priority_list()]
+    assert now[0] == last and now[1:] == [r["id"] for r in rows if r["id"] != last]
+    app.state.svc.move_priority(last, "bottom")
+    assert [r["id"] for r in app.state.svc.priority_list()][-1] == last
+    assert first in [r["id"] for r in app.state.svc.priority_list()]

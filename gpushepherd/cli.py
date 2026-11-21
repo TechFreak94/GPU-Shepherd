@@ -57,25 +57,6 @@ class Client:
     def get(self, path):
         return self.call("GET", path)
 
-    def send_file(self, path: str, file: Path) -> dict:
-        """PUT a file as the raw body, streamed."""
-        try:
-            with open(file, "rb") as f:
-                r = httpx.put(self.url + path, content=f, timeout=httpx.Timeout(60, write=None, read=600),
-                              headers={"Authorization": f"Bearer {self.token}",
-                                       "Content-Length": str(file.stat().st_size)})
-        except httpx.HTTPError as err:
-            raise Failed(f"GPU Shepherd isn't answering at {self.url} ({err}).") from err
-        try:
-            data = r.json()
-        except ValueError:
-            data = {"error": r.text.strip() or f"HTTP {r.status_code}"}
-        if r.status_code == 401:
-            raise Failed("The API token was refused: pass the token from Settings with --token.")
-        if r.status_code >= 300:
-            raise Failed(data.get("error", f"HTTP {r.status_code}") if isinstance(data, dict) else str(data))
-        return data
-
     def post(self, path, body=None, ok=(200, 201, 202)):
         return self.call("POST", path, body, ok)
 
@@ -456,7 +437,7 @@ def model_table(m: dict) -> None:
           ["MODEL", "FILE", "CONTEXT", "ALIASES", "LOADED"])
     for a in m["auto_aliases"]:
         rules = ", ".join(f"{r['min_gpus']}+ GPUs: {r['model']}" for r in a["rules"])
-        print(f"Auto name {a['alias']}: {a['default_model']}" + (f"; {rules}" if rules else ""))
+        print(f"Auto tag {a['alias']}: {a['default_model']}" + (f"; {rules}" if rules else ""))
     if m["error"]:
         print(m["error"])
 
@@ -712,6 +693,27 @@ def cmd_password(args, c: Client) -> int:
     return 0
 
 
+def cmd_priority(args, c: Client) -> int:
+    a = args.action or "list"
+    if a == "list":
+        out(args, c.get("/api/v1/priority"), lambda r: table(
+            [[row["rank"], row["id"], row["name"], "its own GPU choice" if row["mode"] == "fixed" else "any free GPUs",
+              ("running on GPU " + gpus_text(row["gpus"])) if row["running"] and row["gpus"]
+              else "running" if row["running"] else "stopped", row["priority"]] for row in r["order"]],
+            ["#", "ID", "NAME", "USES", "NOW", "NUMBER"]))
+        return 0
+    if not args.ids:
+        raise Failed(f"which instance? e.g. gpu-shepherd priority {a} comfyui (see gpu-shepherd priority)")
+    if a == "set":
+        out(args, c.call("PUT", "/api/v1/priority", {"order": args.ids}))
+        return 0
+    if len(args.ids) > 1:
+        raise Failed(f"move one instance at a time, or put them all in order with: gpu-shepherd priority set "
+                     f"{' '.join(args.ids)}")
+    out(args, c.post(f"/api/v1/priority/{quote(args.ids[0], safe='')}/{a}"))
+    return 0
+
+
 def cmd_power(args, c: Client) -> int:
     a = args.action or "status"
     if a == "status":
@@ -833,131 +835,6 @@ def cmd_changelog(args, c: Client) -> int:
     return 0
 
 
-def cmd_knowledge(args, c: Client) -> int:
-    a, items = args.action or "list", args.items
-
-    def need(n: int, example: str) -> None:
-        if len(items) < n:
-            raise Failed(f"e.g. gpu-shepherd knowledge {example}")
-
-    def task_text(t) -> None:
-        if not t:
-            print("Nothing running.")
-            return
-        state = "running" if t["running"] else "failed" if t["error"] else "done"
-        print(f"{t['title']} ({state}): " + (t["text"] if t["running"] else t["error"] or t["result"]))
-        if t["pct"] is not None and t["running"]:
-            print(f"  {t['done']} of {t['total']} ({t['pct']}%)")
-        for e in t["errors"]:
-            print("  failed: " + e)
-
-    if a == "list":
-        def text(s):
-            for x in s.get("storage") or []:
-                print(f"{x['what']}: {x['path']}" + (f" ({x['files']} files, {x['size']})" if x["exists"] else " (not there yet)"))
-            table([[b["key"], b["status"], b["words"] or "", b["name"][:60], b["reason"][:50]] for b in s["documents"]],
-                  ["KEY", "STATUS", "WORDS", "DOCUMENT", "WHY"])
-            if s["skills"]:
-                print()
-                table([[k["slug"], k["name"][:50], ", ".join(k.get("installed") or {}) or "-"] for k in s["skills"]],
-                      ["SKILL", "FROM", "INSTALLED IN"])
-            if s["task"]:
-                print()
-                task_text(s["task"])
-        out(args, c.get("/api/v1/knowledge"), text)
-    elif a == "status":
-        out(args, c.get("/api/v1/knowledge")["task"], task_text)
-    elif a == "folder":
-        out(args, c.call("PUT", "/api/v1/knowledge/folder", {"path": items[0] if items else ""}))
-    elif a in ("scan", "stop"):
-        out(args, c.post(f"/api/v1/knowledge/{a}"))
-    elif a == "upload":
-        need(1, "upload FOLDER-OR-FILE...  (from any computer: --url http://server:8080 --token TOKEN)")
-        upload_documents(c, [Path(i) for i in items])
-    elif a == "send":
-        need(1, "send open-webui [--name Documents] [--split] [--embeddings server|keep] [--sync]")
-        out(args, c.post("/api/v1/knowledge/send", {"instance": items[0], "name": args.name, "split": args.split,
-                                                "embeddings": args.embeddings, "sync": True if args.sync else None}))
-    elif a == "sync-off":
-        out(args, c.call("DELETE", "/api/v1/knowledge/sync"))
-    elif a == "in":
-        need(1, "in open-webui  (what is in its knowledge bases)")
-
-        def bases(k):
-            table([[b["name"][:50], "" if b["files"] is None else b["files"],
-                    "" if b["sent"] is None else b["sent"], b["missing"] or "",
-                    "sync" if b["sync"] else "gone" if b.get("gone") else "yes" if b["ours"] else ""] for b in k["bases"]],
-                  ["KNOWLEDGE BASE", "FILES", "SENT", "NOT YET", "GPU SHEPHERD"])
-        out(args, c.get(f"/api/v1/knowledge/openwebui/{quote(items[0])}"), bases)
-    elif a == "skill":
-        need(1, "skill KEY [--server llm]  (KEY from gpu-shepherd knowledge)")
-        out(args, c.post(f"/api/v1/knowledge/{quote(items[0])}/skill", {"server": args.server}))
-    elif a == "skill-show":
-        need(1, "skill-show SKILL")
-        out(args, c.get(f"/api/v1/skills/{quote(items[0])}"), lambda r: print(r["text"]))
-    elif a == "skill-install":
-        need(2, "skill-install SKILL hermes")
-        out(args, c.post(f"/api/v1/skills/{quote(items[0])}/install", {"instance": items[1]}))
-    elif a == "skill-delete":
-        need(1, "skill-delete SKILL")
-        out(args, c.call("DELETE", f"/api/v1/skills/{quote(items[0])}"))
-    elif a == "ocr":
-        out(args, c.post("/api/v1/knowledge/ocr"))
-    elif a == "delete":
-        need(1, "delete KEY  (KEY from gpu-shepherd knowledge), or delete duplicates / delete unreadable")
-        if items[0] in ("duplicates", "unreadable"):
-            status = {"duplicates": "duplicate", "unreadable": "failed"}[items[0]]
-            if not (args.yes or ask(f"Delete all {items[0]} documents and their files? This can't be undone.")):
-                return 1
-            out(args, c.post("/api/v1/knowledge/delete", {"status": status}))
-        else:
-            out(args, c.call("DELETE", f"/api/v1/knowledge/{quote(items[0])}"))
-    elif a == "clear":
-        what = items or ["documents", "converted", "skills", "apps"]
-        if not (args.yes or ask(f"Delete {', '.join(what)}? This can't be undone.")):
-            return 1
-        out(args, c.post("/api/v1/knowledge/clear", {"what": what}))
-    return 0
-
-
-def upload_documents(c: Client, paths: list[Path]) -> None:
-    """Send documents, folders of them (folders kept) or zips of them to the documents folder, skipping
-    the ones already there, then scan."""
-    from .knowledge import RANK, zip_has_books
-    todo = []
-    for p in paths:
-        if p.is_dir():
-            todo += [(f, f.relative_to(p.parent).as_posix()) for f in sorted(p.rglob("*"))
-                     if f.is_file() and (f.suffix.lower() in RANK or f.suffix.lower() == ".zip")
-                     and not any(part.startswith(".") for part in f.relative_to(p.parent).parts)]
-        elif p.is_file():
-            todo.append((p, p.name))
-        else:
-            raise Failed(f"{p}: no such file or folder")
-    have = c.get("/api/v1/knowledge/files")["files"]
-    added = skipped = no_books = 0
-    failed = []
-    for i, (f, rel) in enumerate(todo, 1):
-        if have.get(rel) == f.stat().st_size or (rel.lower().endswith(".zip") and
-                                                  any(k.startswith(rel[:-4] + "/") for k in have)):
-            skipped += 1
-            continue
-        if rel.lower().endswith(".zip") and zip_has_books(f) is False:
-            no_books += 1                     # music, videos, games: not sent
-            continue
-        print(f"[{i}/{len(todo)}] {rel}", flush=True)
-        try:
-            added += len(c.send_file("/api/v1/knowledge/files?path=" + quote(rel), f).get("added", []))
-        except Failed as err:
-            print(f"  not added: {err}", file=sys.stderr)
-            failed.append(rel)
-    print(f"Added {added} document{'s' if added != 1 else ''}, skipped {skipped} already there"
-          + (f", left out {no_books} zip{'s' if no_books != 1 else ''} with no documents" if no_books else "")
-          + (f", {len(failed)} not added" if failed else "") + ".")
-    if added:
-        print(c.post("/api/v1/knowledge/scan")["message"])
-
-
 def cmd_token(args, c: Client | None) -> int:
     from . import auth
     from .config import Store
@@ -972,8 +849,8 @@ def cmd_token(args, c: Client | None) -> int:
 COMMANDS = {"status": cmd_status, "list": cmd_list, "show": cmd_show, "start": cmd_change, "stop": cmd_change,
             "restart": cmd_change, "logs": cmd_logs, "logins": cmd_logins, "apply": cmd_apply, "set": cmd_set, "delete": cmd_delete,
             "apps": cmd_apps, "app-updates": cmd_app_updates, "app-versions": cmd_app_versions, "models": cmd_models, "jobs": cmd_jobs,
-            "settings": cmd_settings, "storage": cmd_storage, "knowledge": cmd_knowledge, "books": cmd_knowledge, "trash": cmd_trash, "pictures": cmd_pictures,
-            "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
+            "settings": cmd_settings, "storage": cmd_storage, "trash": cmd_trash, "pictures": cmd_pictures,
+            "priority": cmd_priority, "password": cmd_password, "update": cmd_update, "power": cmd_power, "tailscale": cmd_tailscale, "changelog": cmd_changelog, "token": cmd_token}
 
 
 def add_commands(sub) -> None:
@@ -1026,9 +903,9 @@ def add_commands(sub) -> None:
     p.add_argument("on", nargs="?")
     p.add_argument("--all", action="store_true", help="update every app with a new version in one go")
 
-    p = sub.add_parser("models", help="a model server's models, auto names and settings")
+    p = sub.add_parser("models", help="a model server's models, auto tags and settings")
     msub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
-    for name, what in (("list", "models, aliases, auto names and what is loaded"),
+    for name, what in (("list", "models, aliases, auto tags and what is loaded"),
                        ("files", "the .gguf files the server can see")):
         msub.add_parser(name, help=what).add_argument("server")
     for name, what in (("show", "one model's settings"), ("delete", "remove a model (--files: and its files on disk)"),
@@ -1072,12 +949,12 @@ def add_commands(sub) -> None:
     q.add_argument("server")
     q.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     q.add_argument("--new-api-key", action="store_true", help="give the server a new API key")
-    q = msub.add_parser("auto-set", help="add or replace an auto name: ALIAS DEFAULT [N=MODEL...]")
+    q = msub.add_parser("auto-set", help="add or replace an auto tag: ALIAS DEFAULT [N=MODEL...]")
     q.add_argument("server")
     q.add_argument("alias")
     q.add_argument("default", nargs="?")
     q.add_argument("rules", nargs="*", metavar="N=MODEL")
-    q = msub.add_parser("auto-delete", help="remove an auto name")
+    q = msub.add_parser("auto-delete", help="remove an auto tag")
     q.add_argument("server")
     q.add_argument("alias")
 
@@ -1097,21 +974,6 @@ def add_commands(sub) -> None:
     p.add_argument("items", nargs="*")
     p.add_argument("-y", "--yes", action="store_true", help="move or delete without asking")
     p.add_argument("--no-wait", action="store_true", help="don't follow a move until it finishes")
-    p = sub.add_parser("knowledge", aliases=["books"],
-                       help="documents (ebooks, manuals, notes) for chat apps and agents: list, status, folder PATH, scan, "
-                            "upload FOLDER..., send OPEN-WEBUI [--sync], sync-off, in OPEN-WEBUI, stop, skill KEY, skill-show SKILL, skill-install SKILL HERMES, "
-                            "skill-delete SKILL, ocr, delete KEY|duplicates|unreadable, clear [documents converted skills apps]")
-    p.add_argument("action", nargs="?", choices=("list", "status", "folder", "scan", "upload", "send", "sync-off", "in", "stop", "skill",
-                                                 "skill-show", "skill-install", "skill-delete", "ocr", "delete", "clear"))
-    p.add_argument("items", nargs="*")
-    p.add_argument("-y", "--yes", action="store_true", help="clear: without asking")
-    p.add_argument("--name", default="Documents", help="send: the knowledge base's name (default Documents)")
-    p.add_argument("--split", action="store_true", help="send: one knowledge base per folder in the documents folder")
-    p.add_argument("--sync", action="store_true",
-                   help="send: keep that knowledge base in sync (every scan sends new documents, takes out deleted ones)")
-    p.add_argument("--embeddings", choices=("server", "keep"),
-                   help="send: use the model server's embeddings model in Open WebUI, or keep the one it has")
-    p.add_argument("--server", default="", help="skill: the model server that writes it (default: the first)")
     p = sub.add_parser("trash", help="deleted instances and files: list, restore ID, delete ID, empty")
     p.add_argument("action", nargs="?", choices=("list", "restore", "delete", "empty"))
     p.add_argument("id", nargs="?")
@@ -1122,6 +984,10 @@ def add_commands(sub) -> None:
     p.add_argument("--folder", choices=("output", "input"), default="output", help="output = made, input = uploaded")
     p.add_argument("--older-than", type=int, help="days (0 = every picture)")
     p.add_argument("-y", "--yes", action="store_true", help="move them without asking")
+    p = sub.add_parser("priority", help="who keeps the GPUs when there are not enough: list, top|up|down|bottom ID, "
+                                        "set ID... (that order first)")
+    p.add_argument("action", nargs="?", choices=("list", "top", "up", "down", "bottom", "set"))
+    p.add_argument("ids", nargs="*", metavar="ID")
     sub.add_parser("password", help="change the admin password (asks for it)")
     p = sub.add_parser("update", help="status, check, install, log, branch [NAME], set-token USER, clear-token")
     p.add_argument("action", nargs="?", choices=("status", "check", "install", "log", "branch", "set-token", "clear-token"))

@@ -7,7 +7,6 @@ command prints it.
 """
 from __future__ import annotations
 
-import asyncio
 import ipaddress
 import logging
 import os
@@ -25,7 +24,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
-from . import (app_updates, auth, host as host_mod, knowledge_skills, knowledge as kn, budget, downloads, drives, gpu as gpu_mod, host, image_updates,
+from . import (app_updates, auth, host as host_mod, budget, downloads, drives, gpu as gpu_mod, image_updates,
                instance_templates as tpl, logins, model_library, moves, pictures as pics, storage, tuning, updates)
 from . import gpu_unlock, hf_models, tailscale
 from .config import (AutoAlias, AutoRule, Catalog, CatalogModel, ConfigError, Instance, Settings, Store,
@@ -133,9 +132,7 @@ class Shepherd:
     drive_error: str = ""               # why the machine's drives can't be looked at, if they can't
     image_log: image_updates.Records | None = None
     _metrics_seen: dict[str, float] = field(default_factory=dict)   # server -> newest answer measured
-    knowledge_task: kn.Task | None = None     # what is being done with the books now (or last)
     openwebui_client: object = openwebui.OpenWebUI   # (address, token) -> client; a stand-in in tests
-    _library: kn.Library | None = None
     restarter: object = None            # () -> None: restarts this process (power "restart"); a stand-in in tests
     hf: hf_models.Library | None = None    # suggested models from Hugging Face
 
@@ -240,7 +237,7 @@ class Shepherd:
                     starting.append(inst.name)
                 if cat and gpus:
                     out += budget.too_big(inst, cat, len(gpus), vram)
-            total, available = host.mem_available()
+            total, available = host_mod.mem_available()
             if need and total:
                 leaving = [self.engine.container_name(i) for i in p.to_stop + p.to_restart
                            if snap.states.get(i) and snap.states[i].running]
@@ -304,6 +301,56 @@ class Shepherd:
         st = self.backend.states().get(inst.id)
         note = " Restart it to apply the changes." if st and st.running else ""
         return f"Saved {inst.name}.{note}"
+
+    # ------------------------------------------------------------------ priority
+    def priority_list(self) -> list[dict]:
+        """The instances that use GPUs, in the order the planner serves them: who keeps the GPUs
+        when there are not enough (rank 1 first). Same order as scheduler._priority_order."""
+        instances, _ = self.store.instances()
+        states = self.backend.states()
+        rank = {"fixed": 0, "elastic": 1}
+        order = sorted((i for i in instances.values() if i.gpu.mode != "none"),
+                       key=lambda i: (-i.gpu.priority, rank[i.gpu.mode], i.id))
+        return [{"rank": n, "id": i.id, "name": i.name, "mode": i.gpu.mode, "priority": i.gpu.priority,
+                 "running": bool(states.get(i.id) and states[i.id].running),
+                 "gpus": states[i.id].gpus if states.get(i.id) and states[i.id].running else []}
+                for n, i in enumerate(order, 1)]
+
+    @checked
+    def set_priority_order(self, ids: list[str]) -> str:
+        """Put the GPU-using instances in this order (first = keeps its GPUs first). Instances left
+        out keep their place after the ones named. Each gets its own number from 100 down, so the
+        order is never a tie; the numbers stay what the planner and the instance form use."""
+        current = [row["id"] for row in self.priority_list()]
+        unknown = [i for i in ids if i not in current]
+        if unknown:
+            raise Problem(f"'{unknown[0]}' is not an instance that uses GPUs.", status=404)
+        if len(set(ids)) != len(ids):
+            raise Problem("an instance is listed twice")
+        order = list(ids) + [i for i in current if i not in ids]
+        step = max(1, min(10, 100 // len(order))) if order else 10
+        instances, _ = self.store.instances()
+        changed = 0
+        for n, iid in enumerate(order):
+            inst = instances[iid]
+            want = max(0, 100 - n * step)
+            if inst.gpu.priority != want:
+                inst.gpu.priority = want
+                self.store.save_instance(inst)
+                changed += 1
+        return "Priority order saved." if changed else "That is already the order."
+
+    def move_priority(self, iid: str, direction: str) -> str:
+        """Move one instance a place up or down the priority list."""
+        if direction not in ("up", "down", "top", "bottom"):
+            raise Problem("direction must be up, down, top or bottom")
+        order = [row["id"] for row in self.priority_list()]
+        if iid not in order:
+            raise Problem(f"'{iid}' is not an instance that uses GPUs.", status=404)
+        at = order.index(iid)
+        to = {"up": max(0, at - 1), "down": min(len(order) - 1, at + 1), "top": 0, "bottom": len(order) - 1}[direction]
+        order.insert(to, order.pop(at))
+        return self.set_priority_order(order)
 
     def delete_instance(self, iid: str) -> str:
         """Stop an instance the normal way and move it, with its app data folder and the helpers
@@ -969,12 +1016,17 @@ class Shepherd:
                                 "embed_query_prefix": tpl.query_prefix(embed.file) if embed else "",
                                 # the name each chat model answers to (its first alias), and its context
                                 "models": {(x.aliases or [x.id])[0]: x.ctx_size for x in chat}}
+            ctx = {x.id: x.ctx_size for x in chat}
+            for auto in cat.auto_aliases:           # "coder" and the like: the smallest context it can land on
+                sizes = [ctx[x] for x in [auto.default_model, *(r.model for r in auto.rules)] if x in ctx]
+                if sizes:
+                    servers[inst.id]["models"].setdefault(auto.alias, min(sizes))
         for inst in instances.values():           # vLLM and Ollama servers: apps ask them for the model chat
             info = tpl.vllm_server(inst) or tpl.ollama_server(inst)
             if info:
                 servers[inst.id] = info
         # the GPUs only: a whole snapshot would ask Docker too, and pages call this several times
-        gpus, ram = gpu_mod.query()[0], host.ram_gb()
+        gpus, ram = gpu_mod.query()[0], host_mod.ram_gb()
         nvidia = [g.mem_total / 1024 for g in gpus if g.vendor == "nvidia"]
         m = tpl.Machine(gpu_mem_gb=nvidia, instances=instances, servers=servers, model_sizes={}, ram_gb=ram,
                         amd_gpu_mem_gb=[g.mem_total / 1024 for g in gpus if g.vendor == "amd"],
@@ -1127,11 +1179,21 @@ class Shepherd:
 
     # ------------------------------------------------------------------ app updates
     def _settings_file(self, inst: Instance) -> Path | None:
-        """AnythingLLM's own settings file on this machine, when GPU Shepherd can see it."""
-        inside = dict(tpl.get("anythingllm").files).get(app_updates.ANYTHINGLLM_FILE)
-        v = next((v for v in inst.volumes if v.container == inside), None)
-        path = Path(v.host) if v else None
-        return path if path and path.is_relative_to(self.store.root) and path.is_file() else None
+        """An app's own settings file on this machine (AnythingLLM's server.env, OpenCode's
+        opencode.json, Hermes Agent's config.yaml), when GPU Shepherd can see it."""
+        if inst.app == "anythingllm":
+            inside = dict(tpl.get("anythingllm").files).get(app_updates.ANYTHINGLLM_FILE)
+            v = next((v for v in inst.volumes if v.container == inside), None)
+            path = Path(v.host) if v else None
+        elif inst.app in app_updates.SETTINGS_FILES:
+            folder, name = app_updates.SETTINGS_FILES[inst.app]
+            v = next((v for v in inst.volumes if v.container.rstrip("/") == folder), None)
+            path = Path(v.host) / name if v else None
+        else:
+            return None
+        # only inside the data folder, or a folder of it moved to another disk from the Storage page
+        roots = [self.store.root, *(Path(r.dest) for r in self.move_log.all() if r.status == "done")]
+        return path if path and any(path.is_relative_to(r) for r in roots) and path.is_file() else None
 
     def app_updates(self) -> list[app_updates.Update]:
         """What installed apps are missing of what their app sets up today, model servers first
@@ -1140,7 +1202,7 @@ class Shepherd:
         out = []
         for inst in sorted(m.instances.values(), key=lambda i: (i.kind != "llama-swap", i.name.lower())):
             cat = self.store.catalog(inst.id) if inst.kind == "llama-swap" else None
-            path = self._settings_file(inst) if inst.app == "anythingllm" else None
+            path = self._settings_file(inst)
             try:
                 text = path.read_text(encoding="utf-8") if path else None
             except OSError:
@@ -1167,9 +1229,9 @@ class Shepherd:
         elif u.kind == "file":
             path = self._settings_file(inst)
             if not path:
-                raise Problem(f"can't find {inst.name}'s {app_updates.ANYTHINGLLM_FILE} any more", status=409)
+                raise Problem(f"can't find {inst.name}'s settings file any more", status=409)
             path.write_text(u.file_text, encoding="utf-8")
-            msg = f"Updated {inst.name}'s {app_updates.ANYTHINGLLM_FILE}."
+            msg = f"Updated {inst.name}'s {path.name}."
         else:
             inst.env = inst.env | u.env
             self.store.save_instance(inst)
@@ -1526,9 +1588,10 @@ class Shepherd:
             raise ConfigError(f"{inst.name} is not a model server")
         return inst, self.store.catalog(iid)
 
-    def loaded(self, iid: str, cat: Catalog) -> tuple[dict[str, str], str]:
-        """The models a running model server has loaded (id -> state), or why that's unknown."""
-        st = self.backend.states().get(iid)
+    def loaded(self, iid: str, cat: Catalog, states: dict | None = None) -> tuple[dict[str, str], str]:
+        """The models a running model server has loaded (id -> state), or why that's unknown.
+        `states` is backend.states() when the caller has just read it (one Docker call per page)."""
+        st = (self.backend.states() if states is None else states).get(iid)
         if not (st and st.running):
             return {}, ""
         try:
@@ -1628,10 +1691,10 @@ class Shepherd:
         return (f"Undone: {s.title}. It stays listed, so you can apply it again." if action == "undo"
                 else f"Applied: {s.title}.") + later
 
-    def placement(self, iid: str, cat: Catalog) -> dict[str, list[int]]:
+    def placement(self, iid: str, cat: Catalog, states: dict | None = None) -> dict[str, list[int]]:
         """For a running model server: model id -> the GPUs (machine numbering) it runs on, for the
         models that use fewer than all of the server's GPUs."""
-        st = self.backend.states().get(iid)
+        st = (self.backend.states() if states is None else states).get(iid)
         if not (st and st.running and st.gpus):
             return {}
         try:
@@ -1643,7 +1706,7 @@ class Shepherd:
 
     @checked
     def save_model(self, iid: str, model: CatalogModel, original: str = "", check: bool = True) -> str:
-        """Add a model, or replace `original` (renaming it when the ID changed; auto names follow).
+        """Add a model, or replace `original` (renaming it when the ID changed; auto tags follow).
         A model set up by hand is checked against this machine first (see check_model)."""
         inst, cat = self.server(iid)
         model = CatalogModel.model_validate(model.model_dump())
@@ -1806,7 +1869,7 @@ class Shepherd:
 
     def _extra(self) -> tuple[model_library.Suggestion, ...]:
         """Every suggestion besides the built-in ones: added from a link, and from Hugging Face."""
-        return self._linked() + self.hf_picks([g.mem_total / 1024 for g in gpu_mod.query()[0]], host.ram_gb())
+        return self._linked() + self.hf_picks([g.mem_total / 1024 for g in gpu_mod.query()[0]], host_mod.ram_gb())
 
     def hf_checked(self) -> float:
         return self.hf.checked
@@ -1956,11 +2019,11 @@ class Shepherd:
         note = " Restart the server to use it." if st and st.running else ""
         return f"Added {model.id}" + (f"; downloading it ({s.download_gb:.1f} GB)." if fetching else ".") + note
 
-    def start_failures(self, iid: str) -> dict[str, str]:
+    def start_failures(self, iid: str, states: dict | None = None) -> dict[str, str]:
         """Model id -> why it last failed to start on this running server (from its log), for
         loads asked for from the Models page and from chat apps alike."""
         inst, cat = self.server(iid)
-        st = self.backend.states().get(iid)
+        st = (self.backend.states() if states is None else states).get(iid)
         if not (st and st.running):
             return {}
         text = self.backend.logs(self.engine.container_name(iid), tail=3000)
@@ -2047,11 +2110,11 @@ class Shepherd:
 
     @checked
     def set_auto_aliases(self, iid: str, autos: list[AutoAlias]) -> str:
-        """Replace all of a model server's auto names."""
+        """Replace all of a model server's auto tags."""
         _, cat = self.server(iid)
         cat = Catalog.model_validate({**cat.model_dump(), "auto_aliases": [a.model_dump() for a in autos]})
         self.store.save_catalog(cat)
-        return "Auto names saved."
+        return "Auto tags saved."
 
     # ------------------------------------------------------------------ settings
     def set_containers(self, bind_address: str | None = None, network: str | None = None) -> str:
@@ -2072,8 +2135,8 @@ class Shepherd:
         s = self.store.settings()
         if not auth.verify_password(current, s.password_hash):
             raise Problem("The current password is wrong.", status=403)
-        if len(new) < 10:
-            raise Problem("Use at least 10 characters.")
+        if len(new) < auth.MIN_LENGTH:
+            raise Problem(f"Use at least {auth.MIN_LENGTH} characters.")
         if again is not None and new != again:
             raise Problem("The new passwords do not match.")
         s.password_hash = auth.hash_password(new)
@@ -2152,7 +2215,6 @@ class Shepherd:
         else:
             hint = ""
         return {"host": not hint, "hint": hint, "busy": u.busy, "change": self.jobs.busy,
-                "knowledge": bool(self.knowledge_task and self.knowledge_task.running),
                 "running": running, "downloads": len(downloading)}
 
     def power(self, action: str) -> str:
@@ -2162,8 +2224,6 @@ class Shepherd:
         st = self.power_status()
         if st["change"]:
             raise Problem("Wait for the current change to finish (or cancel it) first.", "warn", 409)
-        if st["knowledge"]:
-            raise Problem(f"Wait for the current knowledge work to finish ({self.knowledge_task.title}), or stop it.", "warn", 409)
         if action == "restart":
             log.info("power: restarting GPU Shepherd")
             self.restarter()
@@ -2268,300 +2328,6 @@ class Shepherd:
                 "https-off": "Turning HTTPS off…",
                 "logout": "Logging out of Tailscale…"}[action]
 
-    # ------------------------------------------------------------------ knowledge
-    @property
-    def library(self) -> kn.Library:
-        if self._library is None:
-            self._library = kn.Library(self.store.root)
-            for line in self._library.moved:
-                log.info("knowledge: moved %s", line)
-        return self._library
-
-    def _book_apps(self, instances: dict[str, Instance]) -> tuple[list[Instance], list[Instance]]:
-        """Open WebUI instances (documents go into their knowledge) and Hermes Agent instances (skills)."""
-        apps = {t: [i for i in instances.values() if tpl.matches(tpl.get(t), i)] for t in ("open-webui", "hermes")}
-        return apps["open-webui"], apps["hermes"]
-
-    def knowledge(self, sizes: bool = True) -> dict:
-        """The documents folder, the documents found in it, what is being done with them, where they
-        can go and where it is all kept (with sizes, unless `sizes` is False)."""
-        data = self.library.load()
-        folder = self.library.folder(data)
-        instances, _ = self.store.instances()
-        webuis, hermes = self._book_apps(instances)
-        m = self.machine()
-        counts: dict[str, int] = {}
-        rows = []
-        reasons: dict[str, dict[str, int]] = {}
-        for b in sorted(data["books"].values(), key=lambda b: (b.group.lower(), b.name.lower())):
-            counts[b.status] = counts.get(b.status, 0) + 1
-            rows.append(asdict(b) | {"name": b.name})
-            if b.status in ("failed", "skipped") and b.reason:
-                why = reasons.setdefault(b.status, {})
-                why[b.reason] = why.get(b.reason, 0) + 1
-        skills = []
-        for slug, s in sorted((data.get("skills") or {}).items()):
-            skills.append(s | {"slug": slug, "path": str(self._skill_dir(slug)),
-                               "exists": (self._skill_dir(slug) / "SKILL.md").exists()})
-        storage = []
-        for what, path in (("Documents", folder), ("Converted text", self.library.text_dir),
-                           ("Skill drafts", self.library.skills_dir)):
-            files, size = kn.size(path) if sizes else (None, None)
-            storage.append({"what": what, "path": str(path), "exists": path.is_dir(), "files": files, "bytes": size,
-                            "size": gb(size) if size is not None else ""})
-        try:
-            free = gb(shutil.disk_usage(folder if folder.is_dir() else self.store.root).free)
-        except OSError:
-            free = ""
-        return {"folder": str(folder), "folder_ok": folder.is_dir(), "default_folder": str(self.library.default_folder),
-                "own_folder": folder == self.library.default_folder, "home": str(self.library.home),
-                "storage": storage, "free": free, "ocr": kn.ocr_available(),
-                "reasons": {k: sorted(v.items(), key=lambda x: (-x[1], x[0])) for k, v in reasons.items()},
-                "scanned": data.get("scanned"), "counts": counts, "documents": rows,
-                "words": sum(b.words for b in data["books"].values() if b.status == "ready"),
-                "task": self.knowledge_task.as_dict() if self.knowledge_task else None,
-                "webuis": [{"id": i.id, "name": i.name, "running": self._running(i.id)} for i in webuis],
-                "hermes": [{"id": i.id, "name": i.name} for i in hermes],
-                "servers": [{"id": k, "name": v["name"], "model": v.get("default_model", ""), "embed": v.get("embed", "")}
-                            for k, v in m.servers.items()],
-                "sends": data.get("sends") or [], "sync": data.get("sync"), "skills": skills, "upload_mb": kn.UPLOAD_MB,
-                "zip_mb": kn.ZIP_MB}
-
-    def _knowledge_busy(self) -> None:
-        if self.knowledge_task and self.knowledge_task.running:
-            raise Problem(f"Wait for the current knowledge work to finish ({self.knowledge_task.title}), or stop it.", "warn", 409)
-
-    def set_documents_folder(self, path: str) -> str:
-        self._knowledge_busy()
-        path = path.strip()
-        if path and not path.startswith("/"):
-            raise Problem("Give the documents folder as a full path, like /srv/documents.")
-        target = Path(path) if path else self.library.default_folder
-        if path and not target.is_dir():
-            raise Problem(f"GPU Shepherd can't see {path}. Mount it into GPU Shepherd's container at the same path "
-                          "(like a models folder), or put the documents in its own documents folder.", status=404)
-        self.library.update(lambda d: d.__setitem__("folder", path))
-        return f"Documents folder: {target}. Scan it to find the documents."
-
-    def document_files(self) -> dict:
-        """The document files already in the documents folder, {path: size}, so an upload can skip them."""
-        folder = self.library.folder()
-        return {"folder": str(folder), "files": kn.files(folder) if folder.is_dir() else {}}
-
-    def _book_dest(self, path: str, size: int | None) -> tuple[str, Path, int]:
-        """Where an uploaded file goes, and the most bytes it may have."""
-        try:
-            rel = kn.safe_rel(path)
-        except kn.BookError as err:
-            raise Problem(str(err)) from err
-        limit = (kn.ZIP_MB if rel.lower().endswith(".zip") else kn.UPLOAD_MB) << 20
-        if size is not None and size > limit:
-            raise self._too_big(rel, limit)
-        folder = self.library.folder()
-        if not folder.is_dir():
-            if folder != self.library.default_folder:
-                raise Problem(f"GPU Shepherd can't see the documents folder {folder}.", status=404)
-            folder.mkdir(parents=True, exist_ok=True)
-        if size and size > shutil.disk_usage(folder).free:
-            raise Problem(f"Not enough free space in {folder} for {rel}.", status=507)
-        dest = folder / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        return rel, dest, limit
-
-    @staticmethod
-    def _too_big(rel: str, limit: int) -> Problem:
-        return Problem(f"{rel} is over {limit >> 20} MB: copy it into the documents folder another way.", status=413)
-
-    def _place_book(self, rel: str, dest: Path, tmp: Path) -> dict:
-        """Put a received file in place; a zip is unpacked into a folder named after it, then removed."""
-        if not rel.lower().endswith(".zip"):
-            os.replace(tmp, dest)
-            return {"added": [rel], "left_out": 0}
-        into = dest.with_name(dest.name[:-4])
-        try:
-            saved, other = kn.unpack(tmp, into, Path(rel).name)
-        except kn.BookError as err:
-            raise Problem(str(err)) from err
-        finally:
-            tmp.unlink(missing_ok=True)
-        base = rel[:-4]
-        if not saved:
-            raise Problem(f"{Path(rel).name} has no documents in it (EPUB, PDF, DOCX, TXT, Markdown, AZW3, MOBI or PRC).")
-        return {"added": [f"{base}/{r}" for r in saved], "left_out": other}
-
-    def save_document(self, path: str, f, size: int | None = None) -> dict:
-        """Save one uploaded document or zip of documents (a file-like) at `path` in the documents folder,
-        folders kept. Returns {"added": [paths], "left_out": n}. Doesn't scan."""
-        rel, dest, limit = self._book_dest(path, size)
-        tmp = dest.with_name(dest.name + ".part")
-        try:
-            n = 0
-            with open(tmp, "wb") as out:
-                while chunk := f.read(1 << 20):
-                    n += len(chunk)
-                    if n > limit:
-                        raise self._too_big(rel, limit)
-                    out.write(chunk)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
-        return self._place_book(rel, dest, tmp)
-
-    async def receive_document(self, path: str, stream, size: int | None = None,
-                               offset: int | None = None, total: int | None = None) -> dict:
-        """save_document for a request body streamed in (async chunks), so big files never sit in memory.
-        With `offset` and `total` the body is one piece of a file sent in pieces, from that byte on:
-        pieces are added to <name>.part in order, and the last one puts the file in place. Until then
-        the answer is {"received": bytes so far}. A piece that doesn't start where the file stops
-        is refused with "have" (where to carry on), and a piece that fails is cut off again, so it can
-        be sent again. (Browsers send a file read into memory piece by piece even where they can't
-        send the file itself, like a Windows path over 260 characters.)"""
-        if offset is not None:
-            return await self._receive_piece(path, stream, offset, total)
-        rel, dest, limit = self._book_dest(path, size)
-        tmp = dest.with_name(dest.name + ".part")
-        try:
-            n = 0
-            with open(tmp, "wb") as out:
-                async for chunk in stream:
-                    n += len(chunk)
-                    if n > limit:
-                        raise self._too_big(rel, limit)
-                    out.write(chunk)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
-        return await asyncio.to_thread(self._place_book, rel, dest, tmp)
-
-    async def _receive_piece(self, path: str, stream, offset: int, total: int | None) -> dict:
-        if total is None or total < 0 or offset < 0 or offset > total:
-            raise Problem("A piece needs offset and total (the whole file's size), with offset at most total.")
-        rel, dest, limit = self._book_dest(path, total if offset == 0 else None)
-        if total > limit:
-            raise self._too_big(rel, limit)
-        tmp = dest.with_name(dest.name + ".part")
-        have = tmp.stat().st_size if tmp.exists() else 0
-        if offset and offset != have:
-            raise Problem(f"{rel}: this piece starts at byte {offset}, but {have} are here; carry on from there.",
-                          status=409, data={"have": have})
-        n = offset
-        try:
-            with open(tmp, "r+b" if offset else "wb") as out:
-                out.seek(offset)
-                out.truncate()
-                async for chunk in stream:
-                    n += len(chunk)
-                    if n > total:
-                        raise Problem(f"{rel}: more bytes than its size ({total}).")
-                    out.write(chunk)
-        except BaseException:
-            try:
-                if offset:
-                    os.truncate(tmp, offset)
-                else:
-                    tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-        if n < total:
-            return {"received": n}
-        return await asyncio.to_thread(self._place_book, rel, dest, tmp)
-
-    def add_documents(self, files: list[tuple[str, object]]) -> str:
-        """Save uploaded documents or zips of them (name, file-like) into the documents folder, then scan."""
-        saved, refused = [], []
-        for name, f in files:
-            try:
-                r = self.save_document(str(name), f)
-            except Problem as err:
-                refused.append(Path(str(name).replace("\\", "/")).name or "?")
-                log.info("document upload refused: %s", err.msg)
-                continue
-            saved += r["added"]
-        if not saved:
-            raise Problem("No documents added: " + (", ".join(refused) + " " if refused else "") +
-                          "(EPUB, PDF, DOCX, TXT, Markdown, AZW3, MOBI or PRC files, or zips of them).")
-        msg = f"Added {len(saved)} document{'s' if len(saved) != 1 else ''}"
-        msg += f"; left out {', '.join(refused)}." if refused else "."
-        try:
-            return msg + " " + self.scan_documents()
-        except Problem as err:
-            return msg + " " + err.msg + " Then scan the folder again."
-
-    def _knowledge_work(self, title: str, fn) -> str:
-        self._knowledge_busy()
-        task = kn.Task(title)
-        self.knowledge_task = task
-
-        def run():
-            try:
-                task.finish(fn(task) or "Done.")
-            except InterruptedError:
-                task.finish("Stopped. Start it again to carry on where it stopped.", stopped=True)
-            except (Problem, kn.BookError, openwebui.OpenWebUIError, BackendError, OSError, ValueError) as err:
-                task.fail(err.msg if isinstance(err, Problem) else str(err))
-            except Exception as err:  # noqa: BLE001 - shown on the Knowledge page
-                log.exception("knowledge: %s failed", title)
-                task.fail(f"{err.__class__.__name__}: {err}")
-        threading.Thread(target=run, name="knowledge", daemon=True).start()
-        return title + "…"
-
-    def stop_knowledge(self) -> str:
-        if not (self.knowledge_task and self.knowledge_task.running):
-            raise Problem("Nothing is running.", "warn", 409)
-        self.knowledge_task.stop = True
-        return "Stopping after the current document…"
-
-    def scan_documents(self) -> str:
-        """Find and read the documents, in the background. With sync on (see send_documents), the
-        Open WebUI it syncs with is brought up to date afterwards: new documents go in, documents
-        gone from the folder (or changed) come out."""
-        folder = self.library.folder()
-        if not folder.is_dir():
-            if folder == self.library.default_folder:
-                folder.mkdir(parents=True, exist_ok=True)
-            else:
-                raise Problem(f"GPU Shepherd can't see the documents folder {folder}.", status=404)
-
-        def work(task: kn.Task) -> str:
-            def progress(done, total, name):
-                task.progress(done, total, f"Reading {name}")
-            before = {k: (b.stamp, dict(b.sent)) for k, b in self.library.load()["books"].items() if b.sent}
-            counts = self.library.scan(progress, lambda: task.stop)
-            self._note_stale(before)
-            if task.stop:
-                raise InterruptedError
-            parts = [f"{counts.get('ready', 0)} ready"] + [f"{n} {s}" for s, n in sorted(counts.items()) if s != "ready"]
-            msg = "Found the documents: " + ", ".join(parts) + "."
-            sync = self.library.load().get("sync")
-            if not sync:
-                return msg
-            instances, _ = self.store.instances()
-            inst = instances.get(sync.get("instance", ""))
-            if not inst:
-                return msg
-            if not self._running(inst.id):
-                return msg + f" Start {inst.name} and scan again to sync it."
-            return msg + " " + self._sync_openwebui(task, inst, sync["name"], bool(sync.get("split")),
-                                                    bool(sync.get("embeddings")))
-        return self._knowledge_work("Finding and reading documents", work)
-
-    def _note_stale(self, before: dict[str, tuple[str, dict]]) -> None:
-        """After a scan: copies in Open WebUI of documents that are gone from the folder, or were
-        changed (and read again), are noted as stale, to be taken out by the next sync or clear.
-        A changed document is sent again."""
-        def note(d):
-            stale = d.setdefault("stale", [])
-            for key, (stamp, sent) in before.items():
-                b = d["books"].get(key)
-                if b and b.stamp == stamp:
-                    continue
-                stale += [{"target": t, "fid": f} for t, f in sent.items()]
-                if b:
-                    b.sent = {}
-        if before:
-            self.library.update(note)
-
     # Open WebUI
     def _openwebui(self, inst: Instance) -> openwebui.OpenWebUI:
         try:
@@ -2604,483 +2370,6 @@ class Shepherd:
             raise Problem(f"couldn't set {inst.name}'s picture settings: {err}", status=409) from err
         model = inst.env.get("IMAGE_GENERATION_MODEL")
         return f"Sent {inst.name} its picture settings" + (f" (model {model})." if model else ".")
-
-    def _embed_server(self, inst: Instance, m: tpl.Machine) -> str:
-        """The model server whose embeddings model Open WebUI should use: the one it is connected to."""
-        server = tpl.connected_server(inst, m)
-        if server and m.servers[server].get("embed"):
-            return server
-        return next((k for k, v in m.servers.items() if v.get("embed") and k in m.instances), "")
-
-    @checked
-    def send_documents(self, iid: str, name: str = "Documents", split: bool = False,
-                       use_server_embeddings: bool | None = None, sync: bool | None = None) -> str:
-        """Put the ready documents into an Open WebUI knowledge base (one per first-level folder with
-        `split`), in the background. Documents already sent there are skipped, so it carries on after a stop.
-        use_server_embeddings: True switches Open WebUI to the model server's embeddings model, False
-        keeps whatever it uses, None stops with a question when they differ.
-        sync: True keeps that knowledge base in sync from now on (every scan sends new documents and
-        takes out the ones gone from the folder), False stops syncing, None leaves it as it is."""
-        inst = self.instance(iid)
-        if not tpl.matches(tpl.get("open-webui"), inst):
-            raise Problem(f"{inst.name} isn't Open WebUI: documents go into Open WebUI's knowledge bases.")
-        if not self._running(iid):
-            raise Problem(f"Start {inst.name} first.", status=409)
-        name = re.sub(r"\s+", " ", name or "").strip()[:80] or "Documents"
-        if not any(b.status == "ready" for b in self.library.books()):
-            raise Problem("No documents ready to send: add documents and scan the documents folder first.", status=409)
-        self._knowledge_busy()
-        if sync is not None:
-            self.library.update(lambda d: d.__setitem__("sync", {
-                "instance": iid, "name": name, "split": split,
-                "embeddings": use_server_embeddings is not False} if sync else None))
-
-        def work(task: kn.Task) -> str:
-            return self._sync_openwebui(task, inst, name, split, use_server_embeddings)
-        return self._knowledge_work(f"Sending documents to {inst.name}", work)
-
-    def stop_sync(self) -> str:
-        """Stop keeping an Open WebUI knowledge base in sync (what is in it stays)."""
-        sync = self.library.load().get("sync")
-        if not sync:
-            raise Problem("Sync isn't on.", "info", 409)
-        self.library.update(lambda d: d.__setitem__("sync", None))
-        return (f"Stopped syncing {sync['name']}. What is in it stays; send again to add new documents, "
-                "or turn sync back on.")
-
-    def _sync_openwebui(self, task: kn.Task, inst: Instance, name: str, split: bool,
-                        use_server_embeddings: bool | None) -> str:
-        """Take stale copies out of an Open WebUI, then send it the ready documents it doesn't have."""
-        iid = inst.id
-        m = self.machine()
-        server = self._embed_server(inst, m)
-        task.text = f"Signing in to {inst.name}"
-        ow = self._openwebui(inst)
-        if server:
-            info = m.servers[server]
-            emb = ow.embedding()
-            uses = emb["engine"] == "openai" and emb["model"] == info["embed"] and server in emb["url"]
-            if not uses and use_server_embeddings:
-                ow.use_embedding(tpl._server_url(server, m), info["api_key"], info["embed"],
-                                 info.get("embed_query_prefix", ""))
-            elif not uses and use_server_embeddings is None:
-                raise Problem(f"{inst.name} embeds documents with {emb['model'] or 'its own model'}"
-                              f"{' on its CPU' if not emb['engine'] else ''}, not {info['name']}'s embeddings "
-                              "model. Choose which to use, then send again.", status=409)
-        removed = self._take_out_stale(task, ow, iid)
-        there = ow.knowledge_bases()
-
-        def forget_gone(d):                      # knowledge bases deleted in Open WebUI: send to them again
-            for b in d["books"].values():
-                b.sent = {t: f for t, f in b.sent.items() if t.partition("/")[0] != iid or t.partition("/")[2] in there}
-        self.library.update(forget_gone)
-        todo = [b for b in self.library.books() if b.status == "ready"]
-        kbs: dict[str, str] = {}
-        sent = skipped = failed = in_a_row = 0
-        for i, b in enumerate(todo):
-            if task.stop:
-                raise InterruptedError
-            kb = f"{name} - {b.group}" if split and b.group else name
-            target = f"{iid}/{kb}"
-            if target in b.sent:
-                skipped += 1
-                continue
-            task.progress(i, len(todo), f"Sending {b.name}")
-            try:
-                if kb not in kbs:
-                    kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
-                fid = ow.upload(b.file_name, self.library.text(b.key))
-                ow.add(kbs[kb], fid)
-            except (openwebui.OpenWebUIError, OSError) as err:
-                if "answered 401" in str(err):          # the sign-in ran out: sign in again, then retry it
-                    ow = self._openwebui(inst)
-                    kbs.clear()
-                    try:
-                        kbs[kb] = ow.knowledge_id(kb, "Documents added by GPU Shepherd")
-                        fid = ow.upload(b.file_name, self.library.text(b.key))
-                        ow.add(kbs[kb], fid)
-                    except (openwebui.OpenWebUIError, OSError) as err2:
-                        err = err2
-                    else:
-                        err = None
-                if err is not None:
-                    failed += 1
-                    in_a_row += 1
-                    task.errors.append(f"{b.name}: {err}")
-                    if in_a_row >= 5:
-                        raise openwebui.OpenWebUIError(f"stopped after 5 documents in a row failed; the last: {err}")
-                    continue
-            in_a_row = 0
-            sent += 1
-
-            def mark(d, key=b.key, fid=fid):
-                if key in d["books"]:
-                    d["books"][key].sent[target] = fid
-            self.library.update(mark)
-        self.library.update(lambda d: d.__setitem__("sends", [
-            s for s in (d.get("sends") or []) if (s["instance"], s["name"]) != (iid, name)] + [
-            {"instance": iid, "name": name, "split": split, "when": time.time()}]))
-        msg = f"Sent {sent} document{'s' if sent != 1 else ''} to {inst.name}"
-        msg += f" ({skipped} were there already)" if skipped else ""
-        msg += f", took out {removed} old cop{'ies' if removed != 1 else 'y'}" if removed else ""
-        msg += f"; {failed} failed." if failed else "."
-        return msg + " In a chat, type # and pick the knowledge base."
-
-    def _take_out_stale(self, task: kn.Task, ow, iid: str) -> int:
-        """Take the stale copies (see _note_stale) out of one Open WebUI. Returns how many."""
-        stale = [s for s in self.library.load().get("stale") or [] if s["target"].partition("/")[0] == iid]
-        if not stale:
-            return 0
-        task.text = "Taking out documents that are gone or changed"
-        ids = ow.knowledge_bases()
-        done = []
-        for s in stale:
-            kb = s["target"].partition("/")[2]
-            try:
-                if ids.get(kb):
-                    ow.remove(ids[kb], s["fid"])
-                ow.delete_file(s["fid"])
-            except openwebui.OpenWebUIError as err:
-                task.errors.append(f"taking out an old copy in {kb}: {err}")
-                continue
-            done.append(s)
-        self.library.update(lambda d: d.__setitem__("stale", [s for s in d.get("stale") or [] if s not in done]))
-        return len(done)
-
-    def openwebui_knowledge(self, iid: str) -> dict:
-        """What is in an Open WebUI's knowledge: its knowledge bases, how many files each has, and
-        for the ones GPU Shepherd sends to, how many documents are in it and how many aren't yet."""
-        inst = self.instance(iid)
-        if not tpl.matches(tpl.get("open-webui"), inst):
-            raise Problem(f"{inst.name} isn't Open WebUI.")
-        if not self._running(iid):
-            raise Problem(f"Start {inst.name} to see its knowledge.", status=409)
-        data = self.library.load()
-        ready = [b for b in data["books"].values() if b.status == "ready"]
-        sends = {s["name"]: s for s in data.get("sends") or [] if s.get("instance") == iid}
-        sync = data.get("sync") if (data.get("sync") or {}).get("instance") == iid else None
-        ours: dict[str, dict] = {}               # knowledge base -> {"sent", "missing", "send", "sync"}
-        for s in sends.values():
-            for b in ready:
-                kb = f"{s['name']} - {b.group}" if s.get("split") and b.group else s["name"]
-                row = ours.setdefault(kb, {"sent": 0, "missing": 0, "send": s["name"],
-                                           "sync": bool(sync and sync["name"] == s["name"])})
-                row["sent" if f"{iid}/{kb}" in b.sent else "missing"] += 1
-        try:
-            ow = self._openwebui(inst)
-            bases = ow.knowledge_list()
-            for k in bases[:50]:
-                if k["files"] is None:
-                    k["files"] = ow.file_count(k["id"])
-        except openwebui.OpenWebUIError as err:
-            raise Problem(f"couldn't read {inst.name}'s knowledge: {err}", status=502) from err
-        rows = []
-        for k in sorted(bases, key=lambda k: (k["name"] not in ours, k["name"].lower())):
-            mine = ours.pop(k["name"], None)
-            rows.append(k | {"ours": bool(mine), "sent": mine["sent"] if mine else None,
-                             "missing": mine["missing"] if mine else 0, "sync": bool(mine and mine["sync"]),
-                             "path": f"/workspace/knowledge/{k['id']}"})
-        for kb, mine in sorted(ours.items()):    # sent there before, but the knowledge base is gone
-            if mine["sent"]:
-                rows.append({"id": "", "name": kb, "description": "", "files": 0, "ours": True, "gone": True,
-                             "sent": mine["sent"], "missing": mine["missing"], "sync": mine["sync"], "path": ""})
-        return {"instance": iid, "name": inst.name, "bases": rows, "sync": sync,
-                "stale": sum(1 for s in data.get("stale") or [] if s["target"].partition("/")[0] == iid)}
-
-    # skills
-    def _skill_dir(self, slug: str) -> Path:
-        return self.library.skills_dir / slug
-
-    def _hermes_data(self, inst: Instance) -> Path | None:
-        """A Hermes Agent's data folder, if GPU Shepherd can see it."""
-        inside = dict(tpl.get("hermes").appdata)["data"]
-        v = next((v for v in inst.volumes if v.container == inside), None)
-        return Path(v.host) if v and Path(v.host).is_relative_to(self.store.root) else None
-
-    def _skill(self, slug: str) -> dict:
-        s = (self.library.load().get("skills") or {}).get(slug)
-        if not s:
-            raise Problem(f"No skill '{slug}'.", status=404)
-        return s
-
-    def _chat(self, server: str, m: tpl.Machine):
-        """prompt -> answer from a model server's default chat model."""
-        inst, info = m.instances[server], m.servers[server]
-        port = inst.ports[0].container if inst.ports else 8080
-        url = instance_url(inst, port) + "/v1/chat/completions"
-
-        def chat(prompt: str) -> str:
-            body = {"model": info.get("default_model") or "chat", "max_tokens": 4096, "temperature": 0.3,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "chat_template_kwargs": {"enable_thinking": False}}
-            try:
-                r = httpx.post(url, json=body, headers={"Authorization": f"Bearer {info['api_key']}"}, timeout=1800)
-                r.raise_for_status()
-                return r.json()["choices"][0]["message"].get("content") or ""
-            except (httpx.HTTPError, ValueError, KeyError, IndexError) as err:
-                raise kn.BookError(f"{info['name']} didn't answer: {err.__class__.__name__}: {err}") from err
-        return chat
-
-    def make_skill(self, key: str, server: str = "") -> str:
-        """Draft an agent skill from a document with a model server, in the background."""
-        b = self.library.load()["books"].get(key)
-        if not b or b.status not in ("ready", "duplicate"):
-            raise Problem("That document isn't ready: scan the documents folder first.", status=404)
-        m = self.machine()
-        server = server or next(iter(m.servers), "")
-        if server not in m.servers or server not in m.instances:
-            raise Problem("Making a skill needs a model server (install the Llama Swap from the App Center)."
-                          if not server else f"No model server '{server}'.", status=404)
-        if not self._running(server):
-            raise Problem(f"Start {m.servers[server]['name']} first: its chat model writes the skill.", status=409)
-        slug = knowledge_skills.slug(b.name)
-
-        def work(task: kn.Task) -> str:
-            text = self.library.text(b.key)
-            md = knowledge_skills.make(b.name, text, self._chat(server, m), m.servers[server].get("ctx") or 0,
-                                  lambda s: setattr(task, "text", f"{b.name}: {s}"), lambda: task.stop)
-            folder = self._skill_dir(slug)
-            knowledge_skills.write(folder, md, text)
-            self.library.update(lambda d: d.setdefault("skills", {}).__setitem__(slug, {
-                "book": b.key, "name": b.name, "server": server, "made": time.time(),
-                "installed": ((d.get("skills") or {}).get(slug) or {}).get("installed", {})}))
-            return f"Drafted the skill {slug}. Check it, then install it in an agent."
-        return self._knowledge_work(f"Making a skill from {b.name}", work)
-
-    def skill_text(self, slug: str) -> str:
-        self._skill(slug)
-        try:
-            return (self._skill_dir(slug) / "SKILL.md").read_text(encoding="utf-8")
-        except OSError as err:
-            raise Problem(f"The skill's SKILL.md is missing: {err}", status=404) from err
-
-    def save_skill(self, slug: str, text: str) -> str:
-        self._skill(slug)
-        if not re.match(r"^---\n.*?\bname:.*?\bdescription:.*?\n---", text.strip().replace("\r\n", "\n"), re.S):
-            raise Problem("Keep the --- lines at the top with name: and description: (agents need them).")
-        (self._skill_dir(slug) / "SKILL.md").write_text(text.strip().replace("\r\n", "\n") + "\n", encoding="utf-8")
-        return f"Saved {slug}. Install it again where it is installed, so agents get the change."
-
-    def install_skill(self, slug: str, iid: str) -> str:
-        """Copy a skill into a Hermes Agent's skills folder."""
-        self._skill(slug)
-        inst = self.instance(iid)
-        if not tpl.matches(tpl.get("hermes"), inst):
-            raise Problem(f"{inst.name} isn't Hermes Agent: skills from documents go to Hermes Agent.")
-        home = self._hermes_data(inst)
-        if home is None:
-            raise Problem(f"GPU Shepherd can't see {inst.name}'s data folder, so it can't add skills there.", status=409)
-        owner = tpl.get("hermes").data_owner
-        dest = knowledge_skills.install(self._skill_dir(slug), home)
-        if owner and os.geteuid() == 0:
-            for p in [dest.parent, dest, *dest.rglob("*")]:
-                os.chown(p, *owner)
-        self.library.update(lambda d: d["skills"][slug].setdefault("installed", {}).__setitem__(iid, time.time()))
-        return f"Installed {slug} in {inst.name}. It sees the skill in a new conversation (or after a restart)."
-
-    def delete_skill(self, slug: str) -> str:
-        """Forget a draft (installed copies stay in the agents)."""
-        self._skill(slug)
-        shutil.rmtree(self._skill_dir(slug), ignore_errors=True)
-        self.library.update(lambda d: d["skills"].pop(slug, None))
-        return f"Deleted the draft {slug}. Copies installed in agents stay there."
-
-    CLEAR = ("documents", "converted", "skills", "apps")
-
-    def clear_knowledge(self, what: tuple[str, ...] | list[str] = CLEAR) -> str:
-        """Start over, in the background. `what` picks the parts:
-            documents   the files in the documents folder (all of it when it is GPU Shepherd's own
-                        folder; only document files and zips in a folder of your own)
-            converted   the converted text and the list of documents (and where they were sent)
-            skills      the skill drafts, and the copies installed in Hermes Agents
-            apps        the documents sent to Open WebUI: taken out of its knowledge bases and deleted
-                        there, and a knowledge base GPU Shepherd made is deleted once it is empty"""
-        what = tuple(w for w in self.CLEAR if w in what)
-        if not what:
-            raise Problem(f"Say what to clear: {', '.join(self.CLEAR)}.")
-        self._knowledge_busy()
-        data = self.library.load()
-        instances, _ = self.store.instances()
-        targets: dict[str, dict[str, list[str]]] = {}         # instance -> knowledge base -> file ids
-        if "apps" in what:
-            sent = [(t, f) for b in data["books"].values() for t, f in b.sent.items()]
-            for target, fid in sent + [(s["target"], s["fid"]) for s in data.get("stale") or []]:
-                iid, _, kb = target.partition("/")
-                targets.setdefault(iid, {}).setdefault(kb, []).append(fid)
-            stopped = [instances[i].name for i in targets if i in instances and not self._running(i)]
-            if stopped:
-                raise Problem(f"Start {', '.join(stopped)} first, so the documents can be taken out of it, or clear "
-                              "without Open WebUI.", status=409)
-
-        def work(task: kn.Task) -> str:
-            done = []
-            if "apps" in what and targets:
-                removed = 0
-                for iid, kbs in targets.items():
-                    if iid not in instances:
-                        continue
-                    task.text = f"Taking the documents out of {instances[iid].name}"
-                    ow = self._openwebui(instances[iid])
-                    ids = ow.knowledge_bases()
-                    total = sum(len(f) for f in kbs.values())
-                    for kb, fids in kbs.items():
-                        kid = ids.get(kb)
-                        for fid in fids:
-                            if task.stop:
-                                raise InterruptedError
-                            task.progress(removed, total, f"Taking the documents out of {instances[iid].name}: {kb}")
-                            try:
-                                if kid:
-                                    ow.remove(kid, fid)
-                                ow.delete_file(fid)
-                                removed += 1
-                            except openwebui.OpenWebUIError as err:
-                                task.errors.append(f"{kb}: {err}")
-                        if kid and ow.knowledge_empty(kid):
-                            ow.delete_knowledge(kid)
-
-                    def unsent(d, iid=iid):
-                        for b in d["books"].values():
-                            b.sent = {t: f for t, f in b.sent.items() if not t.startswith(iid + "/")}
-                        d["sends"] = [x for x in (d.get("sends") or []) if x.get("instance") != iid]
-                        d["stale"] = [x for x in (d.get("stale") or []) if not x["target"].startswith(iid + "/")]
-                        if (d.get("sync") or {}).get("instance") == iid:
-                            d["sync"] = None          # or the next scan would send it all again
-                    self.library.update(unsent)
-                done.append(f"took {removed} document{'s' if removed != 1 else ''} out of Open WebUI")
-            if "skills" in what:
-                task.text = "Removing the skills"
-                n = 0
-                for slug, sk in (self.library.load().get("skills") or {}).items():
-                    for iid in (sk.get("installed") or {}):
-                        home = self._hermes_data(instances[iid]) if iid in instances else None
-                        if home is not None:
-                            knowledge_skills.uninstall(slug, home)
-                    n += 1
-                shutil.rmtree(self.library.skills_dir, ignore_errors=True)
-                self.library.update(lambda d: d.__setitem__("skills", {}))
-                done.append(f"deleted {n} skill{'s' if n != 1 else ''}")
-            if "documents" in what:
-                folder = self.library.folder()
-                task.text = f"Deleting the documents in {folder}"
-                n = self._empty_documents(folder, own=folder == self.library.default_folder)
-                done.append(f"deleted {n} file{'s' if n != 1 else ''} from {folder}")
-            if "converted" in what:
-                task.text = "Deleting the converted text"
-                shutil.rmtree(self.library.text_dir, ignore_errors=True)
-                self.library.update(lambda d: d.update({"books": {}, "sends": [], "stale": [], "scanned": None}))
-                done.append("deleted the converted text and the list of documents")
-            return "Cleared: " + ", ".join(done) + "."
-        return self._knowledge_work("Clearing out knowledge", work)
-
-    def ocr_documents(self) -> str:
-        """Read the scanned PDFs with OCR (Tesseract), in the background."""
-        n = sum(b.status == "scanned" for b in self.library.books())
-        if not n:
-            raise Problem("No scanned PDFs waiting for OCR.", "warn", 409)
-        if not kn.ocr_available():
-            raise Problem("OCR needs Tesseract: update GPU Shepherd (its container comes with it), or install "
-                          "tesseract-ocr where it runs.", status=409)
-
-        def work(task: kn.Task) -> str:
-            done, errors = self.library.ocr(task.progress, lambda: task.stop)
-            task.errors += errors
-            if task.stop:
-                raise InterruptedError
-            return (f"Read {done} scanned PDF{'s' if done != 1 else ''} with OCR"
-                    + (f"; {len(errors)} couldn't be read." if errors else ".")
-                    + (" Send them to Open WebUI to add them to the knowledge base." if done else ""))
-        return self._knowledge_work(f"Reading {n} scanned PDF{'s' if n != 1 else ''} with OCR", work)
-
-    BULK_DELETE = {"duplicate": "duplicates", "failed": "documents that can't be read"}
-
-    def delete_documents(self, status: str) -> str:
-        """Delete every document with a status, in the background: "duplicate" (the copies with the
-        same text as another document; that one stays) or "failed" (can't be read). Their files,
-        every copy, and their text go. Documents waiting for OCR or skipped (MOBI/AZW3) stay."""
-        if status not in self.BULK_DELETE:
-            raise Problem(f"Delete which: {', '.join(self.BULK_DELETE)}.")
-        self._knowledge_busy()
-        keys = [b.key for b in self.library.books() if b.status == status]
-        if not keys:
-            raise Problem(f"No {self.BULK_DELETE[status]} to delete.", "warn", 409)
-
-        def work(task: kn.Task) -> str:
-            done = 0
-            for i, key in enumerate(keys):
-                if task.stop:
-                    raise InterruptedError
-                task.progress(i, len(keys), f"Deleting {i + 1} of {len(keys)}")
-                try:
-                    b = self.library.delete(key)
-                except kn.BookError:
-                    continue                       # gone already
-                except OSError as err:
-                    task.errors.append(f"{key}: {err}")
-                    continue
-                if b.status == status:
-                    done += 1
-            what = self.BULK_DELETE[status] if done != 1 else {"duplicate": "duplicate", "failed": "document that can't be read"}[status]
-            return f"Deleted {done} {what}" + (f"; {len(task.errors)} couldn't be." if task.errors else ".")
-        return self._knowledge_work(f"Deleting {len(keys)} {self.BULK_DELETE[status]}", work)
-
-    def delete_document(self, key: str) -> str:
-        """Delete one document: its files (every copy), its text, and the copies sent to Open WebUI
-        (taken out when that Open WebUI is running; otherwise they stay there)."""
-        self._knowledge_busy()
-        try:
-            b = self.library.delete(key)
-        except kn.BookError as err:
-            raise Problem(f"No document '{key}'.", status=404) from err
-        instances, _ = self.store.instances()
-        left = []
-        by_app: dict[str, list[tuple[str, str]]] = {}
-        for target, fid in b.sent.items():
-            iid, _, kb = target.partition("/")
-            by_app.setdefault(iid, []).append((kb, fid))
-        for iid, files in by_app.items():
-            inst = instances.get(iid)
-            if not inst:
-                continue
-            try:
-                if not self._running(iid):
-                    raise Problem(f"{inst.name} isn't running")
-                ow = self._openwebui(inst)
-                ids = ow.knowledge_bases()
-                for kb, fid in files:
-                    if ids.get(kb):
-                        ow.remove(ids[kb], fid)
-                    ow.delete_file(fid)
-            except (Problem, openwebui.OpenWebUIError) as err:
-                log.warning("knowledge: couldn't take %s out of %s: %s", b.name, inst.name, err)
-                left.append(inst.name)
-                self.library.update(lambda d, iid=iid, files=files: d.setdefault("stale", []).extend(
-                    {"target": f"{iid}/{kb}", "fid": fid} for kb, fid in files))
-        return f"Deleted {b.name}." + (f" It is still in {', '.join(left)} (it wasn't running or answering): the next "
-                                       "send or sync takes it out, or remove it there by hand." if left else "")
-
-    @staticmethod
-    def _empty_documents(folder: Path, own: bool) -> int:
-        """Delete the documents in a folder: everything in GPU Shepherd's own one; in a folder of
-        the user's, only document files and zips (other files and folders with them stay)."""
-        if not folder.is_dir():
-            return 0
-        n = 0
-        for root, dirs, names in os.walk(folder, topdown=False):
-            for f in names:
-                p = Path(root) / f
-                if own or p.suffix.lower() in kn.RANK or p.suffix.lower() in (".zip", ".part"):
-                    try:
-                        p.unlink()
-                        n += 1
-                    except OSError:
-                        pass
-            if Path(root) != folder:
-                try:
-                    Path(root).rmdir()                  # only when empty
-                except OSError:
-                    pass
-        return n
 
 
 class HelperFileOps(FileOps):

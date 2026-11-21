@@ -14,6 +14,7 @@ This module is pure: the service passes in the machine, catalogues and settings 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -24,6 +25,10 @@ from .config import Catalog, CatalogModel, Instance
 
 EMBED_MODEL = "qwen3-embedding-0.6b"           # the embeddings model a Llama Swap server without one is offered
 ANYTHINGLLM_FILE = "server.env"
+# settings files apps keep in an app data folder that updates may change: (folder inside, file name);
+# AnythingLLM's server.env is mounted as a file of its own
+SETTINGS_FILES = {"opencode": ("/root/.config/opencode", "opencode.json"),
+                  "hermes": ("/opt/data", "config.yaml")}
 
 
 @dataclass
@@ -73,6 +78,14 @@ def for_instance(inst: Instance, m: tpl.Machine, catalog: Catalog | None = None,
             out.append(u)
     if t.connects == "anythingllm" and server and settings_file is not None:
         u = _anythingllm(inst, server, m, settings_file)
+        if u:
+            out.append(u)
+    if t.connects == "opencode" and server and settings_file is not None:
+        u = _opencode(inst, server, m, settings_file)
+        if u:
+            out.append(u)
+    if t.connects == "hermes" and server and settings_file is not None:
+        u = _hermes(inst, server, m, settings_file)
         if u:
             out.append(u)
     if inst.kind == "llama-swap" and catalog is not None:
@@ -136,6 +149,56 @@ def _anythingllm(inst: Instance, server: str, m: tpl.Machine, text: str) -> Upda
                   [f"Sets {x.split('=', 1)[0]} in {ANYTHINGLLM_FILE}" for x in lines], kind="file", file_text=body,
                   manual=["Documents already in a workspace stay embedded by the old embedder: remove and add them "
                           "again so the new one embeds them."])
+
+
+def _opencode(inst: Instance, server: str, m: tpl.Machine, text: str) -> Update | None:
+    """OpenCode's list of the model server's models, with their context limits: it is written once at
+    install, so models added since (or a context made bigger) are missing, and OpenCode then never
+    compacts a long session in time and runs into the server's context size."""
+    try:
+        config = json.loads(text)
+        models = config["provider"][tpl.OPENCODE_PROVIDER]["models"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(models, dict):
+        return None
+    lines = []
+    for name, entry in tpl.opencode_models(m.servers[server]).items():
+        old = models.get(name)
+        if not isinstance(old, dict):
+            models[name] = entry
+            lines.append(f"Adds {name}" + (f" ({entry['limit']['context']:,} tokens)" if "limit" in entry else ""))
+        elif "limit" in entry and old.get("limit") != entry["limit"]:
+            was = (old.get("limit") or {}).get("context")
+            models[name] = old | {"limit": entry["limit"]}
+            lines.append(f"{name}: context {f'{was:,}' if isinstance(was, int) else 'not set'} -> "
+                         f"{entry['limit']['context']:,} tokens")
+    if not lines:
+        return None
+    return Update(inst.id, _key("file", *lines), "Tell OpenCode the models' context sizes", lines, kind="file",
+                  file_text=json.dumps(config, indent=2) + "\n",
+                  manual=["Restart OpenCode apps on other computers with their own opencode.json the same way: "
+                          "a model without a context limit there is never compacted in time."])
+
+
+def _hermes(inst: Instance, server: str, m: tpl.Machine, text: str) -> Update | None:
+    """Hermes can't ask the model server for the model's context size and guesses 256K, so it
+    compresses a long conversation only after the server has refused it: add context_length to its
+    model settings when there is none."""
+    block = re.search(r"^model:[ \t]*\n((?:[ \t]+.*\n?)*)", text, re.M)
+    if not block or re.search(r"^\s+context_length:", block.group(1), re.M):
+        return None
+    info = m.servers[server]
+    default = re.search(r"^\s+default:\s*['\"]?([^'\"\s#]+)", block.group(1), re.M)
+    ctx = info["models"].get(default.group(1)) if default else None
+    ctx = ctx or (info.get("ctx") if not default or default.group(1) == info.get("default_model") else 0)
+    if not ctx:
+        return None
+    n = tpl.agent_context(ctx)
+    body = text[:block.end(1)].rstrip("\n") + f"\n  context_length: {n}\n" + text[block.end(1):]
+    return Update(inst.id, _key("file", "hermes-ctx", str(n)), "Tell Hermes Agent the model's context size",
+                  [f"Sets model context_length: {n:,} in config.yaml (Hermes guesses 256K without it)"],
+                  kind="file", file_text=body)
 
 
 def _server(inst: Instance, cat: Catalog, m: tpl.Machine) -> list[Update]:
