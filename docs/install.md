@@ -151,7 +151,7 @@ forward its port to the internet; see [step 7](#7-reach-it-from-other-devices) f
 
 ## 6. Start your first apps
 
-With the **starter** preset, the dashboard shows three cards: the Llama Swap, ComfyUI and Open WebUI.
+With the **starter** preset, the dashboard shows three cards: Llama Swap, ComfyUI and Open WebUI.
 
 1. If the models are still downloading, wait for them. Progress shows in the dashboard.
 2. Press **Start** on each card. The first start of an app downloads its Docker image, so it takes

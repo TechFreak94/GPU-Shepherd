@@ -48,8 +48,8 @@ behaviour, environment variables), plus a CLI and a JSON API, so you can go as d
   ![App Center](docs/screenshots/app-store.png)
 - **Instances**: any Docker image - ports, folders, environment, command, autostart - edited in
   forms. One compact card per instance with Start / Stop / Restart / Open / Logs, its name (Open
-  WebUI, ComfyUI...) and a tag saying what it is (*Model Server*, *Chat UI*, *Image Server*, *Agent UI*,
-  *Database*, or *App* for any other image), its
+  WebUI, ComfyUI...) and a tag saying what it is (*Model Server*, *Chat UI*, *Agent UI*, *Image UI*,
+  *Speech Server*, *Database* and so on, or *App* for any other image), its
   state, GPUs and VRAM, CPU and RAM use, web addresses and (for model servers) the loaded model.
   **Advanced details** opens the image, folders, command and the rest. Every detail has a small ⓘ
   next to it: hover, tab to or tap it to see what the value means (GPU rule and priority, ports,
@@ -140,7 +140,7 @@ behaviour, environment variables), plus a CLI and a JSON API, so you can go as d
 - [AI agents](agent-plugin/README.md): the built-in MCP server and the Claude Code plugin, and how
   to connect other agents.
 - [Versions, changelog and updates](docs/updates.md): checking for updates and following one in
-  the dashboard, private repositories, and how each merge gets a version. [Changelog](CHANGELOG.md).
+  the dashboard, private repositories, and how each release gets its version. [Changelog](CHANGELOG.md).
 - [Contributing](CONTRIBUTING.md): how to propose a change, what a pull request needs and how
   changes are reviewed and merged. [Security policy](SECURITY.md), [Code of conduct](CODE_OF_CONDUCT.md).
 - [Presets](gpushepherd/presets/README.md): ready-made sets of instances, and how to make your own.
@@ -291,7 +291,7 @@ If an update fails to build or start, it rolls back by itself. The installer can
 **Update** button on the dashboard. Details: [CLI and scripts](docs/cli.md#updatesh).
 
 Click the version number at the top of any page to check for updates, follow an update step by
-step, or read the [changelog](CHANGELOG.md): every merged change gets its own version. Installed
+step, or read the [changelog](CHANGELOG.md): every release gets its own version. Installed
 from a private repository? Save a GitHub access token in Settings > Updates > Private repository, or with
 `sudo ./update.sh --set-token <your GitHub user>`. Details:
 [Versions, changelog and updates](docs/updates.md).
@@ -357,8 +357,8 @@ GPUs with 64 GB of RAM:
 
 | Model server has | `coder` is | Memory |
 |---|---|---|
-| 1 GPU (ComfyUI has the other) | Qwen3.6 35B-A3B, 30 expert layers in RAM | ~22 GB file, mostly RAM |
-| 2 GPUs | Qwen3 Coder Next 80B-A3B, 38 expert layers in RAM | ~49 GB file, ~40 GB of it in RAM |
+| 1 GPU (ComfyUI has the other) | Qwen3.6 35B-A3B, part of its expert layers in RAM | ~18 GB download, about 12 GB of it in RAM |
+| 2 GPUs | Qwen3 Coder Next 80B-A3B, most of its expert layers in RAM | ~50 GB download, about 40 GB of it in RAM |
 
 ```bash
 export OPENAI_API_BASE=http://<server>:8080/v1
@@ -366,10 +366,10 @@ export OPENAI_API_KEY=<the model server's API key, shown on its Models page>
 aider --model openai/coder
 ```
 
-The expert-layer numbers are starting points for 8 GB cards: if a model fails to load, raise them;
-if GPU memory is left over, lower them for speed. See
-[GPU and system RAM](docs/advanced.md#gpu-and-system-ram). Models added from the
-[suggested models](docs/advanced.md#suggested-models) get these numbers worked out for your GPUs.
+Models added from the [suggested models](docs/advanced.md#suggested-models) need no tuning for
+this: llama.cpp keeps as much of the model on the GPUs as fits and puts the rest of the expert
+layers in RAM. For a model you add yourself, set how many expert layers go to RAM for each GPU
+count; see [GPU and system RAM](docs/advanced.md#gpu-and-system-ram).
 
 On one 8 GB GPU, a model that fits it whole (Qwen3.5 9B) answers at roughly 50-70 tokens a second;
 a 30B-A3B coding model with its experts in RAM at roughly 15-30, with clearly better code. Both are
@@ -439,7 +439,7 @@ is a trademark of TechFreak94, and the Apache license doesn't grant rights to th
 GPU Shepherd is built on, and runs, other people's open-source work: FastAPI, htmx, Docker, the
 NVIDIA Container Toolkit, llama.cpp and llama-swap, and every app in the App Center (Open WebUI,
 ComfyUI, Ollama, vLLM, LibreChat, AnythingLLM, Langflow, InvokeAI, Speaches, Hermes Agent,
-SillyTavern, Open Notebook). Apps and
+OpenCode, SillyTavern, Open Notebook). Apps and
 models are downloaded from their own publishers and keep their own licenses, shown on each App
 Center card. [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists every project with its license and
 what it's used for; the dashboard has the same list under the version number, **Credits**.

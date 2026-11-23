@@ -29,7 +29,7 @@ gpu.mode=elastic`, `gpu-shepherd models set <server> <model> ctx_size=65536` and
 | Image | `image` | Any Docker image, e.g. `ghcr.io/org/app:tag`. Pulled when the instance starts. |
 | Description | `description` | Free text. |
 | - | `kind` | `container` for any app, `llama-swap` for a model server (adds the Models page). Set by the app or the *Model server, by hand* link. |
-| - | `app` | The App Center app it was installed from (`llm-server`, `hermes`...), for the App Center's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Image UI*, *Agent UI*, *Database*; *App* for anything else). Changing it needs no restart. |
+| - | `app` | The App Center app it was installed from (`llm-server`, `hermes`...), for the App Center's *installed* count and the tag on its dashboard card (*Model Server*, *Chat UI*, *Agent UI*, *Image UI*, *Speech Server*, *Database* and so on; *App* for anything else). Changing it needs no restart. |
 
 ### GPUs
 
@@ -91,7 +91,7 @@ command there.
 | Memory limit | `memory_limit` | Caps the container's RAM, e.g. `16g`. Empty = no limit. |
 | Install new versions automatically | `auto_update` | Off by default. GPU Shepherd [looks for new releases of the app's image](#app-image-updates); with this on it installs one by itself (waiting for running work), otherwise the card offers an **Update** button. |
 
-The last three are under *Advanced* in the editor.
+Shared memory, Run as user and Memory limit are under *Advanced* in the editor, next to *Devices*.
 
 ### Before stopping
 
@@ -252,10 +252,12 @@ progress bar needs GPU Shepherd to see the models folder at the same path, as `i
 A model file picked in the Llama Swap's install form that is one of these gets the same settings,
 and is downloaded when you install.
 
-How a mixture-of-experts model is split is worked out from its size and layer count: with N GPUs,
-enough expert layers go to RAM to leave a quarter of the GPUs' memory for the context. On two 8 GB
-GPUs that is 14 of Qwen3.6 35B-A3B's 40 layers and 38 of Qwen3 Coder Next's 48. Tune them on the
-model's Edit page.
+A suggested mixture-of-experts model is added without a fixed GPU / RAM split: as it loads,
+llama.cpp keeps as much of it on the GPUs as fits and puts the rest of its expert layers in RAM,
+spread evenly over the GPUs. The *Fits* figures above come from its size, keeping a quarter of the
+GPUs' memory for the context. To set the split yourself, add rows under *GPU and system RAM* on the
+model's Edit page. A dense model that doesn't fit gets the number of layers that go on the GPUs for
+each GPU count.
 
 Besides the built-in list, GPU Shepherd asks Hugging Face once a day which GGUF models are trending
 (from unsloth, ggml-org, bartowski and LM Studio) and suggests up to ten that fit this machine and
@@ -374,7 +376,7 @@ and token speed doesn't change.
 
 ## Storage and trash
 
-The **Storage** page shows free space on each disk it uses, named by where the drive is mounted (`/mnt/disk-1`, not a folder on it) (with a warning when one is low), the size
+The **Storage** page shows free space on each disk it uses, named by where the drive is mounted (`/mnt/disk-1`, not a folder on it), with a warning when one is low; the size
 of each folder, the app images and which instance uses them, and what is worth a look: model files in
 no model list, unfinished downloads, the same file twice, app data folders with no instance, and
 containers with no instance. Folders that aren't mounted into GPU Shepherd's container at the same
@@ -489,15 +491,16 @@ afterwards repeat:
 
 The Llama Swap's own page asks for a user name and password when opened in a browser: type any
 user name and its API key as the password. **Logins** on its card shows that key (it is also on its
-Models page, Server settings, where *New API key* changes it).
+Models page, under Server settings, where *Generate a new key* changes it).
 
-**Logins** on the card of Open WebUI, LibreChat, AnythingLLM, Langflow or Hermes Agent lists the
-app's accounts and sets a new password for one (type it, or leave it empty for a made-up one).
-Passwords GPU Shepherd can read (Hermes Agent's environment, AnythingLLM's `server.env` without
-multi-user mode) are shown; apps that keep accounts in a database store only a hash, so for those
-the app must be running and a short script inside its container sets the new password. Hermes
-Agent and single-user AnythingLLM restart to pick it up. The same is in the API and the
-`gpu-shepherd logins` command.
+**Logins** on the card of Open WebUI, LibreChat, AnythingLLM, Langflow, Hermes Agent, OpenCode,
+SillyTavern or Open Notebook lists the app's accounts and sets a new password for one (type it, or
+leave it empty for a made-up one). Passwords GPU Shepherd can read (the environment of Hermes Agent,
+OpenCode, SillyTavern and Open Notebook, or AnythingLLM's `server.env` without multi-user mode) are
+shown, and a running app restarts to pick up a new one. Apps that keep accounts in a database
+(Open WebUI, LibreChat, Langflow, multi-user AnythingLLM) store only a hash, so for those the app
+must be running and a short script inside its container sets the new password. The same is in the
+API and the `gpu-shepherd logins` command.
 
 ![Logins for Hermes Agent: its dashboard user and a new password](screenshots/logins.png)
 

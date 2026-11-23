@@ -34,7 +34,7 @@ managed by the Apps UI.
 3. Create a dataset for the data, for example `/mnt/POOL/apps/gpu-shepherd/data`. It must be mounted
    at the **same path** inside and outside the container. The same goes for any models folder you
    want to pick from in the UI.
-4. In the source folder, copy `compose.example.yaml` to `compose.yaml`, replace `/opt/gpu-shepherd`
+4. In the source folder, copy `compose.example.yaml` to `compose.yaml` and replace `/opt/gpu-shepherd`
    with your data path (both in the volume and in `SHEPHERD_DATA_DIR`). Then, as root in the TrueNAS shell:
 
    ```bash

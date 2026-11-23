@@ -438,7 +438,7 @@ def test_app_logins(stack):
     got = client.get(f"{base}/llm/logins").json()
     key = client.get(f"{base}/llm/models").json()["settings"]["api_key"]
     assert got["accounts"][0]["password"] == key and got["accounts"][0]["user"] == "(any user name)" and not got["can_reset"]
-    assert "New API key" in client.post(f"{base}/llm/logins", json={"password": "long-enough"}).json()["error"]
+    assert "Generate a new key" in client.post(f"{base}/llm/logins", json={"password": "long-enough"}).json()["error"]
 
     # Hermes Agent: one login in its environment, shown; a new one restarts it
     r = client.post("/api/v1/apps/hermes/install", json={"id": "agent", "server": "llm", "password": "first-pass"})

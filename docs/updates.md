@@ -1,8 +1,8 @@
 # Versions, changelog and updates
 
-Every change merged into GPU Shepherd gets a version number and an entry in
-[CHANGELOG.md](../CHANGELOG.md), so you can see what you are running, what is newer and what
-changed. This page covers what you see in the dashboard and how versions are made.
+Every release of GPU Shepherd gets a version number and an entry in
+[CHANGELOG.md](../CHANGELOG.md), listing each change it brings, so you can see what you are
+running, what is newer and what changed. This page covers what you see in the dashboard and how versions are made.
 
 ## In the dashboard
 

@@ -871,7 +871,8 @@ def add_commands(sub) -> None:
                                       "--reset USER sets a new password")
     p.add_argument("id")
     p.add_argument("--reset", metavar="USER", nargs="?", const="",
-                   help="set a new password for this account (no USER for Hermes Agent and AnythingLLM)")
+                   help="set a new password for this account (no USER for apps with a single login, "
+                        "such as Hermes Agent or single-user AnythingLLM)")
     p.add_argument("--ask", action="store_true", help="type the new password instead of getting a made-up one")
     p = sub.add_parser("apply", help="create or replace an instance from a YAML or JSON file (- = stdin)")
     p.add_argument("file")

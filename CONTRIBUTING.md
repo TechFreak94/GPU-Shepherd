@@ -82,9 +82,10 @@ The [pull request template](.github/pull_request_template.md) asks for:
   use GPU Shepherd, not how it was done. Without one, the pull request title is used;
 - whether it changes the config format, an API response or a command (a breaking change).
 
-**Do not edit the version (`gpushepherd/__init__.py`) or `CHANGELOG.md`.** Merging a pull request
-gives it its own version and changelog entry automatically, from the `## Changelog` section, so
-two open pull requests never conflict over them. A maintainer sets the release label: `minor`,
+**Do not edit the version (`gpushepherd/__init__.py`) or `CHANGELOG.md`.** When your change
+reaches `main` (normally with the next promotion from `testing`), the release workflow gives it a
+version and a changelog entry automatically, from the `## Changelog` section, so two open pull
+requests never conflict over them. A maintainer sets the release label: `minor`,
 `major` or `no release` when it isn't a normal `patch` step. Details:
 [docs/updates.md](docs/updates.md#versions-and-releases).
 
@@ -116,7 +117,7 @@ most of it. Never paste secrets or private data into a tool.
 
 - **`testing`** is where development happens. Every pull request targets it, and merging into it
   does not release anything. People who want the newest changes early can follow it (Settings >
-  Updates > branch, or `sudo ./update.sh --branch testing`); it may break.
+  Updates > Follow branch, or `sudo ./update.sh --branch testing`); it may break.
 - **`main`** only gets releases. A maintainer promotes `testing` to `main` with a pull request
   from `testing` to `main`, merged with a **merge commit** (not squashed, so the two branches keep
   the same history). That merge is one release: its `## Changelog` lists the changes it brings,

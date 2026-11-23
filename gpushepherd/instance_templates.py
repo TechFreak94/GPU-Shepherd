@@ -6,7 +6,7 @@ instance (and, for model servers, the models picked), so it can be edited field 
 afterwards. Every app can also be installed by hand: the full form, filled in from the same
 defaults.
 
-An app that needs a helper container (LibreChat's database) lists it in `companions`: a hidden
+An app that needs a helper container (LibreChat's or Open Notebook's database) lists it in `companions`: a hidden
 template installed alongside as its own instance, which the app `requires`, so starting the app
 starts it too.
 
