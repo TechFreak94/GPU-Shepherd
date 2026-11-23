@@ -55,11 +55,11 @@ always need the token, so another web page can't make your browser change anythi
 | `GET /api/v1/instances` | Every instance: its settings plus `state` (`running`, `status`, `status_text`, `gpus`, `container`, `restart_needed`). |
 | `GET /api/v1/instances/{id}` | One instance, the same way. |
 | `PUT /api/v1/instances/{id}` | Create (`201`) or replace (`200`) an instance. The body is the whole instance, as `GET` returns it (`state` is ignored) or as in `instances/<id>.yaml`; `id` defaults to the one in the address and `name` to the ID. To change one field, `GET`, change it and `PUT` it back. |
-| `DELETE /api/v1/instances/{id}` | Delete it: stop it (a running one waits for its work to finish, in the background) and move its settings, model list and app data folder, plus a helper only it uses (LibreChat's database), to the [trash](#storage-and-trash). `409` while another instance needs it. Model files are never touched. |
+| `DELETE /api/v1/instances/{id}` | Delete it: stop it (a running one waits for its work to finish, in the background) and move its settings, model list and app data folder, plus a helper only it uses (such as LibreChat's database), to the [trash](#storage-and-trash). `409` while another instance needs it. Model files are never touched. |
 | `POST /api/v1/instances/{id}/start` | Start it. Also `/stop` and `/restart`. Body (optional): `{"confirm": true}`. |
 | `GET /api/v1/instances/{id}/logs` | `{"logs": "..."}`, the container's log. |
 | `GET /api/v1/instances/{id}/logins` | An app's [logins](advanced.md#logins): `where` it keeps them, `accounts` (`user`, `role`, and `password` where it can be read), `running`, `multi_user` and a `status` line. `404` for apps GPU Shepherd doesn't know the logins of. |
-| `POST /api/v1/instances/{id}/logins` | Set a new password: `{"user": "...", "password": "..."}` (no `user` for Hermes Agent and single-user AnythingLLM; no `password` for a made-up one). Answers `message` and the `password` set. |
+| `POST /api/v1/instances/{id}/logins` | Set a new password: `{"user": "...", "password": "..."}` (no `user` needed for apps with a single login: Hermes Agent, OpenCode, SillyTavern, Open Notebook and single-user AnythingLLM; no `password` for a made-up one). Answers `message` and the `password` set. |
 
 Starting can take GPUs from other instances, and stopping waits for running work, as on the
 dashboard. The answer is one of:

@@ -63,8 +63,8 @@ def method(inst: Instance) -> Method | None:
     if inst.kind == "llama-swap":
         return Method("llm-server", "its API key", False,
                       "When your browser asks for a user name and password, type any user name and this API key "
-                      "as the password. Apps connected to it already have the key. To change it, use New API key "
-                      "in its Models page, Server settings; apps connected to it then need the new key too.")
+                      "as the password. Apps connected to it already have the key. To change it, use Generate a new "
+                      "key on its Models page, under Server settings; apps connected to it then need the new key too.")
     app = next((t.key for t in tpl.TEMPLATES if tpl.matches(t, inst)), "")    # older ones by their image
     if app in ENV_LOGINS:
         t = tpl.get(app)

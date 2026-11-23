@@ -1539,8 +1539,8 @@ class Shepherd:
         tell the user and the password."""
         inst, m = self._login_method(iid)
         if m.app == "llm-server":
-            raise Problem(f"{inst.name}'s password is its API key: give it a new one with New API key in its "
-                          "Models page, Server settings.", status=409)
+            raise Problem(f"{inst.name}'s password is its API key: give it a new one with Generate a new key "
+                          "on its Models page, under Server settings.", status=409)
         password = password.strip() or secrets.token_urlsafe(12)
         logins.check_password(password)
         user = user.strip()

@@ -55,7 +55,7 @@ Knowing the design helps decide what is and isn't a vulnerability.
   `.git` folder, mode 0600, and is never logged. So whoever controls the repository you update
   from controls the code that runs as root on your machine: install from the official repository
   or your own fork, and treat who has write access to it accordingly.
-- **Release images.** Each merged change publishes a container image to `ghcr.io`. Pin
+- **Release images.** Each release publishes a container image to `ghcr.io`. Pin
   `SHEPHERD_VERSION` to a release if you want updates only when you choose.
 - **Apps and models.** Apps and models are downloaded from their own publishers' registries and
   sites and keep their own licenses and security properties. Report problems in them upstream.

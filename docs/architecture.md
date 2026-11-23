@@ -22,7 +22,7 @@ AI agent ── MCP ─> mcp.py (/api/v1/mcp) ─ in-process ─> api.py        
                       ├─ downloads.py  fetches suggested models in a helper container (curl)
                       ├─ jobs.py       one change at a time, in a background thread, with a log
                       ├─ drain.py      wait for running work (chats, queued images) before a stop
-                      ├─ storage.py / trash.py   what takes disk space; the trash deletes go to first
+                      ├─ storage.py / trash.py   what takes disk space; the trash, where deletes go first
                       ├─ pictures.py   ComfyUI's made and uploaded pictures (Storage > Pictures)
                       ├─ drives.py / moves.py   attached drives and moving a folder to another disk (a helper container)
                       ├─ image_updates.py   new releases of the apps' images, found by asking the registries
@@ -68,7 +68,7 @@ AI agent ── MCP ─> mcp.py (/api/v1/mcp) ─ in-process ─> api.py        
    `gpu-shepherd start <id>`. Both call `Shepherd.change()`.
 2. `engine.plan("start", id)` reads instances, running containers (with their GPU labels) and
    GPUs, then calls `scheduler.plan()`, which also brings up whatever the instance `requires`
-   (LibreChat's database).
+   (such as LibreChat's database).
 3. If the plan stops or restarts other instances and was not confirmed, the server returns
    `partials/confirm.html` into the modal. "Continue" re-posts with `confirm=1`. (The API answers
    `409` with the plan instead; the command shows it and asks.)
