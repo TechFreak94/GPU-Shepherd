@@ -4,6 +4,14 @@ What changed in each version of GPU Shepherd, newest first. Every pull request m
 gets its own version and entry here automatically (see [Versions and releases](docs/updates.md#versions-and-releases)).
 The dashboard shows this list under the version number at the top of every page.
 
+## 0.13.38 - 2026-11-23
+
+- README: a more personal "Why" section, and a note on how the dashboard suits new and advanced users alike. (#98)
+- Docs and dashboard text corrected: versions come with releases, suggested MoE models are fitted to the GPUs by llama.cpp, Logins covers OpenCode, SillyTavern and Open Notebook, and button and field names match the dashboard. (#98)
+- The GPU priority field in the editor is now called Priority, like everywhere else. (#98)
+- `gpu-shepherd settings set hf_suggestions=false` works now. (#98)
+- The JSON API no longer reads the text "false" as a yes: yes/no settings must be true or false, and a confirm has to be a real yes. (#98)
+
 ## 0.13.37 - 2026-11-21
 
 - `gpu-shepherd --reset-password` lets you choose the new password (run it with `docker exec -it`; `--password-stdin` for scripts). If the settings file goes missing, the dashboard now says a new admin password was made and how to fix it. (#90)
