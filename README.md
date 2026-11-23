@@ -24,6 +24,11 @@ to happen in the right order, or the GPU stays locked to the service that should
 I wanted that to just work, so I built it, and I'm putting a lot of care into making it work for
 you too.
 
+The browser interface is the heart of it. If you're new to self-hosting AI, guided setup and the
+App Center get you from nothing to a working chat or image app without touching a config file.
+If you're an advanced user, every setting is still there (GPU assignment, RAM offload, drain
+behaviour, environment variables), plus a CLI and a JSON API, so you can go as deep as you like.
+
 ## Features
 
 - **App Center**: install a Llama Swap server (with a chat model, a coding model, an embeddings model for
