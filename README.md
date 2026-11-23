@@ -17,6 +17,13 @@ but they don't know about GPUs, so you end up stopping one thing by hand to star
 editing `CUDA_VISIBLE_DEVICES` and restarting. GPU Shepherd treats GPUs as a shared resource:
 each instance says what it needs, and starting or stopping anything re-plans who gets which GPU.
 
+It started as a personal itch. Writing and babysitting a container setup for every service is
+tedious, and it gives you no easy way to see and manage your hardware. Most homelabbers also
+don't have a separate AI server for each tool, so spinning one instance up and another down has
+to happen in the right order, or the GPU stays locked to the service that should have let go.
+I wanted that to just work, so I built it, and I'm putting a lot of care into making it work for
+you too.
+
 ## Features
 
 - **App Center**: install a Llama Swap server (with a chat model, a coding model, an embeddings model for
