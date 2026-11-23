@@ -23,6 +23,14 @@ from .jobs import Job
 from .service import Problem, Shepherd, message
 
 
+def yes(value) -> bool:
+    """A yes/no field from a JSON body: true, 1 or "true"/"yes"/"on"/"1". Anything else, the string
+    "false" included, is no, so a script can't confirm a change by accident."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    return value is True or (type(value) is int and value == 1)
+
+
 def router(svc: Shepherd, build: dict) -> APIRouter:
     r = APIRouter()
     store, engine, jobs = svc.store, svc.engine, svc.jobs
@@ -183,7 +191,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @handle
     def instance_action(request: Request, iid: str, action: str):
         data = body(request) if request.state.raw else {}
-        c = svc.change(action, iid, confirm=bool(data.get("confirm")))
+        c = svc.change(action, iid, confirm=yes(data.get("confirm")))
         if c.noop:
             return {"message": c.text, "noop": True}
         if c.needs_confirm:
@@ -405,6 +413,9 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         unknown = set(data) - {"threads", "llama_server", "health_timeout", "fit_gpus", "auto_tune", "new_api_key"}
         if unknown:
             raise Problem(f"unknown setting(s): {', '.join(sorted(unknown))}")
+        for key in ("fit_gpus", "auto_tune", "new_api_key"):
+            if key in data and not isinstance(data[key], bool):
+                raise Problem(f"{key} must be true or false")
         return {"message": svc.server_settings(iid, threads=data.get("threads"), llama_server=data.get("llama_server"),
                                                health_timeout=data.get("health_timeout"),
                                                fit_gpus=data.get("fit_gpus"), auto_tune=data.get("auto_tune"),
@@ -479,7 +490,10 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     @r.put("/api/v1/storage/drives/auto")
     @handle
     def auto_mount(request: Request):
-        return {"message": svc.set_auto_mount(bool(body(request).get("enabled")))}
+        data = body(request)
+        if not isinstance(data.get("enabled"), bool):
+            raise Problem('send {"enabled": true} or {"enabled": false}')
+        return {"message": svc.set_auto_mount(data["enabled"])}
 
     @r.get("/api/v1/storage/browse")
     @handle
@@ -498,9 +512,9 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
         answers what the move would do."""
         data = body(request)
         source, dest = str(data.get("source", "")), str(data.get("dest", ""))
-        if data.get("home"):
+        if yes(data.get("home")):
             dest = svc.home_of(source)
-        if not data.get("confirm"):
+        if not yes(data.get("confirm")):
             info = svc.check_move(source, dest)
             return JSONResponse({"error": 'Send {"confirm": true} to move it.', "needs_confirm": True, **info},
                                 status_code=409)
@@ -635,7 +649,7 @@ def router(svc: Shepherd, build: dict) -> APIRouter:
     def update_credentials(request: Request):
         data = body(request)
         return JSONResponse({"message": svc.update_credentials(str(data.get("user", "")), str(data.get("token", "")),
-                                                               clear=bool(data.get("clear")))}, status_code=202)
+                                                               clear=yes(data.get("clear")))}, status_code=202)
 
     @r.post("/api/v1/updates/branch")
     @handle

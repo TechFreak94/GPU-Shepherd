@@ -66,6 +66,7 @@ def test_start_asks_before_moving_others(stack):
     assert client.post("/api/v1/instances/llm/start").json()["noop"] is True
     r = client.post("/api/v1/instances/comfyui/start")
     assert r.status_code == 409 and r.json()["needs_confirm"] and any("Restart Llama Swap" in x for x in r.json()["plan"])
+    assert client.post("/api/v1/instances/comfyui/start", json={"confirm": "false"}).status_code == 409   # not a yes
     r = client.post("/api/v1/instances/comfyui/start", json={"confirm": True})
     assert r.status_code == 202
     wait(app)
@@ -142,6 +143,9 @@ def test_models_and_server_settings(stack):
     settings = client.get(f"{base}/models").json()["settings"]
     assert settings["threads"] == 6 and settings["api_key"] != key
     assert client.patch(f"{base}/server-settings", json={"bogus": 1}).status_code == 400
+    # a string isn't taken as a yes: bool("false") would have turned the setting on
+    r = client.patch(f"{base}/server-settings", json={"fit_gpus": "false"})
+    assert r.status_code == 400 and "true or false" in r.json()["error"]
     assert client.get("/api/v1/instances/comfyui/models").status_code == 400   # not a model server
 
 
@@ -283,6 +287,12 @@ def test_cli_apps_models_settings(run, stack):
     assert run("models", "settings", "llm", "threads=4")[0] == 0
     assert yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())["threads"] == 4
     assert run("settings", "set", "network=lab-net")[0] == 0 and Store(data).settings().network == "lab-net"
+    assert run("settings", "set", "hf_suggestions=false")[0] == 0 and not Store(data).settings().hf_suggestions
+    assert run("settings", "set", "hf_suggestions=on")[0] == 0 and Store(data).settings().hf_suggestions
+    assert run("settings", "set", "hf_suggestions=maybe")[0] == 1
+    assert run("models", "settings", "llm", "auto_tune=yes")[0] == 0
+    assert yaml.safe_load((data / "catalogs" / "llm.yaml").read_text())["auto_tune"] is True
+    assert run("models", "settings", "llm", "fit_gpus=maybe")[0] == 1      # refused, not read as "off"
     code, text = run("--json", "jobs")
     assert code == 0 and text.startswith("[")
 

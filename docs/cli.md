@@ -214,7 +214,7 @@ theme is the one exception: it is a choice saved in each browser.
 | `jobs` | Recent changes and how they ended. | Dashboard › last change |
 | `jobs show N` | Follow a change's log. | Log |
 | `jobs skip N`, `jobs cancel N` | While a change waits for running work: stop without waiting longer, or call it off. | Stop now / Cancel change |
-| `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address`, `network`, `trash_days` and `image_check_hours`. | Settings › Containers, Storage › Trash |
+| `settings`, `settings set KEY=VALUE...` | Show settings, or set `bind_address`, `network`, `trash_days`, `image_check_hours` and `hf_suggestions` (`true` or `false`). | Settings › Containers, App updates, Suggested models; Storage › Trash |
 | `password` | Change the admin password (asks for the current and the new one). | Settings › Password |
 | `token` | Print the API token. `--new` makes a new one; the old one stops working. Reads the data folder, so it works without the app running. | Settings › Automation |
 | `update` | Running version, and whether an update is waiting. | Version number |

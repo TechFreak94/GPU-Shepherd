@@ -368,6 +368,7 @@ def test_automatic_mounting_can_be_turned_off(host_stack, stack):
     svc, _, _ = host_stack
     client = stack[1]
     assert client.put("/api/v1/storage/drives/auto", json={"enabled": False}).status_code == 200
+    assert client.put("/api/v1/storage/drives/auto", json={"enabled": "false"}).status_code == 400
     by = {d["device"]: d for d in client.get("/api/v1/storage/drives").json()["drives"]}
     assert by["/dev/sdb1"]["state"] == "ready" and not svc.host_fs.mounts
     assert client.post("/api/v1/storage/drives/mount", json={"device": "/dev/sdb1"}).status_code == 200

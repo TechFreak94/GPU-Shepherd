@@ -506,8 +506,8 @@ def cmd_models(args, c: Client) -> int:
             s = c.get(f"{base}/models")["settings"]
             out(args, s)
             return 0
-        body = {k: (int(v) if k in ("threads", "health_timeout") and v.strip().isdigit()
-                    else v.strip().lower() in ("1", "true", "yes", "on") if k in ("fit_gpus", "auto_tune") else v)
+        body = {k: (typed(v, 0) if k in ("threads", "health_timeout")
+                    else typed(v, True) if k in ("fit_gpus", "auto_tune") else v)
                 for k, v in changes.items()} | ({"new_api_key": True} if args.new_api_key else {})
         out(args, c.call("PATCH", f"{base}/server-settings", body))
     elif a in ("auto-set", "auto-delete"):
@@ -550,7 +550,8 @@ def cmd_settings(args, c: Client) -> int:
     if args.action in (None, "show"):
         out(args, c.get("/api/v1/settings"))
     else:
-        out(args, c.call("PATCH", "/api/v1/settings", pairs(args.changes)))
+        changes = {k: typed(v, True) if k == "hf_suggestions" else v for k, v in pairs(args.changes).items()}
+        out(args, c.call("PATCH", "/api/v1/settings", changes))
     return 0
 
 
@@ -963,7 +964,7 @@ def add_commands(sub) -> None:
     p.add_argument("action", nargs="?", choices=("list", "show", "skip", "cancel"))
     p.add_argument("job", nargs="?", type=int)
     p = sub.add_parser("settings", help="show, or set bind_address=... network=... trash_days=... "
-                                        "image_check_hours=...")
+                                        "image_check_hours=... hf_suggestions=true|false")
     p.add_argument("action", nargs="?", choices=("show", "set"))
     p.add_argument("changes", nargs="*", metavar="KEY=VALUE")
     p = sub.add_parser("storage", help="disk space: show, remove-images, remove-orphans, trash-files PATH..., "
