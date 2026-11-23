@@ -966,7 +966,7 @@ def test_logins_dialog(stack):
     dash = client.get("/", headers=HX).text
     assert "/ui/instances/hermes/logins" in dash and "/ui/instances/llm/logins" in dash
     llm = client.get("/ui/instances/llm/logins", headers=HX).text
-    assert "(any user name)" in llm and "sk-" in llm and "Set new password" not in llm and "New API key" in llm
+    assert "(any user name)" in llm and "sk-" in llm and "Set new password" not in llm and "Generate a new key" in llm
     dlg = client.get("/ui/instances/hermes/logins", headers=HX).text
     assert "Logins: Hermes" in dlg and "<strong>admin</strong>" in dlg
     r = client.post("/ui/instances/hermes/logins", data={"user": "admin", "password": "brand-new-pass-1"}, headers=HX)

@@ -59,8 +59,8 @@ Settings > Advanced Security (Code security):
   contacted), **Dependabot alerts and security updates**, **secret scanning** and **push
   protection**.
 - The repository's [Dependabot config](../.github/dependabot.yml) opens weekly update pull
-  requests for the Actions, Python and Docker dependencies. Create the labels `dependencies` and
-  `no release` first; each merge makes a release.
+  requests for the Actions, Python and Docker dependencies against `testing`, so they ship with the
+  next promotion. Create the labels `dependencies` and `no release` first.
 - Optional: CodeQL code scanning for Python.
 
 ## Packages and releases
