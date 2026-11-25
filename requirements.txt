@@ -398,9 +398,9 @@ opentelemetry-api==1.45.2 \
     --hash=sha256:2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34 \
     --hash=sha256:d7b0008e21e5fd61cbe7a7f34ca3b6905a78ab677d9bc395e299359c75cda6b4
     # via fastapi
-pydantic==2.14.3 \
-    --hash=sha256:1054f237f4d4733e5a30e1e2333bd33a2004ab9ab1510bd053a9a31bb48e232d \
-    --hash=sha256:3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8
+pydantic==2.14.4 \
+    --hash=sha256:653a2ad9f6d8858529c77c72717d0ea991d6c6837fe683246b2f4b2bbfc3fadc \
+    --hash=sha256:7c19f1d46f8accf55a4617a6116e1ade64840870f397b846a2c53fb9019414ba
     # via
     #   fastapi
     #   gpu-shepherd (pyproject.toml)
