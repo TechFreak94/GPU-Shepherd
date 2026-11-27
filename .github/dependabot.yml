@@ -1,5 +1,7 @@
 # Weekly update pull requests, opened against the testing branch like every other change (they reach
-# main with the next promotion). Security updates always target the default branch (main).
+# main with the next promotion). Minor and patch bumps come as one grouped pull request per ecosystem;
+# major bumps still come one by one, since they can break things and need a closer look.
+# Security updates always target the default branch (main).
 # Create the labels "dependencies" and "no release" once (Issues > Labels).
 version: 2
 updates:
@@ -7,14 +9,23 @@ updates:
     directory: /
     schedule: {interval: weekly}
     target-branch: testing
+    groups:
+      github-actions-minor-patch:
+        update-types: [minor, patch]
     labels: ["dependencies", "no release"]
   - package-ecosystem: pip
     directory: /
     schedule: {interval: weekly}
     target-branch: testing
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
     labels: ["dependencies"]
   - package-ecosystem: docker
     directory: /
     schedule: {interval: weekly}
     target-branch: testing
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
     labels: ["dependencies"]
